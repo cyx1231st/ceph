@@ -62,6 +62,12 @@ class SocketMessenger final : public Messenger {
   void unaccept_conn(SocketConnectionRef);
   void register_conn(SocketConnectionRef);
   void unregister_conn(SocketConnectionRef);
+
+  friend ostream& operator<<(ostream& out, const SocketMessenger& msgr) {
+    return out << msgr.get_myname()
+               << "[" << msgr.get_myaddr()
+               << "]";
+  }
 };
 
 } // namespace ceph::net
