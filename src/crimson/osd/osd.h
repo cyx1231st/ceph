@@ -35,9 +35,9 @@ class OSD : public ceph::net::Dispatcher {
   seastar::timer<seastar::lowres_clock> beacon_timer;
   const int whoami;
   // talk with osd
-  std::unique_ptr<ceph::net::Messenger> cluster_msgr;
+  ceph::net::Messenger* cluster_msgr;
   // talk with mon/mgr
-  std::unique_ptr<ceph::net::Messenger> client_msgr;
+  ceph::net::Messenger* client_msgr;
   ChainedDispatchers dispatchers;
   ceph::mon::Client monc;
 
@@ -70,7 +70,7 @@ class OSD : public ceph::net::Dispatcher {
   seastar::future<> ms_handle_remote_reset(ceph::net::ConnectionRef conn) override;
 
 public:
-  OSD(int id, uint32_t nonce);
+  OSD(int id, ceph::net::Messenger *cluster_msgr, ceph::net::Messenger *client_msgr);
   ~OSD();
 
   seastar::future<> mkfs(uuid_d fsid);

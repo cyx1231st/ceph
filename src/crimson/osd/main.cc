@@ -11,6 +11,7 @@
 
 #include "common/ceph_argparse.h"
 #include "crimson/common/config_proxy.h"
+#include "crimson/net/Messenger.h"
 
 #include "osd.h"
 
@@ -63,8 +64,14 @@ int main(int argc, char* argv[])
       }).then([&conf_file_list] {
         return local_conf().parse_config_files(conf_file_list);
       }).then([&] {
-        return osd.start_single(std::stoi(local_conf()->name.get_id()),
-                                static_cast<uint32_t>(getpid()));
+        int id = std::stoi(local_conf()->name.get_id());
+        auto nonce = static_cast<uint32_t>(getpid());
+        return seastar::when_all_succeed(
+            ceph::net::Messenger::create(entity_name_t::OSD(id), "cluster", nonce, 0),
+            ceph::net::Messenger::create(entity_name_t::OSD(id), "client", nonce, 0)
+          ).then([id, &osd](auto cluster_msgr, auto client_msgr) {
+            return osd.start_single(id, cluster_msgr, client_msgr);
+          });
       }).then([&osd, mkfs = config.count("mkfs")] {
         if (mkfs) {
           return osd.invoke_on(0, &OSD::mkfs,

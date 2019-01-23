@@ -17,10 +17,15 @@
 #include <seastar/core/future.hh>
 
 #include "Fwd.h"
+#include "msg/Policy.h"
+#include "crimson/thread/Throttle.h"
 
 class AuthAuthorizer;
 
 namespace ceph::net {
+
+using SocketPolicy = ceph::net::Policy<ceph::thread::Throttle>;
+using Throttle = ceph::thread::Throttle;
 
 class Messenger {
   entity_name_t my_name;
@@ -84,6 +89,12 @@ class Messenger {
   }
 
   virtual void print(ostream& out) const = 0;
+
+  virtual void set_default_policy(const SocketPolicy& p) = 0;
+
+  virtual void set_policy(entity_type_t peer_type, const SocketPolicy& p) = 0;
+
+  virtual void set_policy_throttler(entity_type_t peer_type, Throttle* throttle) = 0;
 
   static seastar::future<Messenger*>
   create(const entity_name_t& name,

@@ -4,7 +4,7 @@
 #include "messages/MOSDBoot.h"
 #include "messages/MOSDMap.h"
 #include "crimson/net/Connection.h"
-#include "crimson/net/SocketMessenger.h"
+#include "crimson/net/Messenger.h"
 #include "crimson/os/cyan_collection.h"
 #include "crimson/os/cyan_object.h"
 #include "crimson/os/cyan_store.h"
@@ -28,15 +28,15 @@ namespace {
 using ceph::common::local_conf;
 using ceph::os::CyanStore;
 
-OSD::OSD(int id, uint32_t nonce)
+OSD::OSD(int id,
+         ceph::net::Messenger *cluster_msgr,
+         ceph::net::Messenger *client_msgr)
   : whoami{id},
-    cluster_msgr{new ceph::net::SocketMessenger{entity_name_t::OSD(whoami),
-                                                "cluster", nonce}},
-    client_msgr{new ceph::net::SocketMessenger{entity_name_t::OSD(whoami),
-                                               "client", nonce}},
+    cluster_msgr{cluster_msgr},
+    client_msgr{client_msgr},
     monc{*client_msgr}
 {
-  for (auto msgr : {cluster_msgr.get(), client_msgr.get()}) {
+  for (auto msgr : {cluster_msgr, client_msgr}) {
     if (local_conf()->ms_crc_data) {
       msgr->set_crc_data();
     }
@@ -205,6 +205,8 @@ seastar::future<> OSD::stop()
     return monc.stop();
   }).then([this] {
     return client_msgr->shutdown();
+  }).then([this] {
+    return cluster_msgr->shutdown();
   });
 }
 
