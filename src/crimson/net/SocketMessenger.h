@@ -27,15 +27,43 @@
 
 namespace ceph::net {
 
-class SocketMessenger final : public Messenger, public seastar::peering_sharded_service<SocketMessenger> {
-  const int master_sid;
+namespace placement_policy {
+
+class Pinned {
+ public:
+  const seastar::shard_id where;
+
+  Pinned(seastar::shard_id shard_id)
+    : where{shard_id}
+  {}
+  seastar::shard_id locate(const entity_addr_t&) const {
+    return where;
+  }
+};
+
+class ShardByAddr {
+ public:
+  seastar::shard_id locate(const entity_addr_t& addr) const {
+    std::size_t seed = 0;
+    boost::hash_combine(seed, addr.u.sin.sin_addr.s_addr);
+    //boost::hash_combine(seed, addr.u.sin.sin_port);
+    //boost::hash_combine(seed, addr.nonce);
+    return seed % seastar::smp::count;
+  }
+};
+
+} // namespace ceph::net::placement_policy
+
+template <class Placement>
+class SocketMessenger final : public Messenger, public seastar::peering_sharded_service<SocketMessenger<Placement>> {
+  const Placement placement;
   const seastar::shard_id sid;
   seastar::promise<> shutdown_promise;
 
   std::optional<seastar::server_socket> listener;
   Dispatcher *dispatcher = nullptr;
-  std::map<entity_addr_t, SocketConnectionRef> connections;
-  std::set<SocketConnectionRef> accepting_conns;
+  std::map<entity_addr_t, SocketConnectionRef<Placement>> connections;
+  std::set<SocketConnectionRef<Placement>> accepting_conns;
   using Throttle = ceph::thread::Throttle;
   ceph::net::PolicySet<Throttle> policy_set;
   // Distinguish messengers with meaningful names for debugging
@@ -50,18 +78,12 @@ class SocketMessenger final : public Messenger, public seastar::peering_sharded_
   seastar::foreign_ptr<ConnectionRef> do_connect(const entity_addr_t& peer_addr,
                                                  const entity_type_t& peer_type);
   seastar::future<> do_shutdown();
-  // conn sharding options:
-  // 0. Compatible (master_sid >= 0): place all connections to one master shard
-  // 1. Simplest (master_sid < 0): sharded by ip only
-  // 2. Balanced (not implemented): sharded by ip + port + nonce,
-  //        but, need to move SocketConnection between cores.
-  seastar::shard_id locate_shard(const entity_addr_t& addr);
 
  public:
   SocketMessenger(const entity_name_t& myname,
                   const std::string& logic_name,
                   uint32_t nonce,
-                  int master_sid);
+                  const Placement& placement);
 
   seastar::future<> set_myaddrs(const entity_addrvec_t& addr) override;
 
@@ -81,7 +103,7 @@ class SocketMessenger final : public Messenger, public seastar::peering_sharded_
   seastar::future<> shutdown() override;
 
   Messenger* get_local_shard() override {
-    return &container().local();
+    return &this->container().local();
   }
 
   void print(ostream& out) const override {
@@ -99,11 +121,11 @@ class SocketMessenger final : public Messenger, public seastar::peering_sharded_
  public:
   seastar::future<> learned_addr(const entity_addr_t &peer_addr_for_me);
 
-  SocketConnectionRef lookup_conn(const entity_addr_t& addr);
-  void accept_conn(SocketConnectionRef);
-  void unaccept_conn(SocketConnectionRef);
-  void register_conn(SocketConnectionRef);
-  void unregister_conn(SocketConnectionRef);
+  SocketConnectionRef<Placement> lookup_conn(const entity_addr_t& addr);
+  void accept_conn(SocketConnectionRef<Placement>);
+  void unaccept_conn(SocketConnectionRef<Placement>);
+  void register_conn(SocketConnectionRef<Placement>);
+  void unregister_conn(SocketConnectionRef<Placement>);
 
   // required by sharded<>
   seastar::future<> stop() {

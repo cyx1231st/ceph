@@ -12,10 +12,19 @@ Messenger::create(const entity_name_t& name,
                   const uint64_t nonce,
                   const int master_sid)
 {
-  return create_sharded<SocketMessenger>(name, lname, nonce, master_sid)
-    .then([](Messenger *msgr) {
-      return msgr;
-    });
+  if (master_sid < 0) {
+    return create_sharded<SocketMessenger<placement_policy::ShardByAddr>>(
+        name, lname, nonce, placement_policy::ShardByAddr{})
+      .then([](Messenger *msgr) {
+        return msgr;
+      });
+  } else {
+    return create_sharded<SocketMessenger<placement_policy::Pinned>>(
+        name, lname, nonce, placement_policy::Pinned{static_cast<seastar::shard_id>(master_sid)})
+      .then([](Messenger *msgr) {
+        return msgr;
+      });
+  }
 }
 
 } // namespace ceph::net

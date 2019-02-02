@@ -30,69 +30,76 @@ namespace {
   }
 }
 
-SocketMessenger::SocketMessenger(const entity_name_t& myname,
+template <class Placement>
+SocketMessenger<Placement>::SocketMessenger(const entity_name_t& myname,
                                  const std::string& logic_name,
                                  uint32_t nonce,
-                                 int master_sid)
+                                 const Placement& placement)
   : Messenger{myname},
-    master_sid{master_sid},
+    placement{placement},
     sid{seastar::engine().cpu_id()},
     logic_name{logic_name},
     nonce{nonce}
 {}
 
-seastar::future<> SocketMessenger::set_myaddrs(const entity_addrvec_t& addrs)
+template <class Placement>
+seastar::future<> SocketMessenger<Placement>::set_myaddrs(const entity_addrvec_t& addrs)
 {
   auto my_addrs = addrs;
   for (auto& addr : my_addrs.v) {
     addr.nonce = nonce;
   }
-  return container().invoke_on_all([my_addrs](auto& msgr) {
+  return this->container().invoke_on_all([my_addrs](auto& msgr) {
       return msgr.Messenger::set_myaddrs(my_addrs);
     });
 }
 
-seastar::future<> SocketMessenger::bind(const entity_addrvec_t& addrs)
+template <class Placement>
+seastar::future<> SocketMessenger<Placement>::bind(const entity_addrvec_t& addrs)
 {
   ceph_assert(addrs.legacy_addr().get_family() == AF_INET);
   auto my_addrs = addrs;
   for (auto& addr : my_addrs.v) {
     addr.nonce = nonce;
   }
-  return container().invoke_on_all([my_addrs](auto& msgr) {
+  return this->container().invoke_on_all([my_addrs](auto& msgr) {
       msgr.do_bind(my_addrs);
     });
 }
 
-seastar::future<> SocketMessenger::start(Dispatcher *disp) {
-  return container().invoke_on_all([disp](auto& msgr) {
+template <class Placement>
+seastar::future<> SocketMessenger<Placement>::start(Dispatcher *disp) {
+  return this->container().invoke_on_all([disp](auto& msgr) {
       return msgr.do_start(disp->get_local_shard());
     });
 }
 
+template <class Placement>
 seastar::future<ceph::net::ConnectionXRef>
-SocketMessenger::connect(const entity_addr_t& peer_addr, const entity_type_t& peer_type)
+SocketMessenger<Placement>::connect(const entity_addr_t& peer_addr, const entity_type_t& peer_type)
 {
-  auto shard = locate_shard(peer_addr);
-  return container().invoke_on(shard, [peer_addr, peer_type](auto& msgr) {
+  auto shard = placement.locate(peer_addr);
+  return this->container().invoke_on(shard, [peer_addr, peer_type](auto& msgr) {
       return msgr.do_connect(peer_addr, peer_type);
     }).then([](seastar::foreign_ptr<ConnectionRef>&& conn) {
       return seastar::make_lw_shared<seastar::foreign_ptr<ConnectionRef>>(std::move(conn));
     });
 }
 
-seastar::future<> SocketMessenger::shutdown()
+template <class Placement>
+seastar::future<> SocketMessenger<Placement>::shutdown()
 {
-  return container().invoke_on_all([](auto& msgr) {
+  return this->container().invoke_on_all([](auto& msgr) {
       return msgr.do_shutdown();
     }).finally([this] {
-      return container().invoke_on_all([](auto& msgr) {
+      return this->container().invoke_on_all([](auto& msgr) {
           msgr.shutdown_promise.set_value();
         });
     });
 }
 
-void SocketMessenger::do_bind(const entity_addrvec_t& addrs)
+template <class Placement>
+void SocketMessenger<Placement>::do_bind(const entity_addrvec_t& addrs)
 {
   Messenger::set_myaddrs(addrs);
 
@@ -103,7 +110,8 @@ void SocketMessenger::do_bind(const entity_addrvec_t& addrs)
   listener = seastar::listen(address, lo);
 }
 
-seastar::future<> SocketMessenger::do_start(Dispatcher *disp)
+template <class Placement>
+seastar::future<> SocketMessenger<Placement>::do_start(Dispatcher *disp)
 {
   dispatcher = disp;
 
@@ -116,13 +124,13 @@ seastar::future<> SocketMessenger::do_start(Dispatcher *disp)
             // allocate the connection
             entity_addr_t peer_addr;
             peer_addr.set_sockaddr(&paddr.as_posix_sockaddr());
-            auto shard = locate_shard(peer_addr);
+            auto shard = placement.locate(peer_addr);
 #warning fixme
             // we currently do dangerous i/o from a Connection core, different from the Socket core.
             auto sock = seastar::make_foreign(std::make_unique<Socket>(std::move(socket)));
             // don't wait before accepting another
-            container().invoke_on(shard, [sock = std::move(sock), peer_addr, this](auto& msgr) mutable {
-                SocketConnectionRef conn = seastar::make_shared<SocketConnection>(msgr, *msgr.dispatcher);
+            this->container().invoke_on(shard, [sock = std::move(sock), peer_addr, this](auto& msgr) mutable {
+                SocketConnectionRef<Placement> conn = seastar::make_shared<SocketConnection<Placement>>(msgr, *msgr.dispatcher);
                 conn->start_accept(std::move(sock), peer_addr);
               });
           });
@@ -137,18 +145,20 @@ seastar::future<> SocketMessenger::do_start(Dispatcher *disp)
   return seastar::now();
 }
 
+template <class Placement>
 seastar::foreign_ptr<ceph::net::ConnectionRef>
-SocketMessenger::do_connect(const entity_addr_t& peer_addr, const entity_type_t& peer_type)
+SocketMessenger<Placement>::do_connect(const entity_addr_t& peer_addr, const entity_type_t& peer_type)
 {
   if (auto found = lookup_conn(peer_addr); found) {
     return seastar::make_foreign(found->shared_from_this());
   }
-  SocketConnectionRef conn = seastar::make_shared<SocketConnection>(*this, *dispatcher);
+  SocketConnectionRef<Placement> conn = seastar::make_shared<SocketConnection<Placement>>(*this, *dispatcher);
   conn->start_connect(peer_addr, peer_type);
   return seastar::make_foreign(conn->shared_from_this());
 }
 
-seastar::future<> SocketMessenger::do_shutdown()
+template <class Placement>
+seastar::future<> SocketMessenger<Placement>::do_shutdown()
 {
   if (listener) {
     listener->abort_accept();
@@ -166,7 +176,8 @@ seastar::future<> SocketMessenger::do_shutdown()
     });
 }
 
-seastar::future<> SocketMessenger::learned_addr(const entity_addr_t &peer_addr_for_me)
+template <class Placement>
+seastar::future<> SocketMessenger<Placement>::learned_addr(const entity_addr_t &peer_addr_for_me)
 {
   if (!get_myaddr().is_blank_ip()) {
     // already learned or binded
@@ -181,38 +192,29 @@ seastar::future<> SocketMessenger::learned_addr(const entity_addr_t &peer_addr_f
   return set_myaddrs(entity_addrvec_t{addr});
 }
 
-void SocketMessenger::set_default_policy(const SocketPolicy& p)
+template <class Placement>
+void SocketMessenger<Placement>::set_default_policy(const SocketPolicy& p)
 {
   policy_set.set_default(p);
 }
 
-void SocketMessenger::set_policy(entity_type_t peer_type,
+template <class Placement>
+void SocketMessenger<Placement>::set_policy(entity_type_t peer_type,
 				 const SocketPolicy& p)
 {
   policy_set.set(peer_type, p);
 }
 
-void SocketMessenger::set_policy_throttler(entity_type_t peer_type,
+template <class Placement>
+void SocketMessenger<Placement>::set_policy_throttler(entity_type_t peer_type,
 					   Throttle* throttle)
 {
   // only byte throttler is used in OSD
   policy_set.set_throttlers(peer_type, throttle, nullptr);
 }
 
-seastar::shard_id SocketMessenger::locate_shard(const entity_addr_t& addr)
-{
-  ceph_assert(addr.get_family() == AF_INET);
-  if (master_sid >= 0) {
-    return master_sid;
-  }
-  std::size_t seed = 0;
-  boost::hash_combine(seed, addr.u.sin.sin_addr.s_addr);
-  //boost::hash_combine(seed, addr.u.sin.sin_port);
-  //boost::hash_combine(seed, addr.nonce);
-  return seed % seastar::smp::count;
-}
-
-ceph::net::SocketConnectionRef SocketMessenger::lookup_conn(const entity_addr_t& addr)
+template <class Placement>
+ceph::net::SocketConnectionRef<Placement> SocketMessenger<Placement>::lookup_conn(const entity_addr_t& addr)
 {
   if (auto found = connections.find(addr);
       found != connections.end()) {
@@ -222,27 +224,37 @@ ceph::net::SocketConnectionRef SocketMessenger::lookup_conn(const entity_addr_t&
   }
 }
 
-void SocketMessenger::accept_conn(SocketConnectionRef conn)
+template <class Placement>
+void SocketMessenger<Placement>::accept_conn(SocketConnectionRef<Placement> conn)
 {
   accepting_conns.insert(conn);
 }
 
-void SocketMessenger::unaccept_conn(SocketConnectionRef conn)
+template <class Placement>
+void SocketMessenger<Placement>::unaccept_conn(SocketConnectionRef<Placement> conn)
 {
   accepting_conns.erase(conn);
 }
 
-void SocketMessenger::register_conn(SocketConnectionRef conn)
+template <class Placement>
+void SocketMessenger<Placement>::register_conn(SocketConnectionRef<Placement> conn)
 {
-  if (master_sid >= 0) {
-    ceph_assert(static_cast<int>(sid) == master_sid);
-  }
   auto [i, added] = connections.emplace(conn->get_peer_addr(), conn);
   std::ignore = i;
   ceph_assert(added);
 }
 
-void SocketMessenger::unregister_conn(SocketConnectionRef conn)
+template <>
+void SocketMessenger<placement_policy::Pinned>::register_conn(SocketConnectionRef<placement_policy::Pinned> conn)
+{
+  ceph_assert(sid == placement.where);
+  auto [i, added] = connections.emplace(conn->get_peer_addr(), conn);
+  std::ignore = i;
+  ceph_assert(added);
+}
+
+template <class Placement>
+void SocketMessenger<Placement>::unregister_conn(SocketConnectionRef<Placement> conn)
 {
   ceph_assert(conn);
   auto found = connections.find(conn->get_peer_addr());
@@ -250,3 +262,6 @@ void SocketMessenger::unregister_conn(SocketConnectionRef conn)
   ceph_assert(found->second == conn);
   connections.erase(found);
 }
+
+template class SocketMessenger<placement_policy::Pinned>;
+template class SocketMessenger<placement_policy::ShardByAddr>;

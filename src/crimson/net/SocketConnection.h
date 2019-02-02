@@ -31,12 +31,18 @@ namespace ceph::net {
 
 using stop_t = seastar::stop_iteration;
 
+template <class Placement>
 class SocketMessenger;
-class SocketConnection;
-using SocketConnectionRef = seastar::shared_ptr<SocketConnection>;
 
+template <class Placement>
+class SocketConnection;
+
+template <class Placement>
+using SocketConnectionRef = seastar::shared_ptr<SocketConnection<Placement>>;
+
+template <class Placement>
 class SocketConnection : public Connection {
-  SocketMessenger& messenger;
+  SocketMessenger<Placement>& messenger;
   seastar::foreign_ptr<std::unique_ptr<Socket>> socket;
   Dispatcher& dispatcher;
   seastar::gate pending_dispatch;
@@ -79,9 +85,9 @@ class SocketConnection : public Connection {
 
   /// server side of handshake negotiation
   seastar::future<stop_t> repeat_handle_connect();
-  seastar::future<stop_t> handle_connect_with_existing(SocketConnectionRef existing,
+  seastar::future<stop_t> handle_connect_with_existing(SocketConnectionRef<Placement> existing,
                                                         bufferlist&& authorizer_reply);
-  seastar::future<stop_t> replace_existing(SocketConnectionRef existing,
+  seastar::future<stop_t> replace_existing(SocketConnectionRef<Placement> existing,
                                             bufferlist&& authorizer_reply,
                                             bool is_reset_from_peer = false);
   seastar::future<stop_t> send_connect_reply(ceph::net::msgr_tag_t tag,
@@ -166,7 +172,7 @@ class SocketConnection : public Connection {
   seastar::future<> do_close();
 
  public:
-  SocketConnection(SocketMessenger& messenger,
+  SocketConnection(SocketMessenger<Placement>& messenger,
                    Dispatcher& dispatcher);
   ~SocketConnection();
 
