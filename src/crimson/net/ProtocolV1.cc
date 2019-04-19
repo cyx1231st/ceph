@@ -12,6 +12,8 @@
 #include "auth/Auth.h"
 #include "auth/AuthSessionHandler.h"
 
+#include "crimson/auth/AuthClient.h"
+#include "crimson/auth/AuthServer.h"
 #include "crimson/common/log.h"
 #include "Config.h"
 #include "Dispatcher.h"
@@ -171,6 +173,14 @@ seastar::future<stop_t>
 ProtocolV1::handle_connect_reply(msgr_tag_t tag)
 {
   switch (tag) {
+  case CEPH_MSGR_TAG_CHALLENGE_AUTHORIZER:
+    if (conn.peer_type != CEPH_ENTITY_TYPE_MON) {
+      auto reply =
+	message.get_auth_client()->handle_auth_reply_more(conn, auth_meta,
+							  h.auth_payload);
+      h.auth_payload = std::move(reply);
+    }
+    break;
   case CEPH_MSGR_TAG_FEATURES:
     logger().error("{} connect protocol feature mispatch", __func__);
     throw std::system_error(make_error_code(error::negotiation_failure));
@@ -236,6 +246,23 @@ ProtocolV1::handle_connect_reply(msgr_tag_t tag)
   }
 }
 
+ceph::bufferlist ProtocolV1::get_auth_payload()
+{
+  if (connection->peer_type == CEPH_ENTITY_TYPE_MON) {
+    return {};
+  } else {
+    if (authorizer_more.length()) {
+      logger().info("using augmented (challenge) auth payload");
+      return std::move(authorizer_more);
+    } else {
+      auto [auth_method, preferred_modes, auth_bl] =
+	messenger.get_auth_client()->get_auth_request(conn, auth_meta);
+      auth_meta.auth_method = auth_method;
+      return auth_bl;
+    }
+  }
+}
+
 seastar::future<stop_t>
 ProtocolV1::repeat_connect()
 {
@@ -251,11 +278,12 @@ ProtocolV1::repeat_connect()
 
   h.authorizer = dispatcher.ms_get_authorizer(conn.peer_type);
   bufferlist bl;
-  if (h.authorizer) {
-    h.connect.authorizer_protocol = h.authorizer->protocol;
-    h.connect.authorizer_len = h.authorizer->bl.length();
+  bufferlist auth_bl = get_auth_payload();
+  if (auth_bl.length()) {
+    h.connect.authorizer_protocol = auth_meta.auth_method;
+    h.connect.authorizer_len = auth_bl.length();
     bl.append(create_static(h.connect));
-    bl.append(h.authorizer->bl);
+    bl.append(auth_bl.c_str(), auth_bl.length());
   } else {
     h.connect.authorizer_protocol = 0;
     h.connect.authorizer_len = 0;
@@ -271,13 +299,7 @@ ProtocolV1::repeat_connect()
       ceph_assert(p.end());
       return socket->read(h.reply.authorizer_len);
     }).then([this] (bufferlist bl) {
-      if (h.authorizer) {
-        auto reply = bl.cbegin();
-        if (!h.authorizer->verify_reply(reply, nullptr)) {
-          logger().error("{} authorizer failed to verify reply", __func__);
-          throw std::system_error(make_error_code(error::negotiation_failure));
-        }
-      }
+      h.auth_payload = std::move(bl);
       return handle_connect_reply(h.reply.tag);
     });
 }
