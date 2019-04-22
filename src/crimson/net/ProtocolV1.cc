@@ -172,15 +172,23 @@ void ProtocolV1::reset_session()
 seastar::future<stop_t>
 ProtocolV1::handle_connect_reply(msgr_tag_t tag)
 {
-  switch (tag) {
-  case CEPH_MSGR_TAG_CHALLENGE_AUTHORIZER:
-    if (conn.peer_type != CEPH_ENTITY_TYPE_MON) {
-      auto reply =
-	message.get_auth_client()->handle_auth_reply_more(conn, auth_meta,
-							  h.auth_payload);
-      h.auth_payload = std::move(reply);
+  if (h.auth_payload.length() && conn.peer_type != CEPH_ENTITY_TYPE_MON) {
+    if (tag == CEPH_MSGR_TAG_CHALLENGE_AUTHORIZER) { // more
+      h.auth_more = messenger.get_auth_client()->handle_auth_reply_more(
+          conn.shared_from_this(), auth_meta, h.auth_payload);
+      return seastar::make_ready_future<stop_t>(stop_t::no);
+    } else {
+      int ret = messenger.get_auth_client()->handle_auth_done(
+          conn.shared_from_this(), auth_meta, 0, 0, h.auth_payload);
+      if (ret < 0) {
+        // fault
+        logger().warn("{} AuthClient::handle_auth_done() return {}", conn, ret);
+        throw std::system_error(make_error_code(error::negotiation_failure));
+      }
     }
-    break;
+  }
+
+  switch (tag) {
   case CEPH_MSGR_TAG_FEATURES:
     logger().error("{} connect protocol feature mispatch", __func__);
     throw std::system_error(make_error_code(error::negotiation_failure));
@@ -228,14 +236,15 @@ ProtocolV1::handle_connect_reply(msgr_tag_t tag)
         h.connect_seq++;
         h.backoff = 0ms;
         conn.set_features(h.reply.features & h.connect.features);
-        if (h.authorizer) {
+        if (auth_meta->authorizer) {
           session_security.reset(
               get_auth_session_handler(nullptr,
-                                       h.authorizer->protocol,
-                                       h.authorizer->session_key,
+                                       auth_meta->authorizer->protocol,
+                                       auth_meta->session_key,
                                        conn.features));
+        } else {
+          session_security.reset();
         }
-        h.authorizer = nullptr;
         return seastar::make_ready_future<stop_t>(stop_t::yes);
       });
     break;
@@ -248,16 +257,17 @@ ProtocolV1::handle_connect_reply(msgr_tag_t tag)
 
 ceph::bufferlist ProtocolV1::get_auth_payload()
 {
-  if (connection->peer_type == CEPH_ENTITY_TYPE_MON) {
+  if (conn.peer_type == CEPH_ENTITY_TYPE_MON) {
     return {};
   } else {
-    if (authorizer_more.length()) {
+    if (h.auth_more.length()) {
       logger().info("using augmented (challenge) auth payload");
-      return std::move(authorizer_more);
+      return std::move(h.auth_more);
     } else {
       auto [auth_method, preferred_modes, auth_bl] =
-	messenger.get_auth_client()->get_auth_request(conn, auth_meta);
-      auth_meta.auth_method = auth_method;
+	messenger.get_auth_client()->get_auth_request(
+            conn.shared_from_this(), auth_meta);
+      auth_meta->auth_method = auth_method;
       return auth_bl;
     }
   }
@@ -276,11 +286,12 @@ ProtocolV1::repeat_connect()
   // this is fyi, actually, server decides!
   h.connect.flags = conn.policy.lossy ? CEPH_MSG_CONNECT_LOSSY : 0;
 
-  h.authorizer = dispatcher.ms_get_authorizer(conn.peer_type);
+  ceph_assert(messenger.get_auth_client());
+
   bufferlist bl;
   bufferlist auth_bl = get_auth_payload();
   if (auth_bl.length()) {
-    h.connect.authorizer_protocol = auth_meta.auth_method;
+    h.connect.authorizer_protocol = auth_meta->auth_method;
     h.connect.authorizer_len = auth_bl.length();
     bl.append(create_static(h.connect));
     bl.append(auth_bl.c_str(), auth_bl.length());
@@ -399,6 +410,13 @@ seastar::future<stop_t> ProtocolV1::send_connect_reply_ready(
     h.reply.flags = h.reply.flags | CEPH_MSG_CONNECT_LOSSY;
   }
   h.reply.authorizer_len = authorizer_reply.length();
+
+  session_security.reset(
+      get_auth_session_handler(nullptr,
+                               auth_meta->authorizer->protocol,
+                               auth_meta->session_key,
+                               conn.features));
+
   return socket->write(make_static_packet(h.reply))
     .then([this, reply=std::move(authorizer_reply)]() mutable {
       if (reply.length()) {
@@ -516,8 +534,10 @@ seastar::future<stop_t> ProtocolV1::repeat_handle_connect()
       conn.peer_type = h.connect.host_type;
       return socket->read(h.connect.authorizer_len);
     }).then([this] (bufferlist authorizer) {
+      memset(&h.reply, 0, sizeof(h.reply));
+      // TODO: set reply.protocol_version
       if (h.connect.protocol_version != get_proto_version(h.connect.host_type, false)) {
-        return seastar::make_ready_future<msgr_tag_t, bufferlist>(
+        return send_connect_reply(
             CEPH_MSGR_TAG_BADPROTOVER, bufferlist{});
       }
       if (require_auth_feature()) {
@@ -525,17 +545,29 @@ seastar::future<stop_t> ProtocolV1::repeat_handle_connect()
       }
       if (auto feat_missing = conn.policy.features_required & ~(uint64_t)h.connect.features;
           feat_missing != 0) {
-        return seastar::make_ready_future<msgr_tag_t, bufferlist>(
+        return send_connect_reply(
             CEPH_MSGR_TAG_FEATURES, bufferlist{});
       }
-      return dispatcher.ms_verify_authorizer(conn.peer_type,
-                                             h.connect.authorizer_protocol,
-                                             authorizer);
-    }).then([this] (ceph::net::msgr_tag_t tag, bufferlist&& authorizer_reply) {
-      memset(&h.reply, 0, sizeof(h.reply));
-      if (tag) {
-        return send_connect_reply(tag, std::move(authorizer_reply));
+
+      bufferlist authorizer_reply;
+      auth_meta->auth_method = h.connect.authorizer_protocol;
+      bool more = (bool)auth_meta->authorizer_challenge;
+      ceph_assert(messenger.get_auth_server());
+      int r = messenger.get_auth_server()->handle_auth_request(
+          conn.shared_from_this(), auth_meta, more, auth_meta->auth_method, authorizer,
+          &authorizer_reply);
+
+      if (r < 0) {
+        session_security.reset();
+        return send_connect_reply(
+            CEPH_MSGR_TAG_BADAUTHORIZER, std::move(authorizer_reply));
+      } else if (r == 0) {
+        ceph_assert(authorizer_reply.length());
+        return send_connect_reply(
+            CEPH_MSGR_TAG_CHALLENGE_AUTHORIZER, std::move(authorizer_reply));
       }
+
+      // r > 0
       if (auto existing = messenger.lookup_conn(conn.peer_addr); existing) {
         if (existing->protocol->proto_type != proto_t::v1) {
           logger().warn("{} existing {} proto version is {} not 1, close existing",

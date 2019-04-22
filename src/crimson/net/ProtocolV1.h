@@ -50,8 +50,8 @@ class ProtocolV1 final : public Protocol {
   struct Handshake {
     ceph_msg_connect connect;
     ceph_msg_connect_reply reply;
-    ceph::auth::method_t auth_method;
-    ceph::bufferlist auth_payload;
+    ceph::bufferlist auth_payload;  // auth(orizer) payload read off the wire
+    ceph::bufferlist auth_more;     // connect-side auth retry (we added challenge)
     std::chrono::milliseconds backoff;
     uint32_t connect_seq = 0;
     uint32_t peer_global_seq = 0;
