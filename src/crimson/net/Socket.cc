@@ -53,8 +53,11 @@ struct bufferlist_consumer {
 
 seastar::future<bufferlist> Socket::read(size_t bytes)
 {
+  pre_read();
   if (bytes == 0) {
-    return seastar::make_ready_future<bufferlist>();
+    return post_read().then([this] {
+      return seastar::make_ready_future<bufferlist>();
+    });
   }
   r.buffer.clear();
   r.remaining = bytes;
@@ -64,13 +67,20 @@ seastar::future<bufferlist> Socket::read(size_t bytes)
         throw std::system_error(make_error_code(error::read_eof));
       }
       return seastar::make_ready_future<bufferlist>(std::move(r.buffer));
+    }).then_wrapped([this] (auto fut) {
+      return post_read().then([fut = std::move(fut)] () mutable {
+        return fut.get0();
+      });
     });
 }
 
 seastar::future<seastar::temporary_buffer<char>>
 Socket::read_exactly(size_t bytes) {
+  pre_read();
   if (bytes == 0) {
-    return seastar::make_ready_future<seastar::temporary_buffer<char>>();
+    return post_read().then([this] {
+      return seastar::make_ready_future<seastar::temporary_buffer<char>>();
+    });
   }
   return in.read_exactly(bytes)
     .then([this](auto buf) {
@@ -78,7 +88,49 @@ Socket::read_exactly(size_t bytes) {
         throw std::system_error(make_error_code(error::read_eof));
       }
       return seastar::make_ready_future<tmp_buf>(std::move(buf));
+    }).then_wrapped([this] (auto fut) {
+      return post_read().then([fut = std::move(fut)] () mutable {
+        return fut.get0();
+      });
     });
+}
+
+void Socket::pre_read() {
+  if (unlikely(closed)) {
+    throw std::system_error(make_error_code(error::read_eof));
+  }
+  ceph_assert(!ongoing_read);
+  ongoing_read = true;
+}
+
+seastar::future<>
+Socket::post_read() {
+  if (unlikely(closed)) {
+    return in.close().finally([this] {
+      ongoing_read = false;
+    });
+  }
+  ongoing_read = false;
+  return seastar::now();
+}
+
+void Socket::pre_write() {
+  if (unlikely(closed)) {
+    throw std::system_error(make_error_code(error::connection_aborted));
+  }
+  ceph_assert(!ongoing_write);
+  ongoing_write = true;
+}
+
+seastar::future<>
+Socket::post_write() {
+  if (unlikely(closed)) {
+    return out.close().finally([this] {
+      ongoing_write = false;
+    });
+  }
+  ongoing_write = false;
+  return seastar::now();
 }
 
 } // namespace ceph::net

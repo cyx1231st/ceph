@@ -7,6 +7,7 @@
 #include <seastar/core/sharded.hh>
 #include <seastar/net/packet.hh>
 
+#include "common/likely.h"
 #include "include/buffer.h"
 #include "msg/msg_types.h"
 
@@ -21,6 +22,10 @@ class Socket
   seastar::connected_socket socket;
   seastar::input_stream<char> in;
   seastar::output_stream<char> out;
+
+  bool ongoing_read = false;
+  bool ongoing_write = false;
+  bool closed = false;
 
   /// buffer state for read()
   struct {
@@ -40,6 +45,12 @@ class Socket
       out(socket.output(65536)) {}
 
   Socket(Socket&& o) = delete;
+
+  ~Socket() {
+    ceph_assert(!ongoing_read);
+    ceph_assert(!ongoing_write);
+    ceph_assert(closed);
+  }
 
   static seastar::future<SocketFRef>
   connect(const entity_addr_t& peer_addr) {
@@ -70,22 +81,52 @@ class Socket
   seastar::future<tmp_buf> read_exactly(size_t bytes);
 
   seastar::future<> write(packet&& buf) {
-    return out.write(std::move(buf));
+    pre_write();
+    return out.write(std::move(buf)).finally([this] {
+      return post_write();
+    });
   }
   seastar::future<> flush() {
-    return out.flush();
+    pre_write();
+    return out.flush().finally([this] {
+      return post_write();
+    });
   }
   seastar::future<> write_flush(packet&& buf) {
-    return out.write(std::move(buf)).then([this] { return out.flush(); });
+    pre_write();
+    return out.write(std::move(buf)).then([this] { return out.flush(); })
+    .finally([this] {
+      return post_write();
+    });
   }
 
   /// Socket can only be closed once.
   seastar::future<> close() {
-    return seastar::smp::submit_to(sid, [this] {
-        return seastar::when_all(
-          in.close(), out.close()).discard_result();
-      });
+    ceph_assert(!closed);
+    closed = true;
+    return seastar::futurize_apply([this] {
+      if (ongoing_read) {
+        // deligate to post_read()
+        return seastar::now();
+      } else {
+        return in.close();
+      }
+    }).finally([this] {
+      if (ongoing_write) {
+        // deligate to post_write()
+        return seastar::now();
+      } else {
+        return out.close();
+      }
+    }).handle_exception([this] (std::exception_ptr eptr) {
+    });
   }
+
+ private:
+  void pre_read();
+  seastar::future<> post_read();
+  void pre_write();
+  seastar::future<> post_write();
 };
 
 } // namespace ceph::net

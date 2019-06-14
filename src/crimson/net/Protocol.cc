@@ -56,7 +56,7 @@ seastar::future<> Protocol::close()
 
   if (socket) {
     close_ready = socket->close()
-      .then([this] {
+      .finally([this] {
         return pending_dispatch.close();
       }).finally(std::move(cleanup));
   } else {
