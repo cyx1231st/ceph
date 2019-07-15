@@ -732,7 +732,6 @@ seastar::future<bool> ProtocolV2::client_connect()
           peer_global_seq = server_ident.global_seq();
 
           // TODO: lossless policy
-          ceph_assert(server_ident.flags() & CEPH_MSG_CONNECT_LOSSY);
           conn.policy.lossy = server_ident.flags() & CEPH_MSG_CONNECT_LOSSY;
           // TODO: backoff = utime_t();
 
