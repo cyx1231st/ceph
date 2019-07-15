@@ -34,10 +34,11 @@
 #include "crimson/osd/pg.h"
 #include "crimson/osd/pg_backend.h"
 #include "crimson/osd/pg_meta.h"
+#include "crimson/osd/osd_operations/client_request.h"
 #include "crimson/osd/osd_operations/compound_peering_request.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/osd_operations/pg_advance_map.h"
-#include "crimson/osd/osd_operations/client_request.h"
+#include "crimson/osd/osd_operations/replicated_request.h"
 
 namespace {
   seastar::logger& logger() {
@@ -477,6 +478,8 @@ seastar::future<> OSD::ms_dispatch(ceph::net::Connection* conn, MessageRef m)
     return seastar::now();
   case MSG_OSD_PG_LOG:
     return handle_pg_log(conn, boost::static_pointer_cast<MOSDPGLog>(m));
+  case MSG_OSD_REPOP:
+    return handle_rep_op(conn, boost::static_pointer_cast<MOSDRepOp>(m));
   case MSG_OSD_REPOPREPLY:
     return handle_rep_op_reply(conn, boost::static_pointer_cast<MOSDRepOpReply>(m));
   default:
@@ -848,6 +851,16 @@ seastar::future<> OSD::handle_osd_op(ceph::net::Connection* conn,
                                      Ref<MOSDOp> m)
 {
   shard_services.start_operation<ClientRequest>(
+    *this,
+    conn->get_shared(),
+    std::move(m));
+  return seastar::now();
+}
+
+seastar::future<> OSD::handle_rep_op(ceph::net::Connection* conn,
+				     Ref<MOSDRepOp> m)
+{
+  shard_services.start_operation<RepRequest>(
     *this,
     conn->get_shared(),
     std::move(m));
