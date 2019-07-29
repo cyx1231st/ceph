@@ -184,8 +184,10 @@ ProtocolV1::handle_connect_reply(msgr_tag_t tag)
     reset_session();
     return seastar::make_ready_future<stop_t>(stop_t::no);
   case CEPH_MSGR_TAG_RETRY_GLOBAL:
-    h.global_seq = messenger.get_global_seq(h.reply.global_seq);
-    return seastar::make_ready_future<stop_t>(stop_t::no);
+    return messenger.get_global_seq(h.reply.global_seq).then([this] (auto gs) {
+      h.global_seq = gs;
+      return seastar::make_ready_future<stop_t>(stop_t::no);
+    });
   case CEPH_MSGR_TAG_RETRY_SESSION:
     ceph_assert(h.reply.connect_seq > h.connect_seq);
     h.connect_seq = h.reply.connect_seq;
@@ -317,8 +319,10 @@ void ProtocolV1::start_connect(const entity_addr_t& _peer_addr,
   messenger.register_conn(
     seastar::static_pointer_cast<SocketConnection>(conn.shared_from_this()));
   seastar::with_gate(pending_dispatch, [this] {
-      return Socket::connect(conn.peer_addr)
-        .then([this](SocketFRef sock) {
+      return messenger.get_global_seq().then([this] (auto gs) {
+          h.global_seq = gs;
+          return Socket::connect(conn.peer_addr);
+        }).then([this](SocketFRef sock) {
           socket = std::move(sock);
           if (state == state_t::closing) {
             return socket->close().then([] {
@@ -357,7 +361,6 @@ void ProtocolV1::start_connect(const entity_addr_t& _peer_addr,
           bufferlist bl;
           bl.append(buffer::create_static(banner_size, banner));
           ::encode(messenger.get_myaddr(), bl, 0);
-          h.global_seq = messenger.get_global_seq();
           return socket->write_flush(std::move(bl));
         }).then([=] {
           return seastar::repeat([this] {
@@ -399,25 +402,27 @@ seastar::future<stop_t> ProtocolV1::send_connect_reply(
 seastar::future<stop_t> ProtocolV1::send_connect_reply_ready(
     msgr_tag_t tag, bufferlist&& authorizer_reply)
 {
-  h.global_seq = messenger.get_global_seq();
-  h.reply.tag = tag;
-  h.reply.features = conn.policy.features_supported;
-  h.reply.global_seq = h.global_seq;
-  h.reply.connect_seq = h.connect_seq;
-  h.reply.flags = 0;
-  if (conn.policy.lossy) {
-    h.reply.flags = h.reply.flags | CEPH_MSG_CONNECT_LOSSY;
-  }
-  h.reply.authorizer_len = authorizer_reply.length();
+  return messenger.get_global_seq(
+    ).then([this, tag, auth_len = authorizer_reply.length()] (auto gs) {
+      h.global_seq = gs;
+      h.reply.tag = tag;
+      h.reply.features = conn.policy.features_supported;
+      h.reply.global_seq = h.global_seq;
+      h.reply.connect_seq = h.connect_seq;
+      h.reply.flags = 0;
+      if (conn.policy.lossy) {
+        h.reply.flags = h.reply.flags | CEPH_MSG_CONNECT_LOSSY;
+      }
+      h.reply.authorizer_len = auth_len;
 
-  session_security.reset(
-      get_auth_session_handler(nullptr,
-                               auth_meta->auth_method,
-                               auth_meta->session_key,
-                               conn.features));
+      session_security.reset(
+          get_auth_session_handler(nullptr,
+                                   auth_meta->auth_method,
+                                   auth_meta->session_key,
+                                   conn.features));
 
-  return socket->write(make_static_packet(h.reply))
-    .then([this, reply=std::move(authorizer_reply)]() mutable {
+      return socket->write(make_static_packet(h.reply));
+    }).then([this, reply=std::move(authorizer_reply)]() mutable {
       if (reply.length()) {
         return socket->write(std::move(reply));
       } else {
@@ -674,7 +679,8 @@ ceph::bufferlist ProtocolV1::do_sweep_messages(
     const std::deque<MessageRef>& msgs,
     size_t num_msgs,
     bool require_keepalive,
-    std::optional<utime_t> _keepalive_ack)
+    std::optional<utime_t> _keepalive_ack,
+    bool require_ack)
 {
   static const size_t RESERVE_MSG_SIZE = sizeof(CEPH_MSGR_TAG_MSG) +
                                          sizeof(ceph_msg_header) +
@@ -705,11 +711,18 @@ ceph::bufferlist ProtocolV1::do_sweep_messages(
     bl.append(create_static(k.ack));
   }
 
+  if (require_ack) {
+    // TODO
+    ceph_abort();
+  }
+
   std::for_each(msgs.begin(), msgs.begin()+num_msgs, [this, &bl](const MessageRef& msg) {
     ceph_assert(!msg->get_seq() && "message already has seq");
     msg->set_seq(++conn.out_seq);
     auto& header = msg->get_header();
     header.src = messenger.get_myname();
+    // in case it is already encoded and resent
+    msg->clear_payload();
     msg->encode(conn.features, messenger.get_crc_flags());
     if (session_security) {
       session_security->sign_message(msg.get());
@@ -942,6 +955,7 @@ seastar::future<> ProtocolV1::fault()
     messenger.unregister_conn(seastar::static_pointer_cast<SocketConnection>(
         conn.shared_from_this()));
   }
+  /* TODO: reuse ProtocolV2::Timer
   if (h.backoff.count()) {
     h.backoff += h.backoff;
   } else {
@@ -951,6 +965,8 @@ seastar::future<> ProtocolV1::fault()
     h.backoff = conf.ms_max_backoff;
   }
   return seastar::sleep(h.backoff);
+  */
+  return seastar::now();
 }
 
 } // namespace ceph::net
