@@ -121,8 +121,37 @@ class Heartbeat::Peer{
   void handle_reset(crimson::net::ConnectionRef);
 
  private:
-  bool is_unhealthy(clock::time_point now) const;
-  bool is_healthy(clock::time_point now) const;
+  bool never_send_never_receive() const {
+    // it should never happen when I haven't sent any heartbeat but received
+    // any reply.
+    assert(!(clock::is_zero(first_tx) &&
+             (!clock::is_zero(last_rx_front) || !clock::is_zero(last_rx_back))));
+    return clock::is_zero(first_tx);
+  }
+  bool both_received() const {
+    return !clock::is_zero(last_rx_front) && !clock::is_zero(last_rx_back); }
+
+  enum class health_state {
+    NONE = 0, // intermediate state between HEALTHY and UNHEALTHY
+    UNHEALTHY,
+    HEALTHY,
+  };
+  health_state inspect_health_state(clock::time_point now) const {
+    if (never_send_never_receive()) {
+      // we are not healty nor unhealty because we haven't sent anything yet
+      return health_state::NONE;
+    } else if (!ping_history.empty() && ping_history.begin()->second.deadline < now) {
+      return health_state::UNHEALTHY;
+    } else if (both_received()) {
+      // only declare to be healthy until we have received the first
+      // replies from both front/back connections
+      return health_state::HEALTHY;
+    } else {
+      // we are not healty because we haven't received both reply
+      // but we are also not unhealty becase we haven't pass the deadline
+      return health_state::NONE;
+    }
+  }
 
   void connect();
   void disconnect();

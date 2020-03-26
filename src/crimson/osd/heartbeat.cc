@@ -350,55 +350,27 @@ void Heartbeat::Peer::disconnect()
 Heartbeat::Peer::~Peer()
 { disconnect(); }
 
-bool Heartbeat::Peer::is_unhealthy(clock::time_point now) const
-{
-  if (ping_history.empty()) {
-    // we haven't sent a ping yet or we have got all replies,
-    // in either way we are safe and healthy for now
-    return false;
-  } else {
-    auto oldest_ping = ping_history.begin();
-    return now > oldest_ping->second.deadline;
-  }
-}
-
-bool Heartbeat::Peer::is_healthy(clock::time_point now) const
-{
-  if (clock::is_zero(last_rx_front)) {
-    return false;
-  }
-  if (clock::is_zero(last_rx_back)) {
-    return false;
-  }
-  // only declare to be healthy until we have received the first
-  // replies from both front/back connections
-  return !is_unhealthy(now);
-}
-
 Heartbeat::clock::time_point
 Heartbeat::Peer::failed_since(clock::time_point now) const
 {
-  if (clock::is_zero(first_tx)) {
-    return clock::zero();
-  }
-  if (!is_unhealthy(now) {
-    return clock::zero();
-  }
-
-  auto oldest_deadline = ping_history.begin()->second.deadline;
-  auto failed_since = std::min(last_rx_back, last_rx_front);
-  if (clock::is_zero(failed_since)) {
-    logger().error("heartbeat_check: no reply from osd.{} "
-                   "ever on either front or back, first ping sent {} "
-                   "(oldest deadline {})",
-                   peer, first_tx, oldest_deadline);
-    failed_since = first_tx;
+  if (inspect_health_state(now) == health_state::UNHEALTHY) {
+    auto oldest_deadline = ping_history.begin()->second.deadline;
+    auto failed_since = std::min(last_rx_back, last_rx_front);
+    if (clock::is_zero(failed_since)) {
+      logger().error("heartbeat_check: no reply from osd.{} "
+                     "ever on either front or back, first ping sent {} "
+                     "(oldest deadline {})",
+                     peer, first_tx, oldest_deadline);
+      failed_since = first_tx;
+    } else {
+      logger().error("heartbeat_check: no reply from osd.{} "
+                     "since back {} front {} (oldest deadline {})",
+                     peer, last_rx_back, last_rx_front, oldest_deadline);
+    }
+    return failed_since;
   } else {
-    logger().error("heartbeat_check: no reply from osd.{} "
-                   "since back {} front {} (oldest deadline {})",
-                   peer, last_rx_back, last_rx_front, oldest_deadline);
+    return clock::zero();
   }
-  return failed_since;
 }
 
 void Heartbeat::Peer::send_heartbeat(
@@ -406,7 +378,7 @@ void Heartbeat::Peer::send_heartbeat(
     ceph::signedspan mnow,
     std::vector<seastar::future<>>& futures)
 {
-  if (clock::is_zero(first_tx)) {
+  if (never_send_never_receive()) {
     first_tx = now;
   }
   last_tx = now;
@@ -453,7 +425,7 @@ seastar::future<> Heartbeat::Peer::handle_reply(
   if (unacked == 0) {
     ping_history.erase(ping_history.begin(), ++ping);
   }
-  if (is_healthy(now)) {
+  if (inspect_health_state(now) == health_state::HEALTHY) {
     // cancel false reports
     if (auto pending = heartbeat.failure_pending.find(peer);
         pending != heartbeat.failure_pending.end()) {
