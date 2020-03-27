@@ -185,10 +185,14 @@ seastar::future<> Heartbeat::ms_dispatch(crimson::net::Connection* conn,
 
 seastar::future<> Heartbeat::ms_handle_reset(crimson::net::ConnectionRef conn, bool is_replace)
 {
-  // TODO: we should already have enough information to know which peer the
-  // conn belongs, so no need to do linear search here.
-  for (auto& [osd, peer_info] : peers) {
-    peer_info.handle_reset(conn);
+  auto peer = conn->get_peer_id();
+  if (conn->get_peer_type() != entity_name_t::TYPE_OSD ||
+      peer == entity_name_t::NEW) {
+    return seastar::now();
+  }
+  if (auto found = peers.find(peer);
+      found != peers.end()) {
+    found->second.handle_reset(conn);
   }
   return seastar::now();
 }
@@ -302,9 +306,11 @@ void Heartbeat::Peer::connect()
   auto osdmap = heartbeat.service.get_osdmap_service().get_map();
   // TODO: use addrs
   con_front = heartbeat.front_msgr->connect(
-      osdmap->get_hb_front_addrs(peer).front(), CEPH_ENTITY_TYPE_OSD);
+      osdmap->get_hb_front_addrs(peer).front(),
+      entity_name_t(CEPH_ENTITY_TYPE_OSD, peer));
   con_back = heartbeat.back_msgr->connect(
-      osdmap->get_hb_back_addrs(peer).front(), CEPH_ENTITY_TYPE_OSD);
+      osdmap->get_hb_back_addrs(peer).front(),
+      entity_name_t(CEPH_ENTITY_TYPE_OSD, peer));
 }
 
 Heartbeat::Peer::Peer(Heartbeat& heartbeat, osd_id_t peer)
