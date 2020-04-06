@@ -174,7 +174,7 @@ void Heartbeat::remove_peer(osd_id_t peer)
 {
   auto found = peers.find(peer);
   assert(found != peers.end());
-  peers.erase(peer);
+  peers.erase(found);
 }
 
 void Heartbeat::note_down_peer(osd_id_t peer)
@@ -705,7 +705,7 @@ seastar::future<> Heartbeat::FailingPeers::cancel_one(osd_id_t peer)
   if (auto pending = failure_pending.find(peer);
       pending != failure_pending.end()) {
     auto fut = send_still_alive(peer, pending->second.addrs);
-    failure_pending.erase(peer);
+    failure_pending.erase(pending);
     return fut;
   }
   return seastar::now();
