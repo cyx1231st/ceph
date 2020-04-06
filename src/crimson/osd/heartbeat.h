@@ -95,6 +95,8 @@ private:
     seastar::future<> add_pending(
         osd_id_t peer, clock::time_point failed_since, clock::time_point now);
     seastar::future<> cancel_one(osd_id_t peer);
+    template <class UnaryPredicate>
+    seastar::future<> cancel_if(UnaryPredicate&& p);
 
    private:
     seastar::future<> send_still_alive(osd_id_t, const entity_addrvec_t&);

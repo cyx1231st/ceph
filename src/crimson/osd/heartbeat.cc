@@ -164,6 +164,10 @@ void Heartbeat::update_peers(int whoami)
     next = osdmap->get_next_up_osd_after(next)) {
     add_peer(next, epoch);
   }
+  // clean up stale failing peers
+  (void) failing_peers.cancel_if([this] (osd_id_t peer) {
+    return peers.find(peer) == peers.end();
+  });
 }
 
 void Heartbeat::remove_peer(osd_id_t peer)
@@ -694,6 +698,21 @@ seastar::future<> Heartbeat::FailingPeers::cancel_one(osd_id_t peer)
     return fut;
   }
   return seastar::now();
+}
+
+template <class UnaryPredicate>
+seastar::future<> Heartbeat::FailingPeers::cancel_if(UnaryPredicate&& p)
+{
+  std::vector<seastar::future<>> futures;
+  for (auto it = failure_pending.begin(); it != failure_pending.end();) {
+    if (p(it->first)) {
+      futures.push_back(send_still_alive(it->first, it->second.addrs));
+      it = failure_pending.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  return seastar::when_all_succeed(futures.begin(), futures.end());
 }
 
 seastar::future<>
