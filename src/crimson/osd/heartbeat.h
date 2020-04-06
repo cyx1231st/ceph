@@ -38,6 +38,7 @@ public:
   void add_peer(osd_id_t peer, epoch_t epoch);
   void update_peers(int whoami);
   void remove_peer(osd_id_t peer);
+  void check_and_report_failure();
 
   const entity_addrvec_t& get_front_addrs() const;
   const entity_addrvec_t& get_back_addrs() const;
@@ -85,7 +86,6 @@ private:
   peers_map_t peers;
 
   seastar::future<> send_heartbeats();
-  void check_and_report_failure();
 
   // osds we've reported to monior as failed ones, but they are not marked down
   // yet

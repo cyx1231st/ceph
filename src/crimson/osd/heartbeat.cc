@@ -37,7 +37,6 @@ Heartbeat::Heartbeat(osd_id_t whoami,
     back_msgr{back_msgr},
     // do this in background
     timer{[this] {
-      check_and_report_failure();
       (void)send_heartbeats();
     }},
     failing_peers{*this}

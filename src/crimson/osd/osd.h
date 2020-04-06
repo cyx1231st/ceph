@@ -118,6 +118,8 @@ class OSD final : public crimson::net::Dispatcher,
   // admin-socket
   seastar::lw_shared_ptr<crimson::admin::AdminSocket> asok;
 
+  seastar::timer<seastar::lowres_clock> mon_report_timer;
+
 public:
   OSD(int id, uint32_t nonce,
       crimson::net::MessengerRef cluster_msgr,

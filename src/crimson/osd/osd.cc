@@ -80,6 +80,7 @@ OSD::OSD(int id, uint32_t nonce,
     // do this in background
     heartbeat_timer{[this] { update_heartbeat_peers(); }},
     asok{seastar::make_lw_shared<crimson::admin::AdminSocket>()},
+    mon_report_timer{[this] { heartbeat->check_and_report_failure(); }},
     osdmap_gate("OSD::osdmap_gate", std::make_optional(std::ref(shard_services)))
 {
   osdmaps[0] = boost::make_local_shared<OSDMap>();
@@ -928,6 +929,8 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
           std::chrono::seconds(local_conf()->osd_beacon_report_interval));
         heartbeat_timer.arm_periodic(
           std::chrono::seconds(TICK_INTERVAL));
+        mon_report_timer.arm_periodic(
+          std::chrono::seconds(local_conf()->osd_mon_report_interval));
       }
     }
     check_osdmap_features();
@@ -1022,6 +1025,7 @@ seastar::future<> OSD::restart()
 {
   beacon_timer.cancel();
   heartbeat_timer.cancel();
+  mon_report_timer.cancel();
   up_epoch = 0;
   bind_epoch = osdmap->get_epoch();
   // TODO: promote to shutdown if being marked down for multiple times
