@@ -37,7 +37,7 @@ Heartbeat::Heartbeat(osd_id_t whoami,
     back_msgr{back_msgr},
     // do this in background
     timer{[this] {
-      heartbeat_check();
+      check_and_report_failure();
       (void)send_heartbeats();
     }},
     failing_peers{*this}
@@ -279,31 +279,16 @@ seastar::future<> Heartbeat::handle_you_died()
   return seastar::now();
 }
 
-void Heartbeat::heartbeat_check()
+void Heartbeat::check_and_report_failure()
 {
-  failure_queue_t failure_queue;
   const auto now = clock::now();
   for (const auto& [osd, peer_info] : peers) {
     auto failed_since = peer_info.failed_since(now);
     if (!clock::is_zero(failed_since)) {
-      failure_queue.emplace(osd, failed_since);
+      // safe to ignore the future because there is no dependent reference
+      // and messages will be sent in order
+      (void) failing_peers.add_pending(osd, failed_since, now);
     }
-  }
-  if (!failure_queue.empty()) {
-    // send_failures can run in background, because
-    // 	1. After the execution of send_failures, no msg is actually
-    // 	   sent, which means the sending operation is not done,
-    // 	   which further seems to involve problems risks that when
-    // 	   osd shuts down, the left part of the sending operation
-    // 	   may reference OSD and Heartbeat instances that are already
-    // 	   deleted. However, remaining work of that sending operation
-    // 	   involves no reference back to OSD or Heartbeat instances,
-    // 	   which means it wouldn't involve the above risks.
-    // 	2. messages are sent in order, if later checks find out
-    // 	   the previous "failed" peers to be healthy, that "still
-    // 	   alive" messages would be sent after the previous "osd
-    // 	   failure" messages which is totally safe.
-    (void)send_failures(std::move(failure_queue));
   }
 }
 
@@ -316,17 +301,6 @@ seastar::future<> Heartbeat::send_heartbeats()
   for (auto& [osd, peer_info] : peers) {
     peer_info.send_heartbeat(now, mnow, futures);
   }
-  return seastar::when_all_succeed(futures.begin(), futures.end());
-}
-
-seastar::future<> Heartbeat::send_failures(failure_queue_t&& failure_queue)
-{
-  std::vector<seastar::future<>> futures;
-  const auto now = clock::now();
-  for (auto [osd, failed_since] : failure_queue) {
-    failing_peers.add_pending(osd, failed_since, now, futures);
-  }
-
   return seastar::when_all_succeed(futures.begin(), futures.end());
 }
 
@@ -690,14 +664,13 @@ void Heartbeat::Peer::connect_back()
   }
 }
 
-bool Heartbeat::FailingPeers::add_pending(
+seastar::future<> Heartbeat::FailingPeers::add_pending(
   osd_id_t peer,
   clock::time_point failed_since,
-  clock::time_point now,
-  std::vector<seastar::future<>>& futures)
+  clock::time_point now)
 {
   if (failure_pending.count(peer)) {
-    return false;
+    return seastar::now();
   }
   auto failed_for = chrono::duration_cast<chrono::seconds>(
       now - failed_since).count();
@@ -710,8 +683,7 @@ bool Heartbeat::FailingPeers::add_pending(
                                 osdmap->get_epoch());
   failure_pending.emplace(peer, failure_info_t{failed_since,
                                                osdmap->get_addrs(peer)});
-  futures.push_back(heartbeat.monc.send_message(failure_report));
-  return true;
+  return heartbeat.monc.send_message(failure_report);
 }
 
 seastar::future<> Heartbeat::FailingPeers::cancel_one(osd_id_t peer)

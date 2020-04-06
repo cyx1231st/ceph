@@ -84,24 +84,16 @@ private:
   using peers_map_t = std::map<osd_id_t, Peer>;
   peers_map_t peers;
 
-  // osds which are considered failed
-  // osd_id => when was the last time that both front and back pings were acked
-  //           or sent.
-  //           use for calculating how long the OSD has been unresponsive
-  using failure_queue_t = std::map<osd_id_t, clock::time_point>;
-  seastar::future<> send_failures(failure_queue_t&& failure_queue);
   seastar::future<> send_heartbeats();
-  void heartbeat_check();
+  void check_and_report_failure();
 
   // osds we've reported to monior as failed ones, but they are not marked down
   // yet
   class FailingPeers {
    public:
     FailingPeers(Heartbeat& heartbeat) : heartbeat(heartbeat) {}
-    bool add_pending(osd_id_t peer,
-                     clock::time_point failed_since,
-                     clock::time_point now,
-                     std::vector<seastar::future<>>& futures);
+    seastar::future<> add_pending(
+        osd_id_t peer, clock::time_point failed_since, clock::time_point now);
     seastar::future<> cancel_one(osd_id_t peer);
 
    private:
