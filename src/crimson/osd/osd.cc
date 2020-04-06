@@ -907,6 +907,17 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
                               boost::make_counting_iterator(last + 1),
                               [this](epoch_t cur) {
     return get_map(cur).then([this](cached_map_t&& o) {
+      // notify heartbeat peer down
+      set<int> old_osds;
+      osdmap->get_all_osds(old_osds);
+      for (int osd : old_osds) {
+        if (osd != whoami &&
+            osdmap->is_up(osd) &&
+            o->is_down(osd)) {
+          heartbeat->note_down_peer(osd);
+        }
+      }
+
       osdmap = std::move(o);
       shard_services.update_map(osdmap);
       if (up_epoch == 0 &&

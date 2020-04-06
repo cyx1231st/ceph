@@ -38,6 +38,7 @@ public:
   void add_peer(osd_id_t peer, epoch_t epoch);
   void update_peers(int whoami);
   void remove_peer(osd_id_t peer);
+  void note_down_peer(osd_id_t peer);
   void check_and_report_failure();
 
   const entity_addrvec_t& get_front_addrs() const;
@@ -94,6 +95,7 @@ private:
     FailingPeers(Heartbeat& heartbeat) : heartbeat(heartbeat) {}
     seastar::future<> add_pending(
         osd_id_t peer, clock::time_point failed_since, clock::time_point now);
+    bool remove_pending(osd_id_t peer);
     seastar::future<> cancel_one(osd_id_t peer);
     template <class UnaryPredicate>
     seastar::future<> cancel_if(UnaryPredicate&& p);

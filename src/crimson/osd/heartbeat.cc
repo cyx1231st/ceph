@@ -177,6 +177,12 @@ void Heartbeat::remove_peer(osd_id_t peer)
   peers.erase(peer);
 }
 
+void Heartbeat::note_down_peer(osd_id_t peer)
+{
+  failing_peers.remove_pending(peer);
+  peers.erase(peer);
+}
+
 seastar::future<> Heartbeat::ms_dispatch(crimson::net::Connection* conn,
                                          MessageRef m)
 {
@@ -687,6 +693,11 @@ seastar::future<> Heartbeat::FailingPeers::add_pending(
   failure_pending.emplace(peer, failure_info_t{failed_since,
                                                osdmap->get_addrs(peer)});
   return heartbeat.monc.send_message(failure_report);
+}
+
+bool Heartbeat::FailingPeers::remove_pending(osd_id_t peer)
+{
+  return failure_pending.erase(peer) == 1u;
 }
 
 seastar::future<> Heartbeat::FailingPeers::cancel_one(osd_id_t peer)
