@@ -11,3 +11,5 @@ target_link_libraries(crimson-os
   crimson-cyanstore
   crimson-alienstore
   crimson)
+
+add_subdirectory(btree)
