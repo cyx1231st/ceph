@@ -47,18 +47,21 @@ namespace crimson::os::seastore::onode {
     const T* get_ptr(loff_t block_offset) const {
       assert(valid);
       assert(block_offset + sizeof(T) <= length);
-      const char* logical_offset = (static_cast<const char*>(ptr) + block_offset);
-      return reinterpret_cast<const T*>(logical_offset);
+      return static_cast<const T*>(ptr_offset(block_offset));
     }
     void copy_in(const void* from, loff_t block_offset, loff_t len) {
       assert(valid);
       assert(block_offset + len <= length);
-      char* logical_offset = (static_cast<char*>(ptr) + block_offset);
-      memcpy(logical_offset, from, len);
+      memcpy(ptr_offset(block_offset), from, len);
     }
     template <typename T>
     void copy_in(const T& from, loff_t block_offset) {
       copy_in(&from, block_offset, sizeof(from));
+    }
+    void zero(loff_t block_offset, loff_t len) {
+      assert(valid);
+      assert(block_offset + len <= length);
+      memset(ptr_offset(block_offset), 0, len);
     }
 
    private:
@@ -69,6 +72,16 @@ namespace crimson::os::seastore::onode {
       valid = false;
       ptr = nullptr;
       length = 0;
+    }
+
+    const void* ptr_offset(loff_t offset) const {
+      assert(valid);
+      assert(offset < length);
+      return static_cast<const char*>(ptr) + offset;
+    }
+    void* ptr_offset(loff_t offset) {
+      return const_cast<void*>(
+          const_cast<const LogicalCachedExtent*>(this)->ptr_offset(offset));
     }
 
     bool valid = true;
@@ -90,12 +103,19 @@ namespace crimson::os::seastore::onode {
       auto extent = Ref<LogicalCachedExtent>(new LogicalCachedExtent(mem_block, len));
       assert(allocate_map.find(extent->get_laddr()) == allocate_map.end());
       allocate_map.insert({extent->get_laddr(), extent});
+      return extent;
     }
     void free_extent(Ref<LogicalCachedExtent> extent) {
       std::free(extent->ptr);
       auto size = allocate_map.erase(extent->get_laddr());
       assert(size == 1u);
       extent->invalidate();
+    }
+    void free_all() {
+      for (auto& [addr, extent] : allocate_map) {
+        free_extent(extent);
+      }
+      assert(allocate_map.empty());
     }
     Ref<LogicalCachedExtent> read_extent(laddr_t offset) {
       auto iter = allocate_map.find(offset);
@@ -190,8 +210,10 @@ namespace crimson::os::seastore::onode {
   using slot_1_t = _slot_t<fixed_key_1_t>;
   using slot_3_t = _slot_t<fixed_key_3_t>;
 
-  template <typename slot_type>
+  template <typename slot_type, field_type_t _field_type>
   struct _node_fields_013_t {
+    static constexpr field_type_t field_type = _field_type;
+
     node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(slot_type), sizeof(laddr_t)
     // and the minimal size of variable_key.
@@ -199,10 +221,12 @@ namespace crimson::os::seastore::onode {
     num_keys_t num_keys = 0u;
     slot_type slots[];
   } __attribute__((packed));
-  using node_fields_0_t = _node_fields_013_t<slot_0_t>;
-  using node_fields_1_t = _node_fields_013_t<slot_1_t>;
+  using node_fields_0_t = _node_fields_013_t<slot_0_t, field_type_t::N0>;
+  using node_fields_1_t = _node_fields_013_t<slot_1_t, field_type_t::N1>;
 
   struct node_fields_2_t {
+    static constexpr field_type_t field_type = field_type_t::N2;
+
     node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(node_off_t), sizeof(laddr_t)
     // and the minimal size of variable_key.
@@ -215,6 +239,8 @@ namespace crimson::os::seastore::onode {
   static constexpr unsigned MAX_NUM_KEYS_I3 = 170;
   template <unsigned MAX_NUM_KEYS>
   struct _internal_fields_3_t {
+    static constexpr field_type_t field_type = field_type_t::N3;
+
     node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
     using num_keys_t = uint8_t;
@@ -226,45 +252,85 @@ namespace crimson::os::seastore::onode {
                 sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3 + 1>) > NODE_BLOCK_SIZE);
   using internal_fields_3_t = _internal_fields_3_t<MAX_NUM_KEYS_I3>;
 
-  using leaf_fields_3_t = _node_fields_013_t<slot_3_t>;
+  using leaf_fields_3_t = _node_fields_013_t<slot_3_t, field_type_t::N3>;
 
   class Node
     : public boost::intrusive_ref_counter<Node, boost::thread_unsafe_counter> {
+   public:
+    virtual node_type_t node_type() const = 0;
+    virtual field_type_t field_type() const = 0;
+    laddr_t laddr() const {
+      return extent->get_laddr();
+    }
+    level_t level() const {
+      return extent->get_ptr<node_header_t>(0u)->level;
+    }
+
+   protected:
+    Node() {}
+
+    // might be asynchronous
+    void alloc_extent(size_t num_keys_size, level_t level) {
+      extent = transaction_manager.alloc_extent(NODE_BLOCK_SIZE);
+      extent->copy_in(node_header_t{field_type(), node_type(), level}, 0u);
+      extent->zero(sizeof(node_header_t), num_keys_size);
+    }
+
+    Ref<LogicalCachedExtent> extent;
   };
 
-  template <typename FieldType>
+  template <typename FieldType, typename ConcreteType>
   class InternalNodeT : public Node {
+   public:
+    node_type_t node_type() const override { return node_type_t::INTERNAL; }
+    field_type_t field_type() const override { return FieldType::field_type; }
+
+    static Ref<ConcreteType> allocate(level_t level) {
+      assert(level != 0u);
+      auto ret = Ref<ConcreteType>(new ConcreteType());
+      ret->alloc_extent(sizeof(FieldType::num_keys), level);
+      return ret;
+    }
   };
 
-  class InternalNode0 : public InternalNodeT<node_fields_0_t> {
+  class InternalNode0 : public InternalNodeT<node_fields_0_t, InternalNode0> {
   };
 
-  class InternalNode1 : public InternalNodeT<node_fields_1_t> {
+  class InternalNode1 : public InternalNodeT<node_fields_1_t, InternalNode1> {
   };
 
-  class InternalNode2 : public InternalNodeT<node_fields_2_t> {
+  class InternalNode2 : public InternalNodeT<node_fields_2_t, InternalNode2> {
   };
 
-  class InternalNode3 : public InternalNodeT<internal_fields_3_t> {
+  class InternalNode3 : public InternalNodeT<internal_fields_3_t, InternalNode3> {
   };
 
   class LeafNode : public Node {
   };
 
-  template <typename FieldType>
+  template <typename FieldType, typename ConcreteType>
   class LeafNodeT: public LeafNode {
+   public:
+    node_type_t node_type() const override { return node_type_t::LEAF; }
+    field_type_t field_type() const override { return FieldType::field_type; }
+
+    static Ref<ConcreteType> allocate() {
+      auto ret = Ref<ConcreteType>(new ConcreteType());
+      ret->alloc_extent(sizeof(FieldType::num_keys), 0u);
+      return ret;
+    }
   };
 
-  class LeafNode0 : public LeafNodeT<node_fields_0_t> {
+  class LeafNode0 : public LeafNodeT<node_fields_0_t, LeafNode0> {
   };
 
-  class LeafNode1 : public LeafNodeT<node_fields_1_t> {
+  class LeafNode1 : public LeafNodeT<node_fields_1_t, LeafNode1> {
   };
 
-  class LeafNode2 : public LeafNodeT<node_fields_2_t> {
+  class LeafNode2 : public LeafNodeT<node_fields_2_t, LeafNode2> {
   };
 
-  class LeafNode3 : public LeafNodeT<leaf_fields_3_t> {
+  class LeafNode3 : public LeafNodeT<leaf_fields_3_t, LeafNode3> {
   };
 
   /*
@@ -334,23 +400,18 @@ namespace crimson::os::seastore::onode {
     static Btree& get() {
       static std::unique_ptr<Btree> singleton;
       if (!singleton) {
-        // bootstrap root node block of type (0, leaf)
-        auto node_block = transaction_manager.alloc_extent(NODE_BLOCK_SIZE);
-        node_block->copy_in(node_header_t{field_type_t::N0, node_type_t::LEAF, 0u}, 0u);
-        node_block->copy_in(node_fields_0_t::num_keys_t{0u}, sizeof(node_header_t));
-        singleton.reset(new Btree(node_block->get_laddr()));
+        singleton.reset(new Btree(LeafNode0::allocate()));
       }
       return *singleton;
     }
 
    private:
-    Btree(laddr_t root_addr) : root_addr{root_addr} {}
+    Btree(Ref<Node> root_node) : root_node{root_node} {}
     Btree(const Btree&) = delete;
     Btree(Btree&&) = delete;
     Btree& operator=(const Btree&) = delete;
 
-    const laddr_t root_addr;
-    Ref<Node> root;
+    Ref<Node> root_node;
   };
 
 }

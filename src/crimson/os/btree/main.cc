@@ -21,4 +21,8 @@ int main(int argc, char* argv[])
   std::cout << "size node_fields_2_t: " << sizeof(node_fields_2_t) << std::endl;
   std::cout << "size internal_fields_3_t: " << sizeof(internal_fields_3_t) << std::endl;
   std::cout << "size leaf_fields_3_t: " << sizeof(leaf_fields_3_t) << std::endl;
+
+  auto& btree = Btree::get();
+
+  transaction_manager.free_all();
 }
