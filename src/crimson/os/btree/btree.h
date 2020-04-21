@@ -127,6 +127,7 @@ namespace crimson::os::seastore::onode {
     std::map<laddr_t, Ref<LogicalCachedExtent>> allocate_map;
   } transaction_manager;
 
+  enum class MatchKindKey : int8_t { NE = -1, EQ = 0, PO };
   /*
    * onode indexes
    */
@@ -137,6 +138,62 @@ namespace crimson::os::seastore::onode {
   using snap_t = uint64_t;
   using gen_t = uint64_t;
 
+  struct onode_key_t {
+    shard_t shard;
+    pool_t pool;
+    crush_hash_t crush_hash;
+    std::string nspace;
+    std::string oid;
+    snap_t snap;
+    gen_t gen;
+  };
+  template <typename T>
+  MatchKindKey _compare_crush(const onode_key_t& key, const T& target) {
+    if (key.crush_hash < target.crush_hash)
+      return MatchKindKey::NE;
+    if (key.crush_hash > target.crush_hash)
+      return MatchKindKey::PO;
+    return MatchKindKey::EQ;
+  }
+  template <typename T>
+  MatchKindKey _compare_shard_pool_crush(const onode_key_t& key, const T& target) {
+    if (key.shard < target.shard)
+      return MatchKindKey::NE;
+    if (key.shard > target.shard)
+      return MatchKindKey::PO;
+    if (key.pool < target.pool)
+      return MatchKindKey::NE;
+    if (key.pool > target.pool)
+      return MatchKindKey::PO;
+    return _compare_crush(key, target);
+  }
+  template <typename T>
+  MatchKindKey _compare_snap_gen(const onode_key_t& key, const T& target) {
+    if (key.snap < target.snap)
+      return MatchKindKey::NE;
+    if (key.snap > target.snap)
+      return MatchKindKey::PO;
+    if (key.gen < target.gen)
+      return MatchKindKey::NE;
+    if (key.gen > target.gen)
+      return MatchKindKey::PO;
+    return MatchKindKey::EQ;
+  }
+  MatchKindKey compare_to(const onode_key_t& key, const onode_key_t& target) {
+    auto ret = _compare_shard_pool_crush(key, target);
+    if (ret != MatchKindKey::EQ)
+      return ret;
+    if (key.nspace < target.nspace)
+      return MatchKindKey::NE;
+    if (key.nspace > target.nspace)
+      return MatchKindKey::PO;
+    if (key.oid < target.oid)
+      return MatchKindKey::NE;
+    if (key.oid > target.oid)
+      return MatchKindKey::PO;
+    return _compare_snap_gen(key, target);
+  }
+
   /*
    * fixed keys
    */
@@ -146,15 +203,24 @@ namespace crimson::os::seastore::onode {
     pool_t pool;
     crush_hash_t crush_hash;
   } __attribute__((packed));
+  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_0_t& target) {
+    return _compare_shard_pool_crush(key, target);
+  }
 
   struct fixed_key_1_t {
     crush_hash_t crush_hash;
   } __attribute__((packed));
+  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_1_t& target) {
+    return _compare_crush(key, target);
+  }
 
   struct fixed_key_3_t {
     snap_t snap;
     gen_t gen;
   } __attribute__((packed));
+  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_3_t& target) {
+    return _compare_snap_gen(key, target);
+  }
 
   /*
    * btree block layouts
@@ -210,6 +276,29 @@ namespace crimson::os::seastore::onode {
   using slot_1_t = _slot_t<fixed_key_1_t>;
   using slot_3_t = _slot_t<fixed_key_3_t>;
 
+  enum class MatchKindItem : int8_t { NE = -1, EQ = 0 };
+  struct search_result_item_t {
+    size_t position;
+    MatchKindItem match;
+  };
+  search_result_item_t binary_search(
+      const onode_Key_t& key, const T* array, size_t begin, size_t end) {
+    assert(begin <= end);
+    while (begin < end) {
+      auto mid = (begin + end) >> 1;
+      const T& target = *(array + mid);
+      auto match = compare_to(key, target);
+      if (match == MatchKindKey::NE) {
+        end = mid;
+      } else if (match == MatchKindKey::OP) {
+        begin = mid + 1;
+      } else {
+        return {mid, MatchKindItem::EQ};
+      }
+    }
+    return {begin , MatchKindItem::NE};
+  }
+
   template <typename slot_type, field_type_t _field_type>
   struct _node_fields_013_t {
     static constexpr field_type_t field_type = _field_type;
@@ -220,6 +309,9 @@ namespace crimson::os::seastore::onode {
     using num_keys_t = uint8_t;
     num_keys_t num_keys = 0u;
     slot_type slots[];
+
+    //lookup_internal(const onode_key_t& key);
+    //lookup_leaf(const onode_key_t& key);
   } __attribute__((packed));
   using node_fields_0_t = _node_fields_013_t<slot_0_t, field_type_t::N0>;
   using node_fields_1_t = _node_fields_013_t<slot_1_t, field_type_t::N1>;
@@ -233,6 +325,9 @@ namespace crimson::os::seastore::onode {
     using num_keys_t = uint8_t;
     num_keys_t num_keys = 0u;
     node_offset_t offsets[];
+
+    //lookup_internal(const onode_key_t& key);
+    //lookup_leaf(const onode_key_t& key);
   } __attribute__((packed));
 
   // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
@@ -247,6 +342,8 @@ namespace crimson::os::seastore::onode {
     num_keys_t num_keys = 0u;
     fixed_key_3_t keys[MAX_NUM_KEYS];
     laddr_t child_addrs[MAX_NUM_KEYS + 1];
+
+    //lookup_internal(const onode_key_t& key);
   } __attribute__((packed));
   static_assert(sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3>) <= NODE_BLOCK_SIZE &&
                 sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3 + 1>) > NODE_BLOCK_SIZE);
@@ -268,6 +365,8 @@ namespace crimson::os::seastore::onode {
 
    protected:
     Node() {}
+
+    //virtual SearchResult lower_bound(const onode_key_t& key) = 0;
 
     // might be asynchronous
     void alloc_extent(size_t num_keys_size, level_t level) {
@@ -341,16 +440,6 @@ namespace crimson::os::seastore::onode {
    *   ceph::BlueStore::get_onode()
    *   db->get_iterator(PREFIIX_OBJ) by ceph::BlueStore::fsck()
    */
-  struct onode_key_t {
-    shard_t shard;
-    pool_t pool;
-    crush_hash_t crush_hash;
-    std::string nspace;
-    std::string oid;
-    snap_t snap;
-    gen_t gen;
-  };
-
   class Btree {
     class Cursor {
      public:
@@ -358,7 +447,7 @@ namespace crimson::os::seastore::onode {
       Cursor(const Cursor& x) = default;
       ~Cursor() = default;
 
-      onode_key_t key() const { return {}; }
+      const onode_key_t& key() const { return {}; }
       // might return Onode class to track the changing onode_t pointer
       onode_t* value() const { return nullptr; }
       bool operator==(const Cursor& x) const { return false; }
@@ -382,8 +471,12 @@ namespace crimson::os::seastore::onode {
     // lookup
     Cursor begin() { return {}; }
     Cursor end() { return {}; }
+    bool contains(const onode_key_t& key) { return false; }
     Cursor find(const onode_key_t& key) { return {}; }
-    Cursor lower_bound(const onode_key_t& key) { return {}; }
+    Cursor lower_bound(const onode_key_t& key) {
+      //return Cursor(root_node->lower_bound(key));
+      return {};
+    }
     // modifiers
     std::pair<Cursor, bool>
     insert_or_assign(const onode_key_t& key, onode_t&& value) {
