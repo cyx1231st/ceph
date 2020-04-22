@@ -267,8 +267,9 @@ namespace crimson::os::seastore::onode {
   } __attribute__((packed));
   static_assert(static_cast<uint8_t>(field_type_t::_MAX) <= 1u<<8);
 
-  template <typename fixed_key_type>
+  template <typename _fixed_key_type>
   struct _slot_t {
+    using fixed_key_type = _fixed_key_type;
     fixed_key_type key;
     node_offset_t right_offset;
   } __attribute__((packed));
@@ -277,20 +278,22 @@ namespace crimson::os::seastore::onode {
   using slot_3_t = _slot_t<fixed_key_3_t>;
 
   enum class MatchKindItem : int8_t { NE = -1, EQ = 0 };
+  template  <typename IndexType>
   struct search_result_item_t {
-    size_t position;
+    IndexType position;
     MatchKindItem match;
   };
-  search_result_item_t binary_search(
-      const onode_Key_t& key, const T* array, size_t begin, size_t end) {
+  template <typename FGetKey, typename IndexType>
+  search_result_item_t<IndexType> binary_search(
+      const onode_key_t& key, FGetKey& f_get_key, IndexType begin, IndexType end) {
     assert(begin <= end);
     while (begin < end) {
       auto mid = (begin + end) >> 1;
-      const T& target = *(array + mid);
+      const auto& target = f_get_key(mid);
       auto match = compare_to(key, target);
       if (match == MatchKindKey::NE) {
         end = mid;
-      } else if (match == MatchKindKey::OP) {
+      } else if (match == MatchKindKey::PO) {
         begin = mid + 1;
       } else {
         return {mid, MatchKindItem::EQ};
@@ -310,8 +313,11 @@ namespace crimson::os::seastore::onode {
     num_keys_t num_keys = 0u;
     slot_type slots[];
 
-    //lookup_internal(const onode_key_t& key);
-    //lookup_leaf(const onode_key_t& key);
+    search_result_item_t<num_keys_t> lookup_fixed_keys(const onode_key_t& key) const {
+      auto f_get_key = [this] (num_keys_t index)
+        -> const typename slot_type::fixed_key_type& { return slots[index].key; };
+      return binary_search(key, f_get_key, 0, num_keys);
+    }
   } __attribute__((packed));
   using node_fields_0_t = _node_fields_013_t<slot_0_t, field_type_t::N0>;
   using node_fields_1_t = _node_fields_013_t<slot_1_t, field_type_t::N1>;
@@ -325,9 +331,6 @@ namespace crimson::os::seastore::onode {
     using num_keys_t = uint8_t;
     num_keys_t num_keys = 0u;
     node_offset_t offsets[];
-
-    //lookup_internal(const onode_key_t& key);
-    //lookup_leaf(const onode_key_t& key);
   } __attribute__((packed));
 
   // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
@@ -343,13 +346,46 @@ namespace crimson::os::seastore::onode {
     fixed_key_3_t keys[MAX_NUM_KEYS];
     laddr_t child_addrs[MAX_NUM_KEYS + 1];
 
-    //lookup_internal(const onode_key_t& key);
+    search_result_item_t<num_keys_t> lookup_fixed_keys(const onode_key_t& key) const {
+      auto f_get_key = [this] (num_keys_t index) -> const fixed_key_3_t& { return keys[index]; };
+      return binary_search(key, f_get_key, 0, num_keys);
+    }
   } __attribute__((packed));
   static_assert(sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3>) <= NODE_BLOCK_SIZE &&
                 sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3 + 1>) > NODE_BLOCK_SIZE);
   using internal_fields_3_t = _internal_fields_3_t<MAX_NUM_KEYS_I3>;
 
   using leaf_fields_3_t = _node_fields_013_t<slot_3_t, field_type_t::N3>;
+
+  /*
+   * block layout of a variable-sized item (right-side)
+   *
+   * for internal node type 0, 1, 2:
+   * (block boundary) ----------------------------------------------------+
+   * previous off ---------------------------------------------+          |
+   * current off --+                                           |          |
+   *               |                                           |          |
+   *               V                                           V          V
+   *        <==== |   |sub |fix|sub |fix|ns   |ns  |oid  |oid |(prv-sub-)|
+   *  (next-item) |...|addr|key|addr|key|char |char|char |char|(-addr   )|
+   *        <==== |   |1   |1  |0   |0  |array|len |array|len |(prv-item)...
+   *
+   * for leaf node type 0, 1, 2:
+   * previous off (block boundary) --------------------------------------+
+   * current off --+                                                     |
+   *               |                                                     |
+   *               V                                                     V
+   *        <==== |   |o-  |o-  |   |key|key|num  |ns   |ns  |oid  |oid |
+   *  (next-item) |...|node|node|...|off|off|sub  |char |char|char |char|(prv-item)
+   *        <==== |   |1   |0   |   |1  |0  |items|array|len |array|len |
+   */
+
+  // presumably the maximum string size is 2KiB
+  using string_size_t = uint16_t;
+  struct internal_sub_item_t {
+    fixed_key_3_t key;
+    laddr_t child_addr;
+  } __attribute__((packed));
 
   class Node
     : public boost::intrusive_ref_counter<Node, boost::thread_unsafe_counter> {
