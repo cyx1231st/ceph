@@ -360,32 +360,211 @@ namespace crimson::os::seastore::onode {
   /*
    * block layout of a variable-sized item (right-side)
    *
-   * for internal node type 0, 1, 2:
-   * (block boundary) ----------------------------------------------------+
-   * previous off ---------------------------------------------+          |
-   * current off --+                                           |          |
-   *               |                                           |          |
-   *               V                                           V          V
-   *        <==== |   |sub |fix|sub |fix|ns   |ns  |oid  |oid |(prv-sub-)|
-   *  (next-item) |...|addr|key|addr|key|char |char|char |char|(-addr   )|
-   *        <==== |   |1   |1  |0   |0  |array|len |array|len |(prv-item)...
+   * for internal node type 0, 1:
+   * previous off (block boundary) -----------------------------+~~~~~~~~~~+
+   * current off --+                                            |          |
+   *               |                                            |          |
+   *               V                                            V          V
+   *        <==== |   sub |fix|sub |fix|ns char|oid char|colli-|(prv-sub-)|
+   *  (next-item) |...addr|key|addr|key|array &|array & |-sion |(-addr   )|
+   *        <==== |   1   |1  |0   |0  |len    |len     |offset|(prv-item)...
+   *                ^                                      |
+   *                |                                      |
+   *                +------------ next collision ----------+
    *
-   * for leaf node type 0, 1, 2:
-   * previous off (block boundary) --------------------------------------+
-   * current off --+                                                     |
-   *               |                                                     |
-   *               V                                                     V
-   *        <==== |   |o-  |o-  |   |key|key|num  |ns   |ns  |oid  |oid |
-   *  (next-item) |...|node|node|...|off|off|sub  |char |char|char |char|(prv-item)
-   *        <==== |   |1   |0   |   |1  |0  |items|array|len |array|len |
+   * for internal node type 2:
+   * previous off (block boundary) ----------------------+~~~~~~~~~~+
+   * current off --+                                     |          |
+   *               |                                     |          |
+   *               V                                     V          V
+   *        <==== |   sub |fix|sub |fix|ns char|oid char|(prv-sub-)|
+   *  (next-item) |...addr|key|addr|key|array &|array & |(-addr   )|
+   *        <==== |   1   |1  |0   |0  |len    |len     |(prv-item)...
+   *
+   * for leaf node type 0, 1:
+   * previous off (block boundary) ----------------------------------------+
+   * current off --+                                                       |
+   *               |                                                       |
+   *               V                                                       V
+   *        <==== |   fix|o-  |fix|   off|off|num |ns char|oid char|colli-|
+   *  (next-item) |...key|node|key|...set|set|sub |array &|array & |-sion |(prv-item)
+   *        <==== |   1  |0   |0  |   1  |0  |keys|len    |len     |offset|
+   *                ^                                                  |
+   *                |                                                  |
+   *                +------------ next collision ----------------------+
+   *
+   * for leaf node type 2:
+   * previous off (block boundary) ---------------------------------+
+   * current off --+                                                |
+   *               |                                                |
+   *               V                                                V
+   *        <==== |   fix|o-  |fix|   off|off|num |ns char|oid char|
+   *  (next-item) |...key|node|key|...set|set|sub |array &|array & |(prv-item)
+   *        <==== |   1  |0   |0  |   1  |0  |keys|len    |len     |
    */
 
-  // presumably the maximum string size is 2KiB
-  using string_size_t = uint16_t;
   struct internal_sub_item_t {
     fixed_key_3_t key;
     laddr_t child_addr;
   } __attribute__((packed));
+
+  class internal_sub_items_t {
+    using num_keys_t = size_t;
+   public:
+    internal_sub_items_t(const char* p_start, const char* p_end) {
+      assert(p_start < p_end);
+      assert((p_end - p_start) % sizeof(internal_sub_item_t) == 0);
+      num_items = (p_end - p_start) / sizeof(internal_sub_item_t);
+      assert(num_items > 0);
+    }
+
+    num_keys_t size() const { return num_items; }
+
+    const internal_sub_item_t& operator[](size_t index) {
+      assert(index < num_items);
+      return *(first_item - index);
+    }
+
+   private:
+    size_t num_items;
+    const internal_sub_item_t* first_item;
+  };
+
+  struct leaf_sub_item_t {
+    const fixed_key_3_t* key;
+    const onode_t* onode;
+
+    leaf_sub_item_t(const char* p_start, const char* p_end) {
+      assert(p_start < p_end);
+      auto p_key = p_end - sizeof(fixed_key_3_t);
+      assert(p_start < p_key);
+      key = reinterpret_cast<const fixed_key_3_t*>(p_key);
+      onode = reinterpret_cast<const onode_t*>(p_start);
+      assert(p_start + onode->size == p_key);
+    }
+  };
+
+  class leaf_sub_items_t {
+    // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t),
+    //       and the minimal size of onode_t
+    using num_keys_t = uint8_t;
+   public:
+    leaf_sub_items_t(const char* p_start, const char* p_end) {
+      assert(p_start < p_end);
+      auto p_num_keys = p_end - sizeof(num_keys_t);
+      assert(p_start < p_num_keys);
+      num_keys = reinterpret_cast<const num_keys_t*>(p_num_keys);
+      auto p_offsets = p_num_keys - sizeof(node_offset_t);
+      assert(p_start < p_offsets);
+      offsets = reinterpret_cast<const node_offset_t*>(p_offsets);
+      p_items_end = reinterpret_cast<const char*>(&get_offset(size() - 1));
+      assert(p_start < p_items_end);
+      assert(p_start == get_item_start(size() - 1));
+    }
+
+    num_keys_t size() const { return *num_keys; }
+
+    leaf_sub_item_t operator[](size_t index) {
+      assert(index < size());
+      return leaf_sub_item_t(get_item_start(index), get_item_end(index));
+    }
+
+   private:
+    const char* get_item_start(size_t index) {
+      assert(index < size());
+      return p_items_end - get_offset(index);
+    }
+
+    const char* get_item_end(size_t index) {
+      assert(index < size());
+      return index == 0 ? p_items_end : p_items_end - get_offset(index - 1);
+    }
+
+    const node_offset_t& get_offset(size_t index) {
+      assert(index < size());
+      return *(offsets - index);
+    }
+
+    const num_keys_t* num_keys;
+    const node_offset_t* offsets;
+    const char* p_items_end;
+  };
+
+  // presumably the maximum string size is 2KiB
+  using string_size_t = uint16_t;
+  struct string_key_view_t {
+    const char* key;
+    const string_size_t* size;
+
+    string_key_view_t(const char* p_end) {
+      auto p_size = p_end - sizeof(string_size_t);
+      size = reinterpret_cast<const string_size_t*>(p_size);
+      auto p_key = p_size - *size;
+      key = static_cast<const char*>(p_key);
+    }
+
+    const char* p_start() const {
+      return key;
+    }
+  };
+
+  template <typename SubItemsType>
+  struct _item_t {
+    string_key_view_t oid;
+    string_key_view_t nspace;
+    SubItemsType sub_items;
+
+    _item_t(const char* p_start, const char* p_end)
+      : oid(p_end), nspace(oid.p_start()), sub_items(p_start, nspace.p_start()) {
+      assert(p_start < p_end);
+    }
+  };
+  using internal_item_t = _item_t<internal_sub_items_t>;
+  using leaf_item_t = _item_t<leaf_sub_items_t>;
+
+  template <typename ItemType>
+  class _item_iterator_t {
+   public:
+    _item_iterator_t(const char* p_start, const char* _p_end)
+      : collision_offset(reinterpret_cast<const node_offset_t*>(_p_end - sizeof(node_offset_t))),
+        p_start(p_start) { assert(p_start < p_end()); }
+
+    bool has_next() {
+      if (collision_offset != nullptr) {
+        return true;
+      } else {
+        return false;
+      }
+    }
+
+    ItemType next() {
+      assert(has_next());
+      auto p_item_end = p_end();
+      auto back_offset = *collision_offset;
+      const char* p_item_start;
+      if (back_offset) {
+        p_item_start = p_item_end - back_offset;
+        assert(p_start < p_item_start);
+        collision_offset = reinterpret_cast<const node_offset_t*>(
+            p_item_start - sizeof(node_offset_t));
+        assert(p_start < p_end());
+      } else {
+        p_item_start = p_start;
+        collision_offset = nullptr;
+      }
+      return ItemType(p_item_start, p_item_end);
+    }
+
+   private:
+    const char* p_end() const {
+      return reinterpret_cast<const char*>(collision_offset);
+    }
+
+    const node_offset_t* collision_offset;
+    const char* p_start;
+  };
+  using internal_item_iterator_t = _item_iterator_t<internal_item_t>;
+  using leaf_item_iterator_t = _item_iterator_t<leaf_item_t>;
 
   class Node
     : public boost::intrusive_ref_counter<Node, boost::thread_unsafe_counter> {
