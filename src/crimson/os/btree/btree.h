@@ -122,7 +122,17 @@ namespace crimson::os::seastore::onode {
     std::map<laddr_t, Ref<LogicalCachedExtent>> allocate_map;
   } transaction_manager;
 
-  enum class MatchKindKey : int8_t { NE = -1, EQ = 0, PO };
+  enum class MatchKindCMP : int8_t { NE = -1, EQ = 0, PO };
+  MatchKindCMP toMatchKindCMP(int value) {
+    if (value > 0) {
+      return MatchKindCMP::PO;
+    } else if (value < 0) {
+      return MatchKindCMP::NE;
+    } else {
+      return MatchKindCMP::EQ;
+    }
+  }
+
   /*
    * onode indexes
    */
@@ -143,58 +153,58 @@ namespace crimson::os::seastore::onode {
     gen_t gen;
   };
   template <typename T>
-  MatchKindKey _compare_crush(const onode_key_t& key, const T& target) {
+  MatchKindCMP _compare_crush(const onode_key_t& key, const T& target) {
     if (key.crush_hash < target.crush_hash)
-      return MatchKindKey::NE;
+      return MatchKindCMP::NE;
     if (key.crush_hash > target.crush_hash)
-      return MatchKindKey::PO;
-    return MatchKindKey::EQ;
+      return MatchKindCMP::PO;
+    return MatchKindCMP::EQ;
   }
   template <typename T>
-  MatchKindKey _compare_shard_pool_crush(const onode_key_t& key, const T& target) {
+  MatchKindCMP _compare_shard_pool_crush(const onode_key_t& key, const T& target) {
     if (key.shard < target.shard)
-      return MatchKindKey::NE;
+      return MatchKindCMP::NE;
     if (key.shard > target.shard)
-      return MatchKindKey::PO;
+      return MatchKindCMP::PO;
     if (key.pool < target.pool)
-      return MatchKindKey::NE;
+      return MatchKindCMP::NE;
     if (key.pool > target.pool)
-      return MatchKindKey::PO;
+      return MatchKindCMP::PO;
     return _compare_crush(key, target);
   }
   template <typename T>
-  MatchKindKey _compare_snap_gen(const onode_key_t& key, const T& target) {
+  MatchKindCMP _compare_snap_gen(const onode_key_t& key, const T& target) {
     if (key.snap < target.snap)
-      return MatchKindKey::NE;
+      return MatchKindCMP::NE;
     if (key.snap > target.snap)
-      return MatchKindKey::PO;
+      return MatchKindCMP::PO;
     if (key.gen < target.gen)
-      return MatchKindKey::NE;
+      return MatchKindCMP::NE;
     if (key.gen > target.gen)
-      return MatchKindKey::PO;
-    return MatchKindKey::EQ;
+      return MatchKindCMP::PO;
+    return MatchKindCMP::EQ;
   }
-  MatchKindKey compare_to(const onode_key_t& key, const onode_key_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const onode_key_t& target) {
     auto ret = _compare_shard_pool_crush(key, target);
-    if (ret != MatchKindKey::EQ)
+    if (ret != MatchKindCMP::EQ)
       return ret;
     if (key.nspace < target.nspace)
-      return MatchKindKey::NE;
+      return MatchKindCMP::NE;
     if (key.nspace > target.nspace)
-      return MatchKindKey::PO;
+      return MatchKindCMP::PO;
     if (key.oid < target.oid)
-      return MatchKindKey::NE;
+      return MatchKindCMP::NE;
     if (key.oid > target.oid)
-      return MatchKindKey::PO;
+      return MatchKindCMP::PO;
     return _compare_snap_gen(key, target);
   }
 
   /*
    * btree block layouts
    */
-  constexpr loff_t NODE_BLOCK_SIZE = 1u << 12;
   // TODO: decide by NODE_BLOCK_SIZE
   using node_offset_t = uint16_t;
+  constexpr node_offset_t NODE_BLOCK_SIZE = 1u << 12;
 
   enum class field_type_t : uint8_t {
     N0 = 0x3e,
@@ -208,11 +218,8 @@ namespace crimson::os::seastore::onode {
     INTERNAL
   };
   using level_t = uint8_t;
+  constexpr unsigned FIELD_BITS = 7u;
   struct node_header_t {
-    uint8_t field_type : 7;
-    uint8_t node_type : 1;
-    level_t level;
-
     node_header_t() {}
     node_header_t(field_type_t field_type, node_type_t node_type, level_t _level) {
       set_field_type(field_type);
@@ -231,8 +238,12 @@ namespace crimson::os::seastore::onode {
     void set_node_type(node_type_t type) {
       node_type = static_cast<uint8_t>(type);
     }
+
+    uint8_t field_type : FIELD_BITS;
+    uint8_t node_type : 8u - FIELD_BITS;
+    level_t level;
   } __attribute__((packed));
-  static_assert(static_cast<uint8_t>(field_type_t::_MAX) <= 1u<<8);
+  static_assert(static_cast<uint8_t>(field_type_t::_MAX) <= 1u << FIELD_BITS);
 
   // TODO: consider alignments
   struct fixed_key_0_t {
@@ -241,7 +252,7 @@ namespace crimson::os::seastore::onode {
     pool_t pool;
     crush_hash_t crush_hash;
   } __attribute__((packed));
-  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_0_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const fixed_key_0_t& target) {
     return _compare_shard_pool_crush(key, target);
   }
 
@@ -249,7 +260,7 @@ namespace crimson::os::seastore::onode {
     static constexpr field_type_t FIELD_TYPE = field_type_t::N1;
     crush_hash_t crush_hash;
   } __attribute__((packed));
-  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_1_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const fixed_key_1_t& target) {
     return _compare_crush(key, target);
   }
 
@@ -258,94 +269,174 @@ namespace crimson::os::seastore::onode {
     snap_t snap;
     gen_t gen;
   } __attribute__((packed));
-  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_3_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const fixed_key_3_t& target) {
     return _compare_snap_gen(key, target);
   }
 
-  template <typename _fixed_key_type>
+  struct string_key_view_t {
+    // presumably the maximum string size is 2KiB
+    using string_size_t = uint16_t;
+    string_key_view_t(const char* p_end) {
+      auto p_size = p_end - sizeof(string_size_t);
+      size = reinterpret_cast<const string_size_t*>(p_size);
+      auto p_key = p_size - *size;
+      key = static_cast<const char*>(p_key);
+    }
+    const char* p_start() const { return key; }
+
+    const char* key;
+    const string_size_t* size;
+  };
+  MatchKindCMP compare_to(const std::string& key, const string_key_view_t& target) {
+    return toMatchKindCMP(key.compare(0u, key.length(), target.key, *target.size));
+  }
+
+  struct variable_key_t {
+    variable_key_t(const char* p_end) : nspace(p_end), oid(nspace.p_start()) {}
+    const char* p_start() const { return nspace.p_start(); }
+
+    string_key_view_t nspace;
+    string_key_view_t oid;
+  };
+  MatchKindCMP compare_to(const onode_key_t& key, const variable_key_t& target) {
+    auto ret = compare_to(key.nspace, target.nspace);
+    if (ret != MatchKindCMP::EQ)
+      return ret;
+    return compare_to(key.oid, target.oid);
+  }
+
+  enum class MatchKindBS : int8_t { NE = -1, EQ = 0 };
+  template  <typename IndexType>
+  struct search_result_bs_t {
+    IndexType position;
+    MatchKindBS match;
+  };
+  template <typename FGetKey, typename IndexType>
+  search_result_bs_t<IndexType> binary_search(
+      const onode_key_t& key, IndexType begin, IndexType end, FGetKey&& f_get_key) {
+    assert(begin <= end);
+    while (begin < end) {
+      // TODO: overflow
+      IndexType mid = (begin + end) >> 1;
+      decltype(f_get_key(mid)) target = f_get_key(mid);
+      auto match = compare_to(key, target);
+      if (match == MatchKindCMP::NE) {
+        end = mid;
+      } else if (match == MatchKindCMP::PO) {
+        begin = mid + 1;
+      } else {
+        return {mid, MatchKindBS::EQ};
+      }
+    }
+    return {begin , MatchKindBS::NE};
+  }
+
+  template <typename FixedKeyType>
   struct _slot_t {
-    static constexpr field_type_t FIELD_TYPE = _fixed_key_type::FIELD_TYPE;
-    using fixed_key_type = _fixed_key_type;
-    fixed_key_type key;
+    using key_t = FixedKeyType;
+    static constexpr field_type_t FIELD_TYPE = FixedKeyType::FIELD_TYPE;
+
+    key_t key;
     node_offset_t right_offset;
   } __attribute__((packed));
   using slot_0_t = _slot_t<fixed_key_0_t>;
   using slot_1_t = _slot_t<fixed_key_1_t>;
   using slot_3_t = _slot_t<fixed_key_3_t>;
 
-  enum class MatchKindItem : int8_t { NE = -1, EQ = 0 };
-  template  <typename IndexType>
-  struct search_result_item_t {
-    IndexType position;
-    MatchKindItem match;
-  };
-  template <typename FGetKey, typename IndexType>
-  search_result_item_t<IndexType> binary_search(
-      const onode_key_t& key, FGetKey& f_get_key, IndexType begin, IndexType end) {
-    assert(begin <= end);
-    while (begin < end) {
-      auto mid = (begin + end) >> 1;
-      const auto& target = f_get_key(mid);
-      auto match = compare_to(key, target);
-      if (match == MatchKindKey::NE) {
-        end = mid;
-      } else if (match == MatchKindKey::PO) {
-        begin = mid + 1;
-      } else {
-        return {mid, MatchKindItem::EQ};
-      }
-    }
-    return {begin , MatchKindItem::NE};
+  template <typename FieldType>
+  search_result_bs_t<typename FieldType::num_keys_t>
+  fields_lower_bound(const FieldType& node_fields, const onode_key_t& key) {
+    using num_keys_t = typename FieldType::num_keys_t;
+    return binary_search(key, num_keys_t(0u), node_fields.num_keys,
+        [&node_fields] (num_keys_t index) { return node_fields.get_key(index); });
   }
 
-  template <typename slot_type>
-  struct _node_fields_013_t {
-    static constexpr field_type_t FIELD_TYPE = slot_type::FIELD_TYPE;
+  struct item_range_t {
+    const char* p_start;
+    const char* p_end;
+  };
+  template <typename FieldType>
+  item_range_t fields_item_range(
+      const FieldType& node_fields, typename FieldType::num_keys_t index) {
+    node_offset_t item_start_offset = node_fields.get_offset(index);
+    node_offset_t item_end_offset =
+      (index == 0u ? NODE_BLOCK_SIZE : node_fields.get_offset(index - 1));
+    assert(item_start_offset < item_end_offset);
+    const char* p_start = reinterpret_cast<const char*>(&node_fields);
+    return {p_start + item_start_offset, p_start + item_end_offset};
+  }
 
-    node_header_t header;
-    // TODO: decide by NODE_BLOCK_SIZE, sizeof(slot_type), sizeof(laddr_t)
+  template <typename SlotType>
+  struct _node_fields_013_t {
+    // TODO: decide by NODE_BLOCK_SIZE, sizeof(SlotType), sizeof(laddr_t)
     // and the minimal size of variable_key.
     using num_keys_t = uint8_t;
-    num_keys_t num_keys = 0u;
-    slot_type slots[];
+    using key_t = typename SlotType::key_t;
+    static constexpr field_type_t FIELD_TYPE = SlotType::FIELD_TYPE;
 
-    search_result_item_t<num_keys_t> lookup_fixed_keys(const onode_key_t& key) const {
-      auto f_get_key = [this] (num_keys_t index)
-        -> const typename slot_type::fixed_key_type& { return slots[index].key; };
-      return binary_search(key, f_get_key, 0, num_keys);
+    const key_t& get_key(num_keys_t index) const {
+      assert(index < num_keys);
+      return slots[index].key;
     }
+    node_offset_t get_offset(num_keys_t index) const {
+      assert(index < num_keys);
+      auto offset = slots[index].right_offset;
+      assert(offset <= NODE_BLOCK_SIZE);
+      return offset;
+    }
+
+    node_header_t header;
+    num_keys_t num_keys = 0u;
+    SlotType slots[];
   } __attribute__((packed));
   using node_fields_0_t = _node_fields_013_t<slot_0_t>;
   using node_fields_1_t = _node_fields_013_t<slot_1_t>;
 
   struct node_fields_2_t {
-    static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
-
-    node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(node_off_t), sizeof(laddr_t)
     // and the minimal size of variable_key.
     using num_keys_t = uint8_t;
+    using key_t = variable_key_t;
+    static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
+
+    key_t get_key(num_keys_t index) const {
+      assert(index < num_keys);
+      node_offset_t item_end_offset =
+        (index == 0 ? NODE_BLOCK_SIZE : offsets[index - 1]);
+      assert(item_end_offset <= NODE_BLOCK_SIZE);
+      const char* p_start = reinterpret_cast<const char*>(this);
+      return key_t(p_start + item_end_offset);
+    }
+    node_offset_t get_offset(num_keys_t index) const {
+      assert(index < num_keys);
+      auto offset = offsets[index];
+      assert(offset <= NODE_BLOCK_SIZE);
+      return offset;
+    }
+
+    node_header_t header;
     num_keys_t num_keys = 0u;
     node_offset_t offsets[];
   } __attribute__((packed));
 
   // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
-  static constexpr unsigned MAX_NUM_KEYS_I3 = 170;
+  static constexpr unsigned MAX_NUM_KEYS_I3 = 170u;
   template <unsigned MAX_NUM_KEYS>
   struct _internal_fields_3_t {
-    static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
-
-    node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
     using num_keys_t = uint8_t;
-    num_keys_t num_keys = 0u;
-    fixed_key_3_t keys[MAX_NUM_KEYS];
-    laddr_t child_addrs[MAX_NUM_KEYS + 1];
+    using key_t = fixed_key_3_t;
+    static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
 
-    search_result_item_t<num_keys_t> lookup_fixed_keys(const onode_key_t& key) const {
-      auto f_get_key = [this] (num_keys_t index) -> const fixed_key_3_t& { return keys[index]; };
-      return binary_search(key, f_get_key, 0, num_keys);
+    const key_t& get_key(num_keys_t index) const {
+      assert(index < num_keys);
+      return keys[index];
     }
+
+    node_header_t header;
+    num_keys_t num_keys = 0u;
+    key_t keys[MAX_NUM_KEYS];
+    laddr_t child_addrs[MAX_NUM_KEYS + 1];
   } __attribute__((packed));
   static_assert(sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3>) <= NODE_BLOCK_SIZE &&
                 sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3 + 1>) > NODE_BLOCK_SIZE);
@@ -357,46 +448,50 @@ namespace crimson::os::seastore::onode {
    * block layout of a variable-sized item (right-side)
    *
    * for internal node type 0, 1:
-   * previous off (block boundary) -----------------------------+~~~~~~~~~~+
-   * current off --+                                            |          |
-   *               |                                            |          |
-   *               V                                            V          V
-   *        <==== |   sub |fix|sub |fix|ns char|oid char|colli-|(prv-sub-)|
-   *  (next-item) |...addr|key|addr|key|array &|array & |-sion |(-addr   )|
-   *        <==== |   1   |1  |0   |0  |len    |len     |offset|(prv-item)...
+   * previous off (block boundary) -----------------------------+
+   * current off --+                                            |
+   *               |                                            |
+   *               V                                            V
+   *        <==== |   sub |fix|sub |fix|oid char|ns char|colli-|
+   *  (next-item) |...addr|key|addr|key|array & |array &|-sion |(prv-item)...
+   *        <==== |   1   |1  |0   |0  |len     |len    |offset|
    *                ^                                      |
    *                |                                      |
    *                +------------ next collision ----------+
+   * see internal_item_iterator_t
    *
    * for internal node type 2:
-   * previous off (block boundary) ----------------------+~~~~~~~~~~+
-   * current off --+                                     |          |
-   *               |                                     |          |
-   *               V                                     V          V
-   *        <==== |   sub |fix|sub |fix|ns char|oid char|(prv-sub-)|
-   *  (next-item) |...addr|key|addr|key|array &|array & |(-addr   )|
-   *        <==== |   1   |1  |0   |0  |len    |len     |(prv-item)...
+   * previous off (block boundary) ----------------------+
+   * current off --+                                     |
+   *               |                                     |
+   *               V                                     V
+   *        <==== |   sub |fix|sub |fix|oid char|ns char|
+   *  (next-item) |...addr|key|addr|key|array & |array &|(prv-item)...
+   *        <==== |   1   |1  |0   |0  |len     |len    |
+   * see internal_item_t
    *
    * for leaf node type 0, 1:
    * previous off (block boundary) ----------------------------------------+
    * current off --+                                                       |
    *               |                                                       |
    *               V                                                       V
-   *        <==== |   fix|o-  |fix|   off|off|num |ns char|oid char|colli-|
-   *  (next-item) |...key|node|key|...set|set|sub |array &|array & |-sion |(prv-item)
-   *        <==== |   1  |0   |0  |   1  |0  |keys|len    |len     |offset|
+   *        <==== |   fix|o-  |fix|   off|off|num |oid char|ns char|colli-|
+   *  (next-item) |...key|node|key|...set|set|sub |array & |array &|-sion |(prv-item)
+   *        <==== |   1  |0   |0  |   1  |0  |keys|len     |len    |offset|
    *                ^                                                  |
    *                |                                                  |
    *                +------------ next collision ----------------------+
+   * see leaf_item_iterator_t
    *
    * for leaf node type 2:
    * previous off (block boundary) ---------------------------------+
    * current off --+                                                |
    *               |                                                |
    *               V                                                V
-   *        <==== |   fix|o-  |fix|   off|off|num |ns char|oid char|
-   *  (next-item) |...key|node|key|...set|set|sub |array &|array & |(prv-item)
-   *        <==== |   1  |0   |0  |   1  |0  |keys|len    |len     |
+   *        <==== |   fix|o-  |fix|   off|off|num |oid char|ns char|
+   *  (next-item) |...key|node|key|...set|set|sub |array & |array &|(prv-item)
+   *        <==== |   1  |0   |0  |   1  |0  |keys|len     |len    |
+   * see leaf_item_t
    */
 
   struct internal_sub_item_t {
@@ -405,8 +500,9 @@ namespace crimson::os::seastore::onode {
   } __attribute__((packed));
 
   class internal_sub_items_t {
-    using num_keys_t = size_t;
    public:
+    using num_keys_t = size_t;
+
     internal_sub_items_t(const char* p_start, const char* p_end) {
       assert(p_start < p_end);
       assert((p_end - p_start) % sizeof(internal_sub_item_t) == 0);
@@ -441,10 +537,11 @@ namespace crimson::os::seastore::onode {
   };
 
   class leaf_sub_items_t {
+   public:
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t),
     //       and the minimal size of onode_t
     using num_keys_t = uint8_t;
-   public:
+
     leaf_sub_items_t(const char* p_start, const char* p_end) {
       assert(p_start < p_end);
       auto p_num_keys = p_end - sizeof(num_keys_t);
@@ -486,34 +583,15 @@ namespace crimson::os::seastore::onode {
     const char* p_items_end;
   };
 
-  // presumably the maximum string size is 2KiB
-  using string_size_t = uint16_t;
-  struct string_key_view_t {
-    const char* key;
-    const string_size_t* size;
-
-    string_key_view_t(const char* p_end) {
-      auto p_size = p_end - sizeof(string_size_t);
-      size = reinterpret_cast<const string_size_t*>(p_size);
-      auto p_key = p_size - *size;
-      key = static_cast<const char*>(p_key);
-    }
-
-    const char* p_start() const {
-      return key;
-    }
-  };
-
   template <typename SubItemsType>
   struct _item_t {
-    string_key_view_t oid;
-    string_key_view_t nspace;
-    SubItemsType sub_items;
-
     _item_t(const char* p_start, const char* p_end)
-      : oid(p_end), nspace(oid.p_start()), sub_items(p_start, nspace.p_start()) {
+      : key(p_end), sub_items(p_start, key.p_start()) {
       assert(p_start < p_end);
     }
+
+    variable_key_t key;
+    SubItemsType sub_items;
   };
   using internal_item_t = _item_t<internal_sub_items_t>;
   using leaf_item_t = _item_t<leaf_sub_items_t>;
@@ -566,7 +644,7 @@ namespace crimson::os::seastore::onode {
   struct search_result_t {
     Ref<LeafNode> leaf_node;
     size_t position;
-    MatchKindItem match;
+    MatchKindBS match;
   };
 
   class Node
@@ -637,16 +715,16 @@ namespace crimson::os::seastore::onode {
     }
   };
 
-  class InternalNode0 : public NodeT<node_fields_0_t, InternalNode0> {
+  class InternalNode0 final : public NodeT<node_fields_0_t, InternalNode0> {
   };
 
-  class InternalNode1 : public NodeT<node_fields_1_t, InternalNode1> {
+  class InternalNode1 final : public NodeT<node_fields_1_t, InternalNode1> {
   };
 
-  class InternalNode2 : public NodeT<node_fields_2_t, InternalNode2> {
+  class InternalNode2 final : public NodeT<node_fields_2_t, InternalNode2> {
   };
 
-  class InternalNode3 : public NodeT<internal_fields_3_t, InternalNode3> {
+  class InternalNode3 final : public NodeT<internal_fields_3_t, InternalNode3> {
   };
 
   class LeafNode : virtual public Node {
@@ -666,16 +744,16 @@ namespace crimson::os::seastore::onode {
     }
   };
 
-  class LeafNode0 : public LeafNodeT<node_fields_0_t, LeafNode0> {
+  class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {
   };
 
-  class LeafNode1 : public LeafNodeT<node_fields_1_t, LeafNode1> {
+  class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {
   };
 
-  class LeafNode2 : public LeafNodeT<node_fields_2_t, LeafNode2> {
+  class LeafNode2 final : public LeafNodeT<node_fields_2_t, LeafNode2> {
   };
 
-  class LeafNode3 : public LeafNodeT<leaf_fields_3_t, LeafNode3> {
+  class LeafNode3 final : public LeafNodeT<leaf_fields_3_t, LeafNode3> {
   };
 
   /*
@@ -693,7 +771,7 @@ namespace crimson::os::seastore::onode {
       Cursor(Btree* tree, search_result_t result) : tree(*tree) {
         if (result.position == result.leaf_node->items()) {
           // Cursor::make_end()
-          assert(result.match == MatchKindItem::NE);
+          assert(result.match == MatchKindBS::NE);
           position = std::numeric_limits<size_t>::max();
         } else {
           leaf_node = result.leaf_node;
@@ -740,11 +818,11 @@ namespace crimson::os::seastore::onode {
     Cursor end() { return Cursor::make_end(this); }
     bool contains(const onode_key_t& key) {
       // TODO: can be faster if contains() == true
-      return MatchKindItem::EQ == root_node->lower_bound(key).match;
+      return MatchKindBS::EQ == root_node->lower_bound(key).match;
     }
     Cursor find(const onode_key_t& key) {
       auto result = root_node->lower_bound(key);
-      if (result.match == MatchKindItem::EQ) {
+      if (result.match == MatchKindBS::EQ) {
         return Cursor(this, result);
       } else {
         return Cursor::make_end(this);
