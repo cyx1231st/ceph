@@ -58,11 +58,6 @@ namespace crimson::os::seastore::onode {
     void copy_in(const T& from, loff_t block_offset) {
       copy_in(&from, block_offset, sizeof(from));
     }
-    void zero(loff_t block_offset, loff_t len) {
-      assert(valid);
-      assert(block_offset + len <= length);
-      memset(ptr_offset(block_offset), 0, len);
-    }
 
    private:
     LogicalCachedExtent(void* ptr, loff_t len) : ptr{ptr}, length{len} {}
@@ -195,34 +190,6 @@ namespace crimson::os::seastore::onode {
   }
 
   /*
-   * fixed keys
-   */
-  // TODO: consider alignments
-  struct fixed_key_0_t {
-    shard_t shard;
-    pool_t pool;
-    crush_hash_t crush_hash;
-  } __attribute__((packed));
-  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_0_t& target) {
-    return _compare_shard_pool_crush(key, target);
-  }
-
-  struct fixed_key_1_t {
-    crush_hash_t crush_hash;
-  } __attribute__((packed));
-  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_1_t& target) {
-    return _compare_crush(key, target);
-  }
-
-  struct fixed_key_3_t {
-    snap_t snap;
-    gen_t gen;
-  } __attribute__((packed));
-  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_3_t& target) {
-    return _compare_snap_gen(key, target);
-  }
-
-  /*
    * btree block layouts
    */
   constexpr loff_t NODE_BLOCK_SIZE = 1u << 12;
@@ -267,8 +234,37 @@ namespace crimson::os::seastore::onode {
   } __attribute__((packed));
   static_assert(static_cast<uint8_t>(field_type_t::_MAX) <= 1u<<8);
 
+  // TODO: consider alignments
+  struct fixed_key_0_t {
+    static constexpr field_type_t FIELD_TYPE = field_type_t::N0;
+    shard_t shard;
+    pool_t pool;
+    crush_hash_t crush_hash;
+  } __attribute__((packed));
+  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_0_t& target) {
+    return _compare_shard_pool_crush(key, target);
+  }
+
+  struct fixed_key_1_t {
+    static constexpr field_type_t FIELD_TYPE = field_type_t::N1;
+    crush_hash_t crush_hash;
+  } __attribute__((packed));
+  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_1_t& target) {
+    return _compare_crush(key, target);
+  }
+
+  struct fixed_key_3_t {
+    static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
+    snap_t snap;
+    gen_t gen;
+  } __attribute__((packed));
+  MatchKindKey compare_to(const onode_key_t& key, const fixed_key_3_t& target) {
+    return _compare_snap_gen(key, target);
+  }
+
   template <typename _fixed_key_type>
   struct _slot_t {
+    static constexpr field_type_t FIELD_TYPE = _fixed_key_type::FIELD_TYPE;
     using fixed_key_type = _fixed_key_type;
     fixed_key_type key;
     node_offset_t right_offset;
@@ -302,9 +298,9 @@ namespace crimson::os::seastore::onode {
     return {begin , MatchKindItem::NE};
   }
 
-  template <typename slot_type, field_type_t _field_type>
+  template <typename slot_type>
   struct _node_fields_013_t {
-    static constexpr field_type_t field_type = _field_type;
+    static constexpr field_type_t FIELD_TYPE = slot_type::FIELD_TYPE;
 
     node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(slot_type), sizeof(laddr_t)
@@ -319,11 +315,11 @@ namespace crimson::os::seastore::onode {
       return binary_search(key, f_get_key, 0, num_keys);
     }
   } __attribute__((packed));
-  using node_fields_0_t = _node_fields_013_t<slot_0_t, field_type_t::N0>;
-  using node_fields_1_t = _node_fields_013_t<slot_1_t, field_type_t::N1>;
+  using node_fields_0_t = _node_fields_013_t<slot_0_t>;
+  using node_fields_1_t = _node_fields_013_t<slot_1_t>;
 
   struct node_fields_2_t {
-    static constexpr field_type_t field_type = field_type_t::N2;
+    static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
 
     node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(node_off_t), sizeof(laddr_t)
@@ -337,7 +333,7 @@ namespace crimson::os::seastore::onode {
   static constexpr unsigned MAX_NUM_KEYS_I3 = 170;
   template <unsigned MAX_NUM_KEYS>
   struct _internal_fields_3_t {
-    static constexpr field_type_t field_type = field_type_t::N3;
+    static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
 
     node_header_t header;
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
@@ -355,7 +351,7 @@ namespace crimson::os::seastore::onode {
                 sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3 + 1>) > NODE_BLOCK_SIZE);
   using internal_fields_3_t = _internal_fields_3_t<MAX_NUM_KEYS_I3>;
 
-  using leaf_fields_3_t = _node_fields_013_t<slot_3_t, field_type_t::N3>;
+  using leaf_fields_3_t = _node_fields_013_t<slot_3_t>;
 
   /*
    * block layout of a variable-sized item (right-side)
@@ -566,11 +562,24 @@ namespace crimson::os::seastore::onode {
   using internal_item_iterator_t = _item_iterator_t<internal_item_t>;
   using leaf_item_iterator_t = _item_iterator_t<leaf_item_t>;
 
+  class LeafNode;
+  struct search_result_t {
+    Ref<LeafNode> leaf_node;
+    size_t position;
+    MatchKindItem match;
+  };
+
   class Node
     : public boost::intrusive_ref_counter<Node, boost::thread_unsafe_counter> {
    public:
+    virtual ~Node() = default;
+
     virtual node_type_t node_type() const = 0;
     virtual field_type_t field_type() const = 0;
+    virtual size_t items() const = 0;
+    virtual size_t keys() const = 0;
+    virtual search_result_t lower_bound(const onode_key_t& key) { return {}; }
+
     laddr_t laddr() const {
       return extent->get_laddr();
     }
@@ -581,57 +590,79 @@ namespace crimson::os::seastore::onode {
    protected:
     Node() {}
 
-    //virtual SearchResult lower_bound(const onode_key_t& key) = 0;
-
-    // might be asynchronous
-    void alloc_extent(size_t num_keys_size, level_t level) {
-      extent = transaction_manager.alloc_extent(NODE_BLOCK_SIZE);
-      extent->copy_in(node_header_t{field_type(), node_type(), level}, 0u);
-      extent->zero(sizeof(node_header_t), num_keys_size);
-    }
-
     Ref<LogicalCachedExtent> extent;
   };
 
   template <typename FieldType, typename ConcreteType>
-  class InternalNodeT : public Node {
-   public:
-    node_type_t node_type() const override { return node_type_t::INTERNAL; }
-    field_type_t field_type() const override { return FieldType::field_type; }
+  class NodeT : virtual public Node {
+   protected:
+    using num_keys_t = typename FieldType::num_keys_t;
+    static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
 
-    static Ref<ConcreteType> allocate(level_t level) {
-      assert(level != 0u);
+   public:
+    virtual ~NodeT() = default;
+
+    node_type_t node_type() const override final { return ConcreteType::NODE_TYPE; }
+    field_type_t field_type() const override final { return FIELD_TYPE; }
+    size_t keys() const override final { return fields().num_keys; }
+
+   protected:
+    const FieldType& fields() const {
+      return *extent->get_ptr<FieldType>(0u);
+    }
+
+    static Ref<ConcreteType> _allocate(level_t level) {
+      // might be asynchronous
+      auto extent = transaction_manager.alloc_extent(NODE_BLOCK_SIZE);
+      extent->copy_in(node_header_t{FIELD_TYPE, ConcreteType::NODE_TYPE, level}, 0u);
+      extent->copy_in(num_keys_t(0u), sizeof(node_header_t));
       auto ret = Ref<ConcreteType>(new ConcreteType());
-      ret->alloc_extent(sizeof(FieldType::num_keys), level);
+      ret->extent = extent;
       return ret;
     }
   };
 
-  class InternalNode0 : public InternalNodeT<node_fields_0_t, InternalNode0> {
+  template <typename FieldType, typename ConcreteType>
+  class InternalNodeT : public NodeT<FieldType, ConcreteType> {
+   public:
+    static constexpr node_type_t NODE_TYPE = node_type_t::INTERNAL;
+
+    virtual ~InternalNodeT() = default;
+
+    size_t items() const override final { return this->keys() + 1; }
+
+    static Ref<ConcreteType> allocate(level_t level) {
+      assert(level != 0u);
+      return ConcreteType::_allocate(level);
+    }
   };
 
-  class InternalNode1 : public InternalNodeT<node_fields_1_t, InternalNode1> {
+  class InternalNode0 : public NodeT<node_fields_0_t, InternalNode0> {
   };
 
-  class InternalNode2 : public InternalNodeT<node_fields_2_t, InternalNode2> {
+  class InternalNode1 : public NodeT<node_fields_1_t, InternalNode1> {
   };
 
-  class InternalNode3 : public InternalNodeT<internal_fields_3_t, InternalNode3> {
+  class InternalNode2 : public NodeT<node_fields_2_t, InternalNode2> {
   };
 
-  class LeafNode : public Node {
+  class InternalNode3 : public NodeT<internal_fields_3_t, InternalNode3> {
+  };
+
+  class LeafNode : virtual public Node {
   };
 
   template <typename FieldType, typename ConcreteType>
-  class LeafNodeT: public LeafNode {
+  class LeafNodeT: public LeafNode, public NodeT<FieldType, ConcreteType> {
    public:
-    node_type_t node_type() const override { return node_type_t::LEAF; }
-    field_type_t field_type() const override { return FieldType::field_type; }
+    static constexpr node_type_t NODE_TYPE = node_type_t::LEAF;
+
+    virtual ~LeafNodeT() = default;
+
+    size_t items() const override final { return keys(); }
 
     static Ref<ConcreteType> allocate() {
-      auto ret = Ref<ConcreteType>(new ConcreteType());
-      ret->alloc_extent(sizeof(FieldType::num_keys), 0u);
-      return ret;
+      return ConcreteType::_allocate(0u);
     }
   };
 
@@ -656,12 +687,23 @@ namespace crimson::os::seastore::onode {
    *   db->get_iterator(PREFIIX_OBJ) by ceph::BlueStore::fsck()
    */
   class Btree {
+    // TODO: track cursors in LeafNode (intrusive)
     class Cursor {
      public:
-      Cursor() = default;
+      Cursor(Btree* tree, search_result_t result) : tree(*tree) {
+        if (result.position == result.leaf_node->items()) {
+          // Cursor::make_end()
+          assert(result.match == MatchKindItem::NE);
+          position = std::numeric_limits<size_t>::max();
+        } else {
+          leaf_node = result.leaf_node;
+          position = result.position;
+        }
+      }
       Cursor(const Cursor& x) = default;
       ~Cursor() = default;
 
+      bool is_end() const { return leaf_node == nullptr; }
       const onode_key_t& key() const { return {}; }
       // might return Onode class to track the changing onode_t pointer
       onode_t* value() const { return nullptr; }
@@ -679,31 +721,50 @@ namespace crimson::os::seastore::onode {
         --*this;
         return tmp;
       }
+
+      static Cursor make_end(Btree* tree) { return Cursor(tree); }
+
+     private:
+      Cursor(Btree* tree) : tree(*tree), position(std::numeric_limits<size_t>::max()) {}
+
+      Btree& tree;
+      Ref<LeafNode> leaf_node;
+      size_t position;
+      std::optional<onode_key_t> key_copy;
     };
 
    public:
     // TODO: transaction
     // lookup
-    Cursor begin() { return {}; }
-    Cursor end() { return {}; }
-    bool contains(const onode_key_t& key) { return false; }
-    Cursor find(const onode_key_t& key) { return {}; }
+    Cursor begin() { return Cursor::make_end(this); }
+    Cursor end() { return Cursor::make_end(this); }
+    bool contains(const onode_key_t& key) {
+      // TODO: can be faster if contains() == true
+      return MatchKindItem::EQ == root_node->lower_bound(key).match;
+    }
+    Cursor find(const onode_key_t& key) {
+      auto result = root_node->lower_bound(key);
+      if (result.match == MatchKindItem::EQ) {
+        return Cursor(this, result);
+      } else {
+        return Cursor::make_end(this);
+      }
+    }
     Cursor lower_bound(const onode_key_t& key) {
-      //return Cursor(root_node->lower_bound(key));
-      return {};
+      return Cursor(this, root_node->lower_bound(key));
     }
     // modifiers
     std::pair<Cursor, bool>
     insert_or_assign(const onode_key_t& key, onode_t&& value) {
-      return {{}, false};
+      return {Cursor::make_end(this), false};
     }
     std::pair<Cursor, bool>
     insert_or_assign(const Cursor& hint, const onode_key_t& key, onode_t&& value) {
-      return {{}, false};
+      return {Cursor::make_end(this), false};
     }
     size_t erase(const onode_key_t& key) { return 0u; }
-    Cursor erase(Cursor& pos) { return {}; }
-    Cursor erase(Cursor& first, Cursor& last) { return {}; }
+    Cursor erase(Cursor& pos) { return Cursor::make_end(this); }
+    Cursor erase(Cursor& first, Cursor& last) { return Cursor::make_end(this); }
 
     static Btree& get() {
       static std::unique_ptr<Btree> singleton;
