@@ -4,10 +4,13 @@
 #pragma once
 
 #include <cassert>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
+#include <ostream>
+#include <type_traits>
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
@@ -204,19 +207,37 @@ namespace crimson::os::seastore::onode {
    */
   // TODO: decide by NODE_BLOCK_SIZE
   using node_offset_t = uint16_t;
-  constexpr node_offset_t NODE_BLOCK_SIZE = 1u << 12;
+  constexpr node_offset_t BLOCK_SIZE = 1u << 12;
+  constexpr node_offset_t NODE_BLOCK_SIZE = BLOCK_SIZE * 1u;
 
+  constexpr uint8_t FIELD_TYPE_MAGIC = 0x3e;
   enum class field_type_t : uint8_t {
-    N0 = 0x3e,
+    N0 = FIELD_TYPE_MAGIC,
     N1,
     N2,
     N3,
     _MAX
   };
+  std::ostream& operator<<(std::ostream &os, const field_type_t& type) {
+    const char* const names[] = {"0", "1", "2", "3"};
+    auto index = static_cast<uint8_t>(type) - FIELD_TYPE_MAGIC;
+    assert(index < static_cast<uint8_t>(field_type_t::_MAX));
+    os << names[index];
+    return os;
+  }
+
   enum class node_type_t : uint8_t {
     LEAF = 0,
     INTERNAL
   };
+  std::ostream& operator<<(std::ostream &os, const node_type_t& type) {
+    const char* const names[] = {"L", "I"};
+    auto index = static_cast<uint8_t>(type);
+    assert(index <= 1u);
+    os << names[index];
+    return os;
+  }
+
   using level_t = uint8_t;
   constexpr unsigned FIELD_BITS = 7u;
   struct node_header_t {
@@ -316,8 +337,8 @@ namespace crimson::os::seastore::onode {
       const onode_key_t& key, IndexType begin, IndexType end, FGetKey&& f_get_key) {
     assert(begin <= end);
     while (begin < end) {
-      // TODO: overflow
-      IndexType mid = (begin + end) >> 1;
+      unsigned total = begin + end;
+      IndexType mid = total >> 1;
       decltype(f_get_key(mid)) target = f_get_key(mid);
       auto match = compare_to(key, target);
       if (match == MatchKindCMP::NE) {
@@ -345,10 +366,10 @@ namespace crimson::os::seastore::onode {
 
   template <typename FieldType>
   search_result_bs_t<typename FieldType::num_keys_t>
-  fields_lower_bound(const FieldType& node_fields, const onode_key_t& key) {
+  fields_lower_bound(const FieldType& node, const onode_key_t& key) {
     using num_keys_t = typename FieldType::num_keys_t;
-    return binary_search(key, num_keys_t(0u), node_fields.num_keys,
-        [&node_fields] (num_keys_t index) { return node_fields.get_key(index); });
+    return binary_search(key, num_keys_t(0u), node.num_keys,
+        [&node] (num_keys_t index) { return node.get_key(index); });
   }
 
   struct item_range_t {
@@ -357,13 +378,27 @@ namespace crimson::os::seastore::onode {
   };
   template <typename FieldType>
   item_range_t fields_item_range(
-      const FieldType& node_fields, typename FieldType::num_keys_t index) {
-    node_offset_t item_start_offset = node_fields.get_offset(index);
+      const FieldType& node, typename FieldType::num_keys_t index) {
+    node_offset_t item_start_offset = node.get_item_start_offset(index);
     node_offset_t item_end_offset =
-      (index == 0u ? NODE_BLOCK_SIZE : node_fields.get_offset(index - 1));
+      (index == 0u ? FieldType::SIZE : node.get_item_start_offset(index - 1));
     assert(item_start_offset < item_end_offset);
-    const char* p_start = reinterpret_cast<const char*>(&node_fields);
+    const char* p_start = reinterpret_cast<const char*>(&node);
     return {p_start + item_start_offset, p_start + item_end_offset};
+  }
+
+  template <node_type_t NodeType, typename FieldType>
+  node_offset_t fields_free_size(const FieldType& node) {
+    node_offset_t offset_start = node.get_key_start_offset(node.num_keys);
+    node_offset_t offset_end =
+      (node.num_keys == 0 ? FieldType::SIZE : node.get_item_start_offset(node.num_keys - 1));
+    if constexpr (NodeType == node_type_t::INTERNAL) {
+      offset_end -= sizeof(laddr_t);
+    }
+    assert(offset_start <= offset_end);
+    auto free = offset_end - offset_start;
+    assert(free < FieldType::SIZE);
+    return free;
   }
 
   template <typename SlotType>
@@ -372,17 +407,29 @@ namespace crimson::os::seastore::onode {
     // and the minimal size of variable_key.
     using num_keys_t = uint8_t;
     using key_t = typename SlotType::key_t;
+    using my_type_t = _node_fields_013_t<SlotType>;
     static constexpr field_type_t FIELD_TYPE = SlotType::FIELD_TYPE;
+    static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
 
     const key_t& get_key(num_keys_t index) const {
       assert(index < num_keys);
       return slots[index].key;
     }
-    node_offset_t get_offset(num_keys_t index) const {
+    node_offset_t get_key_start_offset(num_keys_t index) const {
+      assert(index <= num_keys);
+      auto offset = offsetof(my_type_t, slots) + sizeof(SlotType) * index;
+      assert(offset < SIZE);
+      return offset;
+    }
+    node_offset_t get_item_start_offset(num_keys_t index) const {
       assert(index < num_keys);
       auto offset = slots[index].right_offset;
-      assert(offset <= NODE_BLOCK_SIZE);
+      assert(offset <= SIZE);
       return offset;
+    }
+    template <node_type_t NodeType>
+    node_offset_t free_size() const {
+      return fields_free_size<NodeType>(*this);
     }
 
     node_header_t header;
@@ -398,20 +445,31 @@ namespace crimson::os::seastore::onode {
     using num_keys_t = uint8_t;
     using key_t = variable_key_t;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
+    static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
 
     key_t get_key(num_keys_t index) const {
       assert(index < num_keys);
       node_offset_t item_end_offset =
-        (index == 0 ? NODE_BLOCK_SIZE : offsets[index - 1]);
-      assert(item_end_offset <= NODE_BLOCK_SIZE);
+        (index == 0 ? SIZE : offsets[index - 1]);
+      assert(item_end_offset <= SIZE);
       const char* p_start = reinterpret_cast<const char*>(this);
       return key_t(p_start + item_end_offset);
     }
-    node_offset_t get_offset(num_keys_t index) const {
+    node_offset_t get_key_start_offset(num_keys_t index) const {
+      assert(index <= num_keys);
+      auto offset = offsetof(node_fields_2_t, offsets) + sizeof(node_offset_t) * num_keys;
+      assert(offset <= SIZE);
+      return offset;
+    }
+    node_offset_t get_item_start_offset(num_keys_t index) const {
       assert(index < num_keys);
       auto offset = offsets[index];
-      assert(offset <= NODE_BLOCK_SIZE);
+      assert(offset <= SIZE);
       return offset;
+    }
+    template <node_type_t NodeType>
+    node_offset_t free_size() const {
+      return fields_free_size<NodeType>(*this);
     }
 
     node_header_t header;
@@ -426,11 +484,19 @@ namespace crimson::os::seastore::onode {
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
     using num_keys_t = uint8_t;
     using key_t = fixed_key_3_t;
+    using my_type_t = _internal_fields_3_t<MAX_NUM_KEYS>;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
+    static constexpr node_offset_t SIZE = sizeof(my_type_t);
 
     const key_t& get_key(num_keys_t index) const {
       assert(index < num_keys);
       return keys[index];
+    }
+    template <node_type_t NodeType, typename = std::enable_if_t<NodeType == node_type_t::INTERNAL>>
+    node_offset_t free_size() const {
+      auto free = (MAX_NUM_KEYS - num_keys) * (sizeof(key_t) + sizeof(laddr_t));
+      assert(free < SIZE);
+      return free;
     }
 
     node_header_t header;
@@ -438,8 +504,8 @@ namespace crimson::os::seastore::onode {
     key_t keys[MAX_NUM_KEYS];
     laddr_t child_addrs[MAX_NUM_KEYS + 1];
   } __attribute__((packed));
-  static_assert(sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3>) <= NODE_BLOCK_SIZE &&
-                sizeof(_internal_fields_3_t<MAX_NUM_KEYS_I3 + 1>) > NODE_BLOCK_SIZE);
+  static_assert(_internal_fields_3_t<MAX_NUM_KEYS_I3>::SIZE <= NODE_BLOCK_SIZE &&
+                _internal_fields_3_t<MAX_NUM_KEYS_I3 + 1>::SIZE > NODE_BLOCK_SIZE);
   using internal_fields_3_t = _internal_fields_3_t<MAX_NUM_KEYS_I3>;
 
   using leaf_fields_3_t = _node_fields_013_t<slot_3_t>;
@@ -656,6 +722,10 @@ namespace crimson::os::seastore::onode {
     virtual field_type_t field_type() const = 0;
     virtual size_t items() const = 0;
     virtual size_t keys() const = 0;
+    virtual size_t free_size() const = 0;
+    virtual size_t total_size() const = 0;
+    size_t filled_size() const { return total_size() - free_size(); }
+    size_t extent_size() const { return extent->get_length(); }
     virtual search_result_t lower_bound(const onode_key_t& key) { return {}; }
 
     laddr_t laddr() const {
@@ -669,20 +739,39 @@ namespace crimson::os::seastore::onode {
     Node() {}
 
     Ref<LogicalCachedExtent> extent;
+
+    friend std::ostream& operator<<(std::ostream&, const Node&);
   };
+  std::ostream& operator<<(std::ostream& os, const Node& node) {
+    os << "Node" << node.node_type() << node.field_type()
+       << "@0x" << std::hex << node.laddr()
+       << "+" << node.extent_size() << std::dec
+       << "(level=" << (unsigned)node.level()
+       << ", keys=" << node.keys()
+       << ", filled=" << node.filled_size() << "B"
+       << ", free=" << node.free_size() << "B"
+       << ")";
+    return os;
+  }
 
   template <typename FieldType, typename ConcreteType>
   class NodeT : virtual public Node {
    protected:
     using num_keys_t = typename FieldType::num_keys_t;
+    static constexpr node_type_t NODE_TYPE = ConcreteType::NODE_TYPE;
     static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
+    static constexpr node_offset_t TOTAL_SIZE = FieldType::SIZE;
+    static constexpr node_offset_t EXTENT_SIZE =
+      (TOTAL_SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
 
    public:
     virtual ~NodeT() = default;
 
-    node_type_t node_type() const override final { return ConcreteType::NODE_TYPE; }
+    node_type_t node_type() const override final { return NODE_TYPE; }
     field_type_t field_type() const override final { return FIELD_TYPE; }
     size_t keys() const override final { return fields().num_keys; }
+    size_t free_size() const override final { return fields().template free_size<NODE_TYPE>(); }
+    size_t total_size() const override final { return TOTAL_SIZE; }
 
    protected:
     const FieldType& fields() const {
@@ -691,7 +780,7 @@ namespace crimson::os::seastore::onode {
 
     static Ref<ConcreteType> _allocate(level_t level) {
       // might be asynchronous
-      auto extent = transaction_manager.alloc_extent(NODE_BLOCK_SIZE);
+      auto extent = transaction_manager.alloc_extent(EXTENT_SIZE);
       extent->copy_in(node_header_t{FIELD_TYPE, ConcreteType::NODE_TYPE, level}, 0u);
       extent->copy_in(num_keys_t(0u), sizeof(node_header_t));
       auto ret = Ref<ConcreteType>(new ConcreteType());
@@ -714,20 +803,16 @@ namespace crimson::os::seastore::onode {
       return ConcreteType::_allocate(level);
     }
   };
-
-  class InternalNode0 final : public NodeT<node_fields_0_t, InternalNode0> {
-  };
-
-  class InternalNode1 final : public NodeT<node_fields_1_t, InternalNode1> {
-  };
-
-  class InternalNode2 final : public NodeT<node_fields_2_t, InternalNode2> {
-  };
-
-  class InternalNode3 final : public NodeT<internal_fields_3_t, InternalNode3> {
-  };
+  class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {};
+  class InternalNode1 final : public InternalNodeT<node_fields_1_t, InternalNode1> {};
+  class InternalNode2 final : public InternalNodeT<node_fields_2_t, InternalNode2> {};
+  class InternalNode3 final : public InternalNodeT<internal_fields_3_t, InternalNode3> {};
 
   class LeafNode : virtual public Node {
+   public:
+    virtual ~LeafNode() = default;
+
+    size_t items() const override final { return keys(); }
   };
 
   template <typename FieldType, typename ConcreteType>
@@ -737,24 +822,14 @@ namespace crimson::os::seastore::onode {
 
     virtual ~LeafNodeT() = default;
 
-    size_t items() const override final { return keys(); }
-
     static Ref<ConcreteType> allocate() {
       return ConcreteType::_allocate(0u);
     }
   };
-
-  class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {
-  };
-
-  class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {
-  };
-
-  class LeafNode2 final : public LeafNodeT<node_fields_2_t, LeafNode2> {
-  };
-
-  class LeafNode3 final : public LeafNodeT<leaf_fields_3_t, LeafNode3> {
-  };
+  class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {};
+  class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {};
+  class LeafNode2 final : public LeafNodeT<node_fields_2_t, LeafNode2> {};
+  class LeafNode3 final : public LeafNodeT<leaf_fields_3_t, LeafNode3> {};
 
   /*
    * btree interfaces
