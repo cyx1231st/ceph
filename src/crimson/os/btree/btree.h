@@ -307,20 +307,38 @@ namespace crimson::os::seastore::onode {
     string_key_view_t(const char* p_end) {
       auto p_size = p_end - sizeof(string_size_t);
       size = reinterpret_cast<const string_size_t*>(p_size);
-      auto p_key = p_size - *size;
-      key = static_cast<const char*>(p_key);
+      if (*size) {
+        auto p_key = p_size - *size;
+        key = static_cast<const char*>(p_key);
+      } else {
+        key = nullptr;
+      }
     }
-    const char* p_start() const { return key; }
+    const char* p_start() const {
+      if (key) {
+        return key;
+      } else {
+        return reinterpret_cast<const char*>(size);
+      }
+    }
+    const char* p_next_end() const {
+      if (key) {
+        return p_start();
+      } else {
+        return reinterpret_cast<const char*>(size) + sizeof(string_size_t);
+      }
+    }
 
     const char* key;
     const string_size_t* size;
   };
   MatchKindCMP compare_to(const std::string& key, const string_key_view_t& target) {
+    assert(key.length() && *target.size);
     return toMatchKindCMP(key.compare(0u, key.length(), target.key, *target.size));
   }
 
   struct variable_key_t {
-    variable_key_t(const char* p_end) : nspace(p_end), oid(nspace.p_start()) {}
+    variable_key_t(const char* p_end) : nspace(p_end), oid(nspace.p_next_end()) {}
     const char* p_start() const { return nspace.p_start(); }
 
     string_key_view_t nspace;
@@ -713,10 +731,40 @@ namespace crimson::os::seastore::onode {
   using internal_item_iterator_t = _item_iterator_t<internal_item_t>;
   using leaf_item_iterator_t = _item_iterator_t<leaf_item_t>;
 
+  struct search_position_t {
+    bool is_end() const {
+      return pos_key == std::numeric_limits<size_t>::max();
+    }
+
+    bool operator==(const search_position_t& x) const {
+      return (pos_key == x.pos_key &&
+              pos_collision == x.pos_collision &&
+              pos_sub_item == x.pos_sub_item);
+    }
+    bool operator!=(const search_position_t& x) const { return !(*this == x); }
+
+    static search_position_t end() {
+      return {std::numeric_limits<size_t>::max(), 0u, 0u};
+    }
+
+    size_t pos_key;
+    size_t pos_collision;
+    size_t pos_sub_item;
+  };
+
   class LeafNode;
   struct search_result_t {
+    bool is_end() const {
+      if (position.is_end()) {
+        assert(match == MatchKindBS::NE);
+        return true;
+      } else {
+        return false;
+      }
+    }
+
     Ref<LeafNode> leaf_node;
-    size_t position;
+    search_position_t position;
     MatchKindBS match;
   };
 
@@ -733,7 +781,7 @@ namespace crimson::os::seastore::onode {
     virtual size_t total_size() const = 0;
     size_t filled_size() const { return total_size() - free_size(); }
     size_t extent_size() const { return extent->get_length(); }
-    virtual search_result_t lower_bound(const onode_key_t& key) { return {}; }
+    virtual search_result_t lower_bound(const onode_key_t& key) = 0;
 
     laddr_t laddr() const {
       return extent->get_laddr();
@@ -788,6 +836,10 @@ namespace crimson::os::seastore::onode {
     size_t keys() const override final { return fields()->num_keys; }
     size_t free_size() const override final { return fields()->template free_size<NODE_TYPE>(); }
     size_t total_size() const override final { return TOTAL_SIZE; }
+
+    search_result_t lower_bound(const onode_key_t& key) override final {
+      return {};
+    }
 
    protected:
     const FieldType* fields() const {
@@ -910,24 +962,22 @@ namespace crimson::os::seastore::onode {
     // TODO: track cursors in LeafNode (intrusive)
     class Cursor {
      public:
-      Cursor(Btree* tree, search_result_t result) : tree(*tree) {
-        if (result.position == result.leaf_node->items()) {
-          // Cursor::make_end()
-          assert(result.match == MatchKindBS::NE);
-          position = std::numeric_limits<size_t>::max();
-        } else {
+      Cursor(Btree* tree, const search_result_t& result) : tree(*tree) {
+        if (!result.is_end()) {
           leaf_node = result.leaf_node;
-          position = result.position;
         }
+        position = result.position;
       }
       Cursor(const Cursor& x) = default;
       ~Cursor() = default;
 
-      bool is_end() const { return leaf_node == nullptr; }
+      bool is_end() const { return position.is_end(); }
       const onode_key_t& key() const { return {}; }
       // might return Onode class to track the changing onode_t pointer
       onode_t* value() const { return nullptr; }
-      bool operator==(const Cursor& x) const { return false; }
+      bool operator==(const Cursor& x) const {
+        return leaf_node == x.leaf_node &&
+               position == x.position; }
       bool operator!=(const Cursor& x) const { return !(*this == x); }
       Cursor& operator++() { return *this; }
       Cursor operator++(int) {
@@ -945,11 +995,11 @@ namespace crimson::os::seastore::onode {
       static Cursor make_end(Btree* tree) { return Cursor(tree); }
 
      private:
-      Cursor(Btree* tree) : tree(*tree), position(std::numeric_limits<size_t>::max()) {}
+      Cursor(Btree* tree) : tree(*tree), position(search_position_t::end()) {}
 
       Btree& tree;
       Ref<LeafNode> leaf_node;
-      size_t position;
+      search_position_t position;
       std::optional<onode_key_t> key_copy;
     };
 
