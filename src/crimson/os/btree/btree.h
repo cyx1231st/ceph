@@ -7,8 +7,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <type_traits>
 #include <boost/intrusive_ptr.hpp>
@@ -104,9 +106,9 @@ namespace crimson::os::seastore::onode {
       return extent;
     }
     void free_extent(Ref<LogicalCachedExtent> extent) {
-      std::free(extent->ptr);
       auto size = allocate_map.erase(extent->get_laddr());
       assert(size == 1u);
+      std::free(extent->ptr);
       extent->invalidate();
     }
     void free_all() {
@@ -115,8 +117,8 @@ namespace crimson::os::seastore::onode {
       }
       assert(allocate_map.empty());
     }
-    Ref<LogicalCachedExtent> read_extent(laddr_t offset) {
-      auto iter = allocate_map.find(offset);
+    Ref<LogicalCachedExtent> read_extent(laddr_t addr) {
+      auto iter = allocate_map.find(addr);
       assert(iter != allocate_map.end());
       return iter->second;
     }
@@ -247,8 +249,13 @@ namespace crimson::os::seastore::onode {
       set_node_type(node_type);
       level = _level;
     }
-    field_type_t get_field_type() const {
-      return static_cast<field_type_t>(field_type);
+    std::optional<field_type_t> get_field_type() const {
+      if (field_type >= FIELD_TYPE_MAGIC &&
+          field_type < static_cast<uint8_t>(field_type_t::_MAX)) {
+        return static_cast<field_type_t>(field_type);
+      } else {
+        return std::nullopt;
+      }
     }
     void set_field_type(field_type_t type) {
       field_type = static_cast<uint8_t>(type);
@@ -735,8 +742,17 @@ namespace crimson::os::seastore::onode {
       return extent->get_ptr<node_header_t>(0u)->level;
     }
 
+    static Ref<Node> load(laddr_t);
+
    protected:
     Node() {}
+
+    void init(Ref<LogicalCachedExtent> _extent) {
+      assert(!extent);
+      extent = _extent;
+      assert(extent->get_ptr<node_header_t>(0u)->get_node_type() == node_type());
+      assert(*extent->get_ptr<node_header_t>(0u)->get_field_type() == field_type());
+    }
 
     Ref<LogicalCachedExtent> extent;
 
@@ -769,13 +785,13 @@ namespace crimson::os::seastore::onode {
 
     node_type_t node_type() const override final { return NODE_TYPE; }
     field_type_t field_type() const override final { return FIELD_TYPE; }
-    size_t keys() const override final { return fields().num_keys; }
-    size_t free_size() const override final { return fields().template free_size<NODE_TYPE>(); }
+    size_t keys() const override final { return fields()->num_keys; }
+    size_t free_size() const override final { return fields()->template free_size<NODE_TYPE>(); }
     size_t total_size() const override final { return TOTAL_SIZE; }
 
    protected:
-    const FieldType& fields() const {
-      return *extent->get_ptr<FieldType>(0u);
+    const FieldType* fields() const {
+      return extent->get_ptr<FieldType>(0u);
     }
 
     static Ref<ConcreteType> _allocate(level_t level) {
@@ -784,7 +800,7 @@ namespace crimson::os::seastore::onode {
       extent->copy_in(node_header_t{FIELD_TYPE, ConcreteType::NODE_TYPE, level}, 0u);
       extent->copy_in(num_keys_t(0u), sizeof(node_header_t));
       auto ret = Ref<ConcreteType>(new ConcreteType());
-      ret->extent = extent;
+      ret->init(extent);
       return ret;
     }
   };
@@ -813,6 +829,17 @@ namespace crimson::os::seastore::onode {
     virtual ~LeafNode() = default;
 
     size_t items() const override final { return keys(); }
+
+    static Ref<LeafNode> load(laddr_t addr) {
+      auto node = Node::load(addr);
+      if (node->node_type() != node_type_t::LEAF) {
+        throw std::runtime_error("load failed: not leaf");
+      }
+      // TODO: find a way to avoid dynamic cast
+      auto ret = boost::dynamic_pointer_cast<LeafNode>(node);
+      assert(ret);
+      return ret;
+    }
   };
 
   template <typename FieldType, typename ConcreteType>
@@ -830,6 +857,46 @@ namespace crimson::os::seastore::onode {
   class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {};
   class LeafNode2 final : public LeafNodeT<node_fields_2_t, LeafNode2> {};
   class LeafNode3 final : public LeafNodeT<leaf_fields_3_t, LeafNode3> {};
+
+  Ref<Node> Node::load(laddr_t addr) {
+    auto extent = transaction_manager.read_extent(addr);
+    const auto header = extent->get_ptr<node_header_t>(0u);
+    auto _field_type = header->get_field_type();
+    if (!_field_type.has_value()) {
+      throw std::runtime_error("load failed: bad field type");
+    }
+    auto _node_type = header->get_node_type();
+    Ref<Node> ret;
+    if (_field_type == field_type_t::N0) {
+      if (_node_type == node_type_t::LEAF) {
+        ret = new LeafNode0();
+      } else {
+        ret = new InternalNode0();
+      }
+    } else if (_field_type == field_type_t::N1) {
+      if (_node_type == node_type_t::LEAF) {
+        ret = new LeafNode1();
+      } else {
+        ret = new InternalNode1();
+      }
+    } else if (_field_type == field_type_t::N2) {
+      if (_node_type == node_type_t::LEAF) {
+        ret = new LeafNode2();
+      } else {
+        ret = new InternalNode2();
+      }
+    } else if (_field_type == field_type_t::N3) {
+      if (_node_type == node_type_t::LEAF) {
+        ret = new LeafNode3();
+      } else {
+        ret = new InternalNode3();
+      }
+    } else {
+      assert(false);
+    }
+    ret->init(extent);
+    return ret;
+  }
 
   /*
    * btree interfaces
