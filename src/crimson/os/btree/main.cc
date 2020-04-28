@@ -31,19 +31,29 @@ int main(int argc, char* argv[])
   std::cout << "size internal_sub_item_t: " << sizeof(internal_sub_item_t) << std::endl;
 
   // node tests
-  auto internal_node_0 = InternalNode0::allocate(1u);
-  auto internal_node_1 = InternalNode1::allocate(1u);
-  auto internal_node_2 = InternalNode2::allocate(1u);
-  auto internal_node_3 = InternalNode3::allocate(1u);
+  auto internal_node_0 = InternalNode0::allocate(1u, false);
+  auto internal_node_1 = InternalNode1::allocate(1u, false);
+  auto internal_node_2 = InternalNode2::allocate(1u, false);
+  auto internal_node_3 = InternalNode3::allocate(1u, false);
+  auto internal_node_0t = InternalNode0::allocate(1u, true);
+  auto internal_node_1t = InternalNode1::allocate(1u, true);
+  auto internal_node_2t = InternalNode2::allocate(1u, true);
+  auto internal_node_3t = InternalNode3::allocate(1u, true);
   std::vector<Ref<Node>> internal_nodes = {
-    internal_node_0, internal_node_1, internal_node_2, internal_node_3};
+    internal_node_0, internal_node_1, internal_node_2, internal_node_3,
+    internal_node_0t, internal_node_1t, internal_node_2t, internal_node_3t};
 
-  auto leaf_node_0 = LeafNode0::allocate();
-  auto leaf_node_1 = LeafNode1::allocate();
-  auto leaf_node_2 = LeafNode2::allocate();
-  auto leaf_node_3 = LeafNode3::allocate();
+  auto leaf_node_0 = LeafNode0::allocate(false);
+  auto leaf_node_1 = LeafNode1::allocate(false);
+  auto leaf_node_2 = LeafNode2::allocate(false);
+  auto leaf_node_3 = LeafNode3::allocate(false);
+  auto leaf_node_0t = LeafNode0::allocate(true);
+  auto leaf_node_1t = LeafNode1::allocate(true);
+  auto leaf_node_2t = LeafNode2::allocate(true);
+  auto leaf_node_3t = LeafNode3::allocate(true);
   std::vector<Ref<LeafNode>> leaf_nodes = {
-    leaf_node_0, leaf_node_1, leaf_node_2, leaf_node_3};
+    leaf_node_0, leaf_node_1, leaf_node_2, leaf_node_3,
+    leaf_node_0t, leaf_node_1t, leaf_node_2t, leaf_node_3t};
 
   std::vector<Ref<Node>> nodes;
   nodes.insert(nodes.end(), internal_nodes.begin(), internal_nodes.end());
