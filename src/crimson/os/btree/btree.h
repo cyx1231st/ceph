@@ -397,6 +397,11 @@ namespace crimson::os::seastore::onode {
         [&node] (num_keys_t index) { return node.get_key(index); });
   }
 
+  template <typename FieldType>
+  const char* fields_start(const FieldType& node) {
+    return reinterpret_cast<const char*>(&node);
+  }
+
   struct item_range_t {
     const char* p_start;
     const char* p_end;
@@ -408,8 +413,8 @@ namespace crimson::os::seastore::onode {
     node_offset_t item_end_offset =
       (index == 0u ? FieldType::SIZE : node.get_item_start_offset(index - 1));
     assert(item_start_offset < item_end_offset);
-    const char* p_start = reinterpret_cast<const char*>(&node);
-    return {p_start + item_start_offset, p_start + item_end_offset};
+    return {fields_start(node) + item_start_offset,
+            fields_start(node) + item_end_offset};
   }
 
   template <node_type_t NodeType, typename FieldType>
@@ -424,6 +429,15 @@ namespace crimson::os::seastore::onode {
     auto free = offset_end - offset_start;
     assert(free < FieldType::SIZE);
     return free;
+  }
+
+  template <typename FieldType>
+  const laddr_t& fields_last_child_addr(const FieldType& node) {
+    node_offset_t offset_start = node.get_item_start_offset(node.num_keys - 1);
+    assert(offset_start <= FieldType::SIZE);
+    offset_start -= sizeof(laddr_t);
+    auto p_addr = fields_start(node) + offset_start;
+    return *reinterpret_cast<const laddr_t*>(p_addr);
   }
 
   template <typename SlotType>
@@ -477,7 +491,7 @@ namespace crimson::os::seastore::onode {
       node_offset_t item_end_offset =
         (index == 0 ? SIZE : offsets[index - 1]);
       assert(item_end_offset <= SIZE);
-      const char* p_start = reinterpret_cast<const char*>(this);
+      const char* p_start = fields_start(*this);
       return key_t(p_start + item_end_offset);
     }
     node_offset_t get_key_start_offset(num_keys_t index) const {
@@ -615,15 +629,15 @@ namespace crimson::os::seastore::onode {
 
   struct leaf_sub_item_t {
     const fixed_key_3_t* key;
-    const onode_t* onode;
+    const onode_t* value;
 
     leaf_sub_item_t(const char* p_start, const char* p_end) {
       assert(p_start < p_end);
       auto p_key = p_end - sizeof(fixed_key_3_t);
       assert(p_start < p_key);
       key = reinterpret_cast<const fixed_key_3_t*>(p_key);
-      onode = reinterpret_cast<const onode_t*>(p_start);
-      assert(p_start + onode->size == p_key);
+      value = reinterpret_cast<const onode_t*>(p_start);
+      assert(p_start + value->size == p_key);
     }
   };
 
@@ -731,41 +745,121 @@ namespace crimson::os::seastore::onode {
   using internal_item_iterator_t = _item_iterator_t<internal_item_t>;
   using leaf_item_iterator_t = _item_iterator_t<leaf_item_t>;
 
+  struct search_position_item_t {
+    bool is_end() const {
+      return pos_collision == std::numeric_limits<size_t>::max();
+    }
+
+    bool operator==(const search_position_item_t& x) const {
+      return pos_collision == x.pos_collision && pos_sub_item == x.pos_sub_item;
+    }
+    bool operator!=(const search_position_item_t& x) const { return !(*this == x); }
+
+    static search_position_item_t end() {
+      return {std::numeric_limits<size_t>::max(), 0u};
+    }
+
+    size_t pos_collision;
+    size_t pos_sub_item;
+  };
+
+  template <node_type_t> struct item_type;
+  template<> struct item_type<node_type_t::INTERNAL> { using type = const laddr_t*; };
+  template<> struct item_type<node_type_t::LEAF> { using type = const onode_t*; };
+  template <node_type_t NodeType>
+  using item_type_t = typename item_type<NodeType>::type;
+
+  template <node_type_t NodeType>
+  struct search_result_item_t {
+    bool is_end() const { return position.is_end(); }
+
+    static search_result_item_t end() {
+      return {search_position_item_t::end(),
+              MatchKindBS::NE, MatchKindBS::NE, nullptr};
+    }
+
+    search_position_item_t position;
+    MatchKindBS match_strings;
+    MatchKindBS match;
+    item_type_t<NodeType> value;
+  };
+
+  template <node_type_t NodeType, field_type_t FieldType,
+            typename = std::enable_if_t<FieldType != field_type_t::N3>>
+  search_result_item_t<NodeType> item_lower_bound(
+      const item_range_t& item_range, const onode_key_t& key) {
+    return {};
+  }
+
+  template <node_type_t NodeType, field_type_t FieldType,
+            typename = std::enable_if_t<FieldType != field_type_t::N3>>
+  item_type_t<NodeType> item_get_value_ptr(
+      const item_range_t& item_range, const search_position_item_t& position) {
+    return nullptr;
+  }
+
   struct search_position_t {
     bool is_end() const {
       return pos_key == std::numeric_limits<size_t>::max();
     }
 
     bool operator==(const search_position_t& x) const {
-      return (pos_key == x.pos_key &&
-              pos_collision == x.pos_collision &&
-              pos_sub_item == x.pos_sub_item);
+      return pos_key == x.pos_key && pos_item == x.pos_item;
     }
     bool operator!=(const search_position_t& x) const { return !(*this == x); }
 
-    static search_position_t end() {
-      return {std::numeric_limits<size_t>::max(), 0u, 0u};
+    static search_position_t end() { return {std::numeric_limits<size_t>::max(), {0u, 0u}}; }
+
+    template <typename IndexType>
+    static search_position_t from(const search_result_bs_t<IndexType>& result_left) {
+      return {result_left.position, {0u, 0u}};
+    }
+
+    template <typename IndexType, node_type_t NodeType>
+    static search_position_t from(const search_result_bs_t<IndexType>& result_left,
+                                  const search_result_item_t<NodeType>& result_right) {
+      assert(!result_right.is_end());
+      return {result_left.position, result_right.position};
     }
 
     size_t pos_key;
-    size_t pos_collision;
-    size_t pos_sub_item;
+    search_position_item_t pos_item;
   };
 
   class LeafNode;
   struct search_result_t {
-    bool is_end() const {
-      if (position.is_end()) {
-        assert(match == MatchKindBS::NE);
-        return true;
-      } else {
-        return false;
-      }
-    }
+    // TODO: deref LeafNode if destroyed with leaf_node available
+    // TODO: make sure to deref LeafNode if is_end()
+    template <typename IndexType>
+    search_result_t(LeafNode* node,
+                    const search_result_bs_t<IndexType>& result_left,
+                    const onode_t* value)
+      : leaf_node(node),
+        position(search_position_t::from(result_left)),
+        match(result_left.match),
+        value(value) {}
+
+    template <typename IndexType>
+    search_result_t(LeafNode* node,
+                    const search_result_bs_t<IndexType>& result_left,
+                    const search_result_item_t<node_type_t::LEAF>& result_right)
+      : leaf_node(node),
+        position(search_position_t::from(result_left, result_right)),
+        value(reinterpret_cast<const onode_t*>(result_right.value)) {}
+
+    bool is_end() const { return position.is_end(); }
+
+    static search_result_t end(Ref<LeafNode> node) { return {node}; }
 
     Ref<LeafNode> leaf_node;
     search_position_t position;
     MatchKindBS match;
+    const onode_t* value;
+
+   private:
+    search_result_t(Ref<LeafNode> node)
+      : leaf_node(node), position(search_position_t::end()),
+        match(MatchKindBS::NE), value(nullptr) {}
   };
 
   class Node
@@ -818,64 +912,6 @@ namespace crimson::os::seastore::onode {
     return os;
   }
 
-  template <typename FieldType, typename ConcreteType>
-  class NodeT : virtual public Node {
-   protected:
-    using num_keys_t = typename FieldType::num_keys_t;
-    static constexpr node_type_t NODE_TYPE = ConcreteType::NODE_TYPE;
-    static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
-    static constexpr node_offset_t TOTAL_SIZE = FieldType::SIZE;
-    static constexpr node_offset_t EXTENT_SIZE =
-      (TOTAL_SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
-
-   public:
-    virtual ~NodeT() = default;
-
-    node_type_t node_type() const override final { return NODE_TYPE; }
-    field_type_t field_type() const override final { return FIELD_TYPE; }
-    size_t keys() const override final { return fields()->num_keys; }
-    size_t free_size() const override final { return fields()->template free_size<NODE_TYPE>(); }
-    size_t total_size() const override final { return TOTAL_SIZE; }
-
-    search_result_t lower_bound(const onode_key_t& key) override final {
-      return {};
-    }
-
-   protected:
-    const FieldType* fields() const {
-      return extent->get_ptr<FieldType>(0u);
-    }
-
-    static Ref<ConcreteType> _allocate(level_t level) {
-      // might be asynchronous
-      auto extent = transaction_manager.alloc_extent(EXTENT_SIZE);
-      extent->copy_in(node_header_t{FIELD_TYPE, ConcreteType::NODE_TYPE, level}, 0u);
-      extent->copy_in(num_keys_t(0u), sizeof(node_header_t));
-      auto ret = Ref<ConcreteType>(new ConcreteType());
-      ret->init(extent);
-      return ret;
-    }
-  };
-
-  template <typename FieldType, typename ConcreteType>
-  class InternalNodeT : public NodeT<FieldType, ConcreteType> {
-   public:
-    static constexpr node_type_t NODE_TYPE = node_type_t::INTERNAL;
-
-    virtual ~InternalNodeT() = default;
-
-    size_t items() const override final { return this->keys() + 1; }
-
-    static Ref<ConcreteType> allocate(level_t level) {
-      assert(level != 0u);
-      return ConcreteType::_allocate(level);
-    }
-  };
-  class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {};
-  class InternalNode1 final : public InternalNodeT<node_fields_1_t, InternalNode1> {};
-  class InternalNode2 final : public InternalNodeT<node_fields_2_t, InternalNode2> {};
-  class InternalNode3 final : public InternalNodeT<internal_fields_3_t, InternalNode3> {};
-
   class LeafNode : virtual public Node {
    public:
     virtual ~LeafNode() = default;
@@ -895,11 +931,147 @@ namespace crimson::os::seastore::onode {
   };
 
   template <typename FieldType, typename ConcreteType>
+  class NodeT : virtual public Node {
+   protected:
+    using num_keys_t = typename FieldType::num_keys_t;
+    static constexpr node_type_t NODE_TYPE = ConcreteType::NODE_TYPE;
+    static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
+    static constexpr node_offset_t TOTAL_SIZE = FieldType::SIZE;
+    static constexpr node_offset_t EXTENT_SIZE =
+      (TOTAL_SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
+
+   public:
+    virtual ~NodeT() = default;
+
+    node_type_t node_type() const override final { return NODE_TYPE; }
+    field_type_t field_type() const override final { return FIELD_TYPE; }
+    size_t keys() const override final { return fields().num_keys; }
+    size_t free_size() const override final { return fields().template free_size<NODE_TYPE>(); }
+    size_t total_size() const override final { return TOTAL_SIZE; }
+
+   protected:
+    const FieldType& fields() const {
+      return *extent->get_ptr<FieldType>(0u);
+    }
+
+    static Ref<ConcreteType> _allocate(level_t level) {
+      // might be asynchronous
+      auto extent = transaction_manager.alloc_extent(EXTENT_SIZE);
+      extent->copy_in(node_header_t{FIELD_TYPE, ConcreteType::NODE_TYPE, level}, 0u);
+      extent->copy_in(num_keys_t(0u), sizeof(node_header_t));
+      auto ret = Ref<ConcreteType>(new ConcreteType());
+      ret->init(extent);
+      return ret;
+    }
+  };
+
+  template <typename FieldType, typename ConcreteType>
+  class InternalNodeT : public NodeT<FieldType, ConcreteType> {
+   public:
+    static constexpr node_type_t NODE_TYPE = node_type_t::INTERNAL;
+    static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
+
+    virtual ~InternalNodeT() = default;
+
+    size_t items() const override final { return this->keys() + 1; }
+
+    search_result_t lower_bound(const onode_key_t& key) override final {
+      auto result_left = fields_lower_bound(this->fields(), key);
+      assert(result_left.position <= this->keys());
+      search_position_t position;
+      laddr_t child_addr;
+      if constexpr (FIELD_TYPE == field_type_t::N3) {
+        position = search_position_t::from(result_left);
+        child_addr = this->fields().child_addrs[result_left.position];
+      } else {
+        if (result_left.position == this->keys()) {
+          assert(result_left.match == MatchKindBS::NE);
+          position = search_position_t::from(result_left);
+          child_addr = fields_last_child_addr(this->fields());
+        } else {
+          auto item_range = fields_item_range(this->fields(), result_left.position);
+          if (result_left.match == MatchKindBS::NE) {
+            position = search_position_t::from(result_left);
+            child_addr = *item_get_value_ptr<NODE_TYPE, FIELD_TYPE>(item_range, position.pos_item);
+          } else {
+            auto result_right = item_lower_bound<NODE_TYPE, FIELD_TYPE>(item_range, key);
+            if (result_right.is_end()) {
+              ++result_left.position;
+              // result_left.match = MatchKindBS::NE;
+              position = search_position_t::from(result_left);
+              if (position.pos_key == this->keys()) {
+                child_addr = fields_last_child_addr(this->fields());
+              } else {
+                item_range = fields_item_range(this->fields(), position.pos_key);
+                child_addr = *item_get_value_ptr<NODE_TYPE, FIELD_TYPE>(item_range, position.pos_item);
+              }
+            } else {
+              assert(result_right.value);
+              position = search_position_t::from(result_left, result_right);
+              child_addr = *static_cast<const laddr_t*>(result_right.value);
+            }
+          }
+        }
+      }
+      // TODO: load and track child nodes by position (intrusive)
+      // return child_node->lower_bound(key);
+      return lower_bound(key);
+    }
+
+    static Ref<ConcreteType> allocate(level_t level) {
+      assert(level != 0u);
+      return ConcreteType::_allocate(level);
+    }
+  };
+  class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {};
+  class InternalNode1 final : public InternalNodeT<node_fields_1_t, InternalNode1> {};
+  class InternalNode2 final : public InternalNodeT<node_fields_2_t, InternalNode2> {};
+  class InternalNode3 final : public InternalNodeT<internal_fields_3_t, InternalNode3> {};
+
+  template <typename FieldType, typename ConcreteType>
   class LeafNodeT: public LeafNode, public NodeT<FieldType, ConcreteType> {
    public:
     static constexpr node_type_t NODE_TYPE = node_type_t::LEAF;
+    static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
 
     virtual ~LeafNodeT() = default;
+
+    search_result_t lower_bound(const onode_key_t& key) override final {
+      auto result_left = fields_lower_bound(this->fields(), key);
+      assert(result_left.position <= this->keys());
+      if (result_left.position == keys()) {
+        // must be the last leaf node
+        assert(result_left.match == MatchKindBS::NE);
+        return search_result_t::end(this);
+      } else {
+        if constexpr (FIELD_TYPE == field_type_t::N3) {
+          auto value_offset = this->fields().get_item_start_offset(result_left.position);
+          auto value = reinterpret_cast<const onode_t*>(
+              fields_start(this->fields()) + value_offset);
+          assert(value_offset + value->size <= FieldType::SIZE);
+          return search_result_t(this, result_left, value);
+        } else {
+          if (result_left.match == MatchKindBS::NE) {
+            return search_result_t(this, result_left, nullptr);
+          } else {
+            auto item_range = fields_item_range(this->fields(), result_left.position);
+            auto result_right = item_lower_bound<NODE_TYPE, FIELD_TYPE>(item_range, key);
+            if (result_right.is_end()) {
+              ++result_left.position;
+              result_left.match = MatchKindBS::NE;
+              if (result_left.position == this->keys()) {
+                return search_result_t::end(this);
+              } else {
+                return search_result_t(this, result_left, nullptr);
+              }
+            } else {
+              assert(result_right.value);
+              return search_result_t(this, result_left, result_right);
+            }
+          }
+        }
+      }
+    }
 
     static Ref<ConcreteType> allocate() {
       return ConcreteType::_allocate(0u);
@@ -959,22 +1131,22 @@ namespace crimson::os::seastore::onode {
    *   db->get_iterator(PREFIIX_OBJ) by ceph::BlueStore::fsck()
    */
   class Btree {
-    // TODO: track cursors in LeafNode (intrusive)
+    // TODO: track cursors in LeafNode by position (intrusive)
     class Cursor {
      public:
-      Cursor(Btree* tree, const search_result_t& result) : tree(*tree) {
+      Cursor(Btree* tree, const search_result_t& result)
+        : tree(tree), position(result.position), value_ptr(result.value) {
         if (!result.is_end()) {
           leaf_node = result.leaf_node;
         }
-        position = result.position;
       }
       Cursor(const Cursor& x) = default;
       ~Cursor() = default;
 
       bool is_end() const { return position.is_end(); }
-      const onode_key_t& key() const { return {}; }
+      const onode_key_t& key() { return {}; }
       // might return Onode class to track the changing onode_t pointer
-      onode_t* value() const { return nullptr; }
+      const onode_t* value() { return nullptr; }
       bool operator==(const Cursor& x) const {
         return leaf_node == x.leaf_node &&
                position == x.position; }
@@ -995,12 +1167,14 @@ namespace crimson::os::seastore::onode {
       static Cursor make_end(Btree* tree) { return Cursor(tree); }
 
      private:
-      Cursor(Btree* tree) : tree(*tree), position(search_position_t::end()) {}
+      Cursor(Btree* tree)
+        : tree(tree), position(search_position_t::end()), value_ptr(nullptr) {}
 
-      Btree& tree;
+      Btree* tree;
       Ref<LeafNode> leaf_node;
       search_position_t position;
       std::optional<onode_key_t> key_copy;
+      const onode_t* value_ptr;
     };
 
    public:
