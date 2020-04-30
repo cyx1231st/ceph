@@ -639,6 +639,7 @@ namespace crimson::os::seastore::onode {
    */
 
   struct internal_sub_item_t {
+    const fixed_key_3_t& get_key() const { return key; }
     #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
     const laddr_t* get_p_value() const { return &value; }
 
@@ -659,7 +660,7 @@ namespace crimson::os::seastore::onode {
 
     num_keys_t size() const { return num_items; }
 
-    const internal_sub_item_t& operator[](size_t index) {
+    const internal_sub_item_t& operator[](size_t index) const {
       assert(index < num_items);
       return *(first_item - index);
     }
@@ -678,7 +679,7 @@ namespace crimson::os::seastore::onode {
       p_value = reinterpret_cast<const onode_t*>(range.p_start);
       assert(range.p_start + p_value->size == _p_key);
     }
-
+    const fixed_key_3_t& get_key() const { return *p_key; }
     const onode_t* get_p_value() const { return p_value; }
 
     const fixed_key_3_t* p_key;
@@ -706,23 +707,23 @@ namespace crimson::os::seastore::onode {
 
     num_keys_t size() const { return *p_num_keys; }
 
-    leaf_sub_item_t operator[](size_t index) {
+    leaf_sub_item_t operator[](size_t index) const {
       assert(index < size());
       return leaf_sub_item_t({get_item_start(index), get_item_end(index)});
     }
 
    private:
-    const char* get_item_start(size_t index) {
+    const char* get_item_start(size_t index) const {
       assert(index < size());
       return p_items_end - get_offset(index);
     }
 
-    const char* get_item_end(size_t index) {
+    const char* get_item_end(size_t index) const {
       assert(index < size());
       return index == 0 ? p_items_end : p_items_end - get_offset(index - 1);
     }
 
-    const node_offset_t& get_offset(size_t index) {
+    const node_offset_t& get_offset(size_t index) const {
       assert(index < size());
       return *(p_offsets - index);
     }
@@ -734,6 +735,7 @@ namespace crimson::os::seastore::onode {
 
   template <typename SubItemsType>
   struct _item_t {
+    using num_keys_t = typename SubItemsType::num_keys_t;
     _item_t(const item_range_t& range)
       : key(range.p_end), sub_items({range.p_start, key.p_start()}) {
       assert(range.p_start < range.p_end);
@@ -757,15 +759,18 @@ namespace crimson::os::seastore::onode {
       next_item_range(range.p_end);
     }
 
-    bool has_next() {
+    bool has_next() const {
       assert(p_items_start <= item_range.p_start);
       return p_items_start < item_range.p_start;
     }
+
+    size_t position() const { return _position; }
 
     item_t<NodeType> operator*() const { return {item_range}; }
 
     item_iterator_t<NodeType>& operator++() {
       next_item_range(item_range.p_start);
+      ++_position;
       return *this;
     }
 
@@ -787,6 +792,7 @@ namespace crimson::os::seastore::onode {
 
     const char* p_items_start;
     item_range_t item_range;
+    size_t _position = 0u;
   };
 
   struct search_position_item_t {
@@ -818,12 +824,48 @@ namespace crimson::os::seastore::onode {
   using item_type_t = typename item_type<NodeType>::type;
 
   template <node_type_t NodeType>
+  struct search_result_sub_item_t {
+    bool is_end() const { return position == std::numeric_limits<size_t>::max(); }
+
+    static search_result_sub_item_t end() {
+      return {std::numeric_limits<size_t>::max(), MatchKindBS::NE, nullptr};
+    }
+
+    size_t position;
+    MatchKindBS match;
+    const item_type_t<NodeType>* p_value;
+  };
+
+  template <node_type_t NodeType, field_type_t FieldType,
+            typename = std::enable_if_t<FieldType != field_type_t::N3>>
+  search_result_sub_item_t<NodeType> sub_item_lower_bound(
+      const item_t<NodeType>& item,
+      const onode_key_t& key,
+      size_t pos_collision,
+      MatchKindStr& s_match) {
+    // lookup: left-key string-key [right-key]
+    using num_keys_t = typename item_t<NodeType>::num_keys_t;
+    const auto& sub_items = item.sub_items;
+    auto ret = binary_search(
+        key, num_keys_t(0u), sub_items.size(),
+        [&sub_items] (num_keys_t index) { return sub_items[index].get_key(); });
+    if (ret.position == sub_items.size()) {
+      assert(ret.match == MatchKindBS::NE);
+      assert(s_match != MatchKindStr::EQNE);
+      s_match = MatchKindStr::EQPO;
+      return search_result_sub_item_t<NodeType>::end();
+    } else {
+      s_match = MatchKindStr::EQNE;
+      return {ret.position, ret.match, sub_items[ret.position].get_p_value()};
+    }
+  }
+
+  template <node_type_t NodeType>
   struct search_result_item_t {
     bool is_end() const { return position.is_end(); }
 
     static search_result_item_t end() {
-      return {search_position_item_t::end(),
-              MatchKindStr::UNEQ, MatchKindBS::NE, nullptr};
+      return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
     }
 
     search_position_item_t position;
@@ -831,58 +873,72 @@ namespace crimson::os::seastore::onode {
     const item_type_t<NodeType>* p_value;
   };
 
-  template <node_type_t NodeType, field_type_t FieldType,
-            typename = std::enable_if_t<FieldType != field_type_t::N3>>
-  search_result_item_t<NodeType> item_lower_bound(
-      const item_t<NodeType>& item,
-      const onode_key_t& key,
-      size_t pos_collision,
-      MatchKindStr& s_match) {
-    // lookup: left-key string [right-key]
-    return {};
-  }
-
+  // TODO: generalize lookup logic from left-key to right-key
+  // TODO: generalize MatchKindStr solution
   template <node_type_t NodeType, field_type_t FieldType,
             typename = std::enable_if_t<FieldType != field_type_t::N3>>
   search_result_item_t<NodeType> item_lower_bound(
       const item_range_t& item_range,
       const onode_key_t& key,
       MatchKindStr& s_match) {
-    // lookup: left-key [string] right-key
+    // lookup: left-key [string-key] right-key
     if constexpr (FieldType <= field_type_t::N1) {
       auto item_iter = item_iterator_t<NodeType>(item_range);
       if (s_match == MatchKindStr::EQPO) {
         auto item = *item_iter;
         if (!item.key.is_smallest()) {
-          return {{0u, 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+          return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
         } else {
-          return item_lower_bound<NodeType, FieldType>(
-              item, key, 0u, s_match);
+          auto result = sub_item_lower_bound<NodeType, FieldType>(
+              item, key, item_iter.position(), s_match);
+          if (result.is_end()) {
+            if (!item_iter.has_next()) {
+              return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
+            } else {
+              ++item_iter;
+              item = *item_iter;
+              return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+            }
+          } else {
+            assert(result.p_value);
+            return {{item_iter.position(), result.position}, result.match, result.p_value};
+          }
         }
       } else if (s_match == MatchKindStr::EQNE) {
-        size_t pos_collision = 0u;
         while (item_iter.has_next()) {
           ++item_iter;
-          ++pos_collision;
         }
         auto item = *item_iter;
         assert(item.key.is_largest());
-        return item_lower_bound<NodeType, FieldType>(
-            item, key, pos_collision, s_match);
+        auto result = sub_item_lower_bound<NodeType, FieldType>(
+            item, key, item_iter.position(), s_match);
+        assert(!result.is_end());
+        assert(result.p_value);
+        return {{item_iter.position(), result.position}, result.match, result.p_value};
       } else {
-        size_t pos_collision = 0u;
         do {
           auto item = *item_iter;
           auto match = compare_to(key, item.key);
           if (match == MatchKindCMP::NE) {
-            return {{pos_collision, 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+            return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
           } else if (match == MatchKindCMP::EQ) {
-            return item_lower_bound<NodeType, FieldType>(
-                item, key, pos_collision, s_match);
+            auto result = sub_item_lower_bound<NodeType, FieldType>(
+                item, key, item_iter.position(), s_match);
+            if (result.is_end()) {
+              if (!item_iter.has_next()) {
+                return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
+              } else {
+                ++item_iter;
+                item = *item_iter;
+                return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+              }
+            } else {
+              assert(result.p_value);
+              return {{item_iter.position(), result.position}, result.match, result.p_value};
+            }
           } else {
             if (item_iter.has_next()) {
               ++item_iter;
-              ++pos_collision;
             } else {
               break;
             }
@@ -1105,7 +1161,7 @@ namespace crimson::os::seastore::onode {
 
     search_result_t
     lower_bound(const onode_key_t& key, MatchKindStr s_match) override final {
-      // lookup: [left-key] string right-key
+      // lookup: [left-key] string-key right-key
       auto result_left = fields_lower_bound(this->fields(), key, s_match);
       search_position_t position;
       laddr_t child_addr;
@@ -1204,6 +1260,7 @@ namespace crimson::os::seastore::onode {
 
     search_result_t
     lower_bound(const onode_key_t& key, MatchKindStr s_match) override final {
+      // lookup: [left-key] string-key right-key
       auto result_left = fields_lower_bound(this->fields(), key, s_match);
       if (result_left.position == keys()) {
         assert(result_left.match == MatchKindBS::NE);
@@ -1226,12 +1283,12 @@ namespace crimson::os::seastore::onode {
             auto result_right =
               item_lower_bound<NODE_TYPE, FIELD_TYPE>(item_range, key, s_match);
             if (result_right.is_end()) {
-              ++result_left.position;
-              result_left.match = MatchKindBS::NE;
-              if (result_left.position == this->keys()) {
+              if (result_left.position == this->keys() - 1) {
                 assert(this->is_level_tail());
                 return search_result_t::end(this);
               } else {
+                ++result_left.position;
+                result_left.match = MatchKindBS::NE;
                 return search_result_t(this, result_left, nullptr);
               }
             } else {
