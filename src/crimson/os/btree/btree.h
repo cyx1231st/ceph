@@ -402,6 +402,69 @@ namespace crimson::os::seastore::onode {
   using slot_1_t = _slot_t<fixed_key_1_t>;
   using slot_3_t = _slot_t<fixed_key_3_t>;
 
+  using match_stage_t = uint8_t;
+  constexpr match_stage_t STAGE_LEFT = 2u;   // shard/pool/crush
+  constexpr match_stage_t STAGE_STRING = 1u; // nspace/oid
+  constexpr match_stage_t STAGE_RIGHT = 0u;  // snap/gen
+  constexpr auto STAGE_TOP = STAGE_LEFT;
+  constexpr auto STAGE_BOTTOM = STAGE_RIGHT;
+
+  struct MatchHistory {
+    template <match_stage_t Stage>
+    const std::optional<MatchKindCMP>& get() const {
+      static_assert(Stage >= STAGE_BOTTOM && Stage <= STAGE_TOP);
+      if constexpr (Stage == STAGE_RIGHT) {
+        return right_match;
+      } else if (Stage == STAGE_STRING) {
+        return string_match;
+      } else {
+        return left_match;
+      }
+    }
+
+    template <match_stage_t Stage>
+    const bool is_PO() const;
+
+    template <match_stage_t Stage>
+    void set(MatchKindCMP match) {
+      static_assert(Stage >= STAGE_BOTTOM && Stage <= STAGE_TOP);
+      if constexpr (Stage < STAGE_TOP) {
+        assert(*get<Stage + 1>() == MatchKindCMP::EQ);
+      }
+      assert(!get<Stage>().has_value() || *get<Stage>() != MatchKindCMP::EQ);
+      const_cast<std::optional<MatchKindCMP>&>(get<Stage>()) = match;
+    }
+
+    std::optional<MatchKindCMP> left_match;
+    std::optional<MatchKindCMP> string_match;
+    std::optional<MatchKindCMP> right_match;
+  };
+
+  template <match_stage_t Stage>
+  struct _check_PO_t {
+    static bool eval(const MatchHistory* history) {
+      return history->get<Stage>() &&
+             (*history->get<Stage>() == MatchKindCMP::PO ||
+              (*history->get<Stage>() == MatchKindCMP::EQ &&
+               _check_PO_t<Stage - 1>::eval(history)));
+    }
+  };
+  template <>
+  struct _check_PO_t<STAGE_RIGHT> {
+    static bool eval(const MatchHistory* history) {
+      return history->get<STAGE_RIGHT>() &&
+             *history->get<STAGE_RIGHT>() == MatchKindCMP::PO;
+    }
+  };
+  template <match_stage_t Stage>
+  const bool MatchHistory::is_PO() const {
+    static_assert(Stage >= STAGE_BOTTOM && Stage <= STAGE_TOP);
+    if constexpr (Stage < STAGE_TOP) {
+      assert(get<Stage + 1>() == MatchKindCMP::EQ);
+    }
+    return _check_PO_t<Stage>::eval(this);
+  }
+
   enum class MatchKindStr { UNEQ, EQNE, EQPO };
 
   template <typename FieldType>
@@ -817,11 +880,76 @@ namespace crimson::os::seastore::onode {
     size_t pos_sub_item;
   };
 
-  template <node_type_t> struct item_type;
-  template<> struct item_type<node_type_t::INTERNAL> { using type = laddr_t; };
-  template<> struct item_type<node_type_t::LEAF> { using type = onode_t; };
+  template <node_type_t> struct value_type;
+  template<> struct value_type<node_type_t::INTERNAL> { using type = laddr_t; };
+  template<> struct value_type<node_type_t::LEAF> { using type = onode_t; };
   template <node_type_t NodeType>
-  using item_type_t = typename item_type<NodeType>::type;
+  using value_type_t = typename value_type<NodeType>::type;
+
+  template <match_stage_t Stage>
+  struct staged_position_t {
+    static_assert(Stage > STAGE_BOTTOM && Stage <= STAGE_TOP);
+    using my_type_t = staged_position_t<Stage>;
+    using nxt_type_t = staged_position_t<Stage - 1>;
+    bool is_end() const { return position == std::numeric_limits<size_t>::max(); }
+    bool operator==(const my_type_t& x) const {
+      return position == x.position && position_nxt == x.position_nxt;
+    }
+    bool operator!=(const my_type_t& x) const { return !(*this == x); }
+    bool operator<(const my_type_t& x) const {
+      return std::make_pair(position, position_nxt) <
+             std::make_pair(x.position, x.position_nxt);
+    }
+
+    static my_type_t begin() { return {0u, nxt_type_t::begin()}; }
+    static my_type_t end() {
+      return {std::numeric_limits<size_t>::max(), nxt_type_t::end()};
+    }
+
+    size_t position;
+    nxt_type_t position_nxt;
+  };
+
+  template <>
+  struct staged_position_t<STAGE_BOTTOM> {
+    using my_type_t = staged_position_t<STAGE_BOTTOM>;
+    bool is_end() const { return position == std::numeric_limits<size_t>::max(); }
+    bool operator==(const my_type_t& x) const { return position == x.position; }
+    bool operator!=(const my_type_t& x) const { return !(*this == x); }
+    bool operator<(const my_type_t& x) const { return position < x.position; }
+
+    static my_type_t begin() { return {0u}; }
+    static my_type_t end() { return {std::numeric_limits<size_t>::max()}; }
+
+    size_t position;
+  };
+
+  template <node_type_t NodeType, match_stage_t Stage>
+  struct staged_result_t {
+    using my_type_t = staged_result_t<NodeType, Stage>;
+    bool is_end() const { return position.is_end(); }
+
+    static my_type_t end() {
+      return {staged_position_t<Stage>::end(), MatchKindBS::NE, nullptr};
+    }
+    template <typename = std::enable_if_t<Stage != STAGE_BOTTOM>>
+    static my_type_t leftmost_of(size_t position, const value_type_t<NodeType>* p_value) {
+      return {{position, staged_position_t<Stage - 1>::begin()}, MatchKindBS::NE, p_value};
+    }
+    template <typename = std::enable_if_t<Stage != STAGE_BOTTOM>>
+    static my_type_t from(size_t position, const staged_result_t<NodeType, Stage - 1>& nxt_stage_result) {
+      return {{position, nxt_stage_result.position}, nxt_stage_result.match, nxt_stage_result.p_value};
+    }
+    template <typename IndexType, typename = std::enable_if_t<Stage == STAGE_BOTTOM>>
+    static my_type_t from(const search_result_bs_t<IndexType>& result,
+                          const value_type_t<NodeType>* p_value) {
+      return {{result.position}, result.match, p_value};
+    }
+
+    staged_position_t<Stage> position;
+    MatchKindBS match;
+    const value_type_t<NodeType>* p_value;
+  };
 
   template <node_type_t NodeType>
   struct search_result_sub_item_t {
@@ -833,7 +961,7 @@ namespace crimson::os::seastore::onode {
 
     size_t position;
     MatchKindBS match;
-    const item_type_t<NodeType>* p_value;
+    const value_type_t<NodeType>* p_value;
   };
 
   template <node_type_t NodeType, field_type_t FieldType,
@@ -870,7 +998,7 @@ namespace crimson::os::seastore::onode {
 
     search_position_item_t position;
     MatchKindBS match;
-    const item_type_t<NodeType>* p_value;
+    const value_type_t<NodeType>* p_value;
   };
 
   // TODO: generalize lookup logic from left-key to right-key
@@ -955,7 +1083,7 @@ namespace crimson::os::seastore::onode {
 
   template <node_type_t NodeType, field_type_t FieldType,
             typename = std::enable_if_t<FieldType != field_type_t::N3>>
-  const item_type_t<NodeType>* item_get_p_value(
+  const value_type_t<NodeType>* item_get_p_value(
       const item_range_t& item_range, const search_position_item_t& position) {
     return nullptr;
   }
@@ -1349,6 +1477,282 @@ namespace crimson::os::seastore::onode {
     ret->init(extent, is_level_tail, parent_info);
     return ret;
   }
+
+  enum class ContainerType { ITERATIVE, INDEXABLE };
+
+  template <typename NodeType>
+  struct staged_params_left_01_t {
+    using container_t = NodeType;
+    constexpr auto CONTAINER_TYPE = ContainerType::ITERATIVE;
+    constexpr auto STAGE = STAGE_LEFT;
+  };
+
+  template <typename Params>
+  struct staged {
+   private:
+    using container_t = Params::container_t;
+    constexpr auto CONTAINER_TYPE = container_t::CONTAINER_TYPE;
+    constexpr auto STAGE = Params::STAGE;
+    constexpr bool IS_BOTTOM = (STAGE == STAGE_BOTTOM);
+    constexpr auto NODE_TYPE = Params::NODE_TYPE;
+    using position_t = staged_position_t<STAGE>;
+    using result_t = staged_result_t<NODE_TYPE, STAGE>;
+    using value_t = const value_type_t<NODE_TYPE>*;
+
+    template <typename = std::enable_if_t<!IS_BOTTOM>>
+    using next_stage_t = staged<Params::next_stage_t>;
+
+    template <typename = std::enable_if_t<CONTAINER_TYPE == ContainerType::INDEXABLE>
+    class iterator_t {
+     /*
+      * indexable container:
+      * CONTAINER_TYPE == ContainerType::INDEXABLE
+      * keys() -> size_t
+      * operator[](size_t) -> key_t
+      *
+      * !IS_BOTTOM:
+      * get_nxt_container(size_t)
+      *
+      * IS_BOTTOM:
+      * get_p_value(size_t) -> value_t
+      *
+      */
+     public:
+      using key_t = decltype((*container)[0u]);
+
+      size_t position() const { return _position; }
+      key_t get_key() const { return (*container)[_position]; }
+      template <typename = std::enable_if_t<!IS_BOTTOM>>
+      next_stage_t::container_t get_nxt_container() const {
+        return container->get_nxt_container(_position);
+      }
+      template <typename = std::enable_if_t<!IS_BOTTOM>>
+      value_t get_p_value(const next_stage_t::position_t& nxt_position) {
+        auto nxt_container = get_nxt_container();
+        return next_stage_t::get_p_value(nxt_position, &nxt_container);
+      }
+      template <typename = std::enable_if_t<IS_BOTTOM>>
+      value_t get_p_value() const {
+        return container.get_p_value(_position);
+      }
+      bool is_last() const {
+        assert(container->keys());
+        return _position == container->keys() - 1;
+      }
+      bool is_end() const { return _position == container->keys(); }
+      iterator_t& operator++() {
+        assert(!is_last());
+        ++_position;
+      }
+      MatchKindBS seek(const onode_key_t& key, bool exclude_last) const {
+        size_t end_position = container->keys();
+        if (exclude_last) {
+          assert(end_position);
+          --end_position;
+          assert(compare_to(key, (*container)[end_position]) == MatchKindCMP::NE);
+        }
+        auto ret = binary_search(key, _position, end_position,
+            [container] (size_t index) { return (*container)[_position]; });
+        _position = ret.position;
+        return ret.match;
+      }
+
+      static iterator_t begin(container_t* container) {
+        return iterator_t(container, 0u);
+      }
+      static iterator_t last(container_t* container) {
+        assert(container->keys() != 0);
+        return iterator_t(container, container->keys() - 1);
+      }
+      static iterator_t at(container_t* container, size_t position) {
+        assert(position < container->keys());
+        return iterator_t(container, position);
+      }
+
+     private:
+      iterator_t(container_t* container, size_t position)
+        : container{container}, _position{position} {}
+
+      container_t* container;
+      size_t _position;
+    };
+
+    template <typename = std::enable_if_t<CONTAINER_TYPE == ContainerType::ITERATIVE>
+    class iterator_t {
+      /*
+       * iterative container (!IS_BOTTOM):
+       * CONTAINER_TYPE == ContainerType::ITERATIVE
+       * position() -> size_t
+       * get_key() -> key_t
+       * get_nxt_container()
+       * operator++()
+       * has_next() -> bool
+       */
+      static_assert(STAGE == STAGE_STRING);
+     public:
+      using key_t = decltype(container->get_key());
+
+      size_t position() const { return container->position(); }
+      key_t get_key() const { return container->get_key(); }
+      next_stage_t::container_t get_nxt_container() const {
+        return container->get_nxt_container();
+      }
+      value_t get_p_value(const next_stage_t::position_t& nxt_position) {
+        auto nxt_container = get_nxt_container();
+        return next_stage_t::get_p_value(nxt_position, &nxt_container);
+      }
+      bool is_last() const { return !container->has_next(); }
+      bool is_end() const { return container == nullptr; }
+      iterator_t& operator++() {
+        assert(!is_last());
+        ++(*container);
+      }
+      MatchKindBS seek(const onode_key_t& key, bool exclude_last) const {
+        do {
+          if (exclude_last && !container->has_next()) {
+            assert(compare_to(key, get_key()) == MatchKindCMP::NE);
+            return MatchKindBS::NE;
+          }
+          auto match = compare_to(key, get_key());
+          if (match == MatchKindCMP::NE) {
+            return MatchKindBS::NE;
+          } else if (match == MatchKindCMP::EQ) {
+            return MatchKindBS::EQ;
+          } else {
+            if (container->has_next()) {
+              ++(*container);
+            } else {
+              container = nullptr;
+              break;
+            }
+          }
+        } while (true);
+        assert(!exclude_last);
+        return MatchKindBS::NE;
+      }
+
+      static iterator_t begin(container_t* container) {
+        assert(container->position() == 0u);
+        return iterator_t(container);
+      }
+      static iterator_t last(container_t* container) {
+        while (container->has_next()) {
+          ++(*container);
+        }
+        return iterator_t(container);
+      }
+      static iterator_t at(container_t* container, size_t position) {
+        while (position > 0) {
+          ++(*container);
+          --position;
+        }
+        return iterator_t(container);
+      }
+
+     private:
+      iterator_t(container_t* container) : container{container} {}
+
+      container_t* container;
+    };
+
+    static result_t
+    leftmost_result(const iterator_t& iter) {
+      static_assert(!IS_BOTTOM);
+      assert(!iter.is_end());
+      auto pos_leftmost = next_stage_t::position_t::begin();
+      auto value_ptr = iter.get_p_value(pos_leftmost);
+      return {{iter.position(), pos_leftmost}, MatchKindBS::NE, value_ptr};
+    }
+
+    static result_t
+    nxt_lower_bound(const onode_key_t& key, const iterator_t& iter, MatchHistory& history) {
+      static_assert(!IS_BOTTOM);
+      assert(!iter.is_end());
+      auto nxt_container = iter.get_nxt_container();
+      auto nxt_result = next_stage_t::lower_bound(key, nxt_container, history);
+      if (nxt_result.is_end()) {
+        if (iter.is_last()) {
+          return result_t::end();
+        } else {
+          return leftmost_result(++iter);
+        }
+      } else {
+        return result_t::from(iter.position(), nxt_result);
+      }
+    }
+
+   public:
+    static value_t get_p_value(const position_t& position, container_t* container) {
+      size_t stage_position = position.position;
+      auto iter = iterator_t::at(container, stage_position);
+      if constexpr (!IS_BOTTTOM) {
+        return iter.get_p_value(position.position_nxt);
+      } else {
+        return iter.get_p_value();
+      }
+    }
+
+    static result_t
+    lower_bound(const onode_key_t& key, container_t* container, MatchHistory& history) {
+      if (history.get<STAGE>() &&
+          *history.get<STAGE>() == MatchKindCMP::EQ) {
+        if constexpr (!IS_BOTTOM) {
+          if (history.is_PO<STAGE - 1>()) {
+            auto iter = iterator_t::begin(container);
+            bool test_key_equal;
+            if constexpr (STAGE == STAGE_STRING) {
+              test_key_equal = (iter.get_key().is_smallest());
+            } else {
+              test_key_equal = (key == iter.get_key());
+            }
+            if (test_key_equal) {
+              return nxt_lower_bound(key, iter, history);
+            } else {
+              return leftmost_result(iter);
+            }
+          } else {
+            assert(history.get<STAGE - 1>().has_value());
+          }
+        }
+        auto iter = iterator_t::last(container);
+        if constexpr (STAGE == STAGE_STRING) {
+          assert(iter.get_key().is_largest());
+        } else {
+          assert(key == iter.get_key());
+        }
+        if constexpr (IS_BOTTOM) {
+          auto value_ptr = iter.get_p_value();
+          return {iter.position(), MatchKindBS::EQ, value_ptr};
+        } else {
+          auto nxt_container = iter.get_nxt_container();
+          auto nxt_result = next_stage_t::lower_bound(key, nxt_container, history);
+          assert(!nxt_result.is_end());
+          return result_t::from(iter.position(), nxt_result);
+        }
+      } else {
+        auto iter = iterator_t::begin(container);
+        bool exclude_last = (history.get<STAGE>().has_value() &&
+            *history.get<STAGE>() == MatchKindCMP::NE);
+        auto bs_match = iter.seek(key, exclude_last);
+        if (!exclude_last && iter.is_end()) {
+          history.set<STAGE>(MatchKindCMP::PO);
+          return result_t::end();
+        }
+        history.set<STAGE>(bs_match == MatchKindBS::EQ ?
+                           MatchKindCMP::EQ : MatchKindCMP::NE);
+        if constexpr (IS_BOTTOM) {
+          auto value_ptr = iter.get_p_value();
+          return result_t::from(iter.position(), bs_match, value_ptr);
+        } else {
+          if (bs_match == MatchKindBS::EQ) {
+            return nxt_lower_bound(key, iter, history);
+          } else {
+            return leftmost_result(iter);
+          }
+        }
+      }
+    }
+  };
 
   /*
    * btree interfaces
