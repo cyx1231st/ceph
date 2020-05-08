@@ -364,18 +364,17 @@ namespace crimson::os::seastore::onode {
   }
 
   enum class MatchKindBS : int8_t { NE = -1, EQ = 0 };
-  template  <typename IndexType>
   struct search_result_bs_t {
-    IndexType position;
+    size_t position;
     MatchKindBS match;
   };
-  template <typename FGetKey, typename IndexType>
-  search_result_bs_t<IndexType> binary_search(
-      const onode_key_t& key, IndexType begin, IndexType end, FGetKey&& f_get_key) {
+  template <typename FGetKey>
+  search_result_bs_t binary_search(
+      const onode_key_t& key, size_t begin, size_t end, FGetKey&& f_get_key) {
     assert(begin <= end);
     while (begin < end) {
-      unsigned total = begin + end;
-      IndexType mid = total >> 1;
+      auto total = begin + end;
+      auto mid = total >> 1;
       // do not copy if return value is reference
       decltype(f_get_key(mid)) target = f_get_key(mid);
       auto match = compare_to(key, target);
@@ -468,21 +467,20 @@ namespace crimson::os::seastore::onode {
   enum class MatchKindStr { UNEQ, EQNE, EQPO };
 
   template <typename FieldType>
-  search_result_bs_t<typename FieldType::num_keys_t>
+  search_result_bs_t
   fields_lower_bound(const FieldType& node, const onode_key_t& key, MatchKindStr& s_match) {
-    using num_keys_t = typename FieldType::num_keys_t;
     if constexpr (FieldType::FIELD_TYPE == field_type_t::N2) {
       // TODO: string key dedup for N2
       assert(false);
     }
 
-    auto ret = binary_search(key, num_keys_t(0u), node.num_keys,
-        [&node] (num_keys_t index) { return node.get_key(index); });
+    auto ret = binary_search(key, 0u, node.num_keys,
+        [&node] (size_t index) { return node.get_key(index); });
 
 #ifndef NDEBUG
     if constexpr (FieldType::FIELD_TYPE <= field_type_t::N1) {
       if (s_match == MatchKindStr::EQNE) {
-        assert(ret.position == (node.num_keys - 1) && ret.match == MatchKindBS::EQ);
+        assert(ret.position == ((size_t)node.num_keys - 1) && ret.match == MatchKindBS::EQ);
       } else if (s_match == MatchKindStr::EQPO) {
         assert(ret.position == 0u);
       }
@@ -503,7 +501,7 @@ namespace crimson::os::seastore::onode {
   };
   template <typename FieldType>
   item_range_t fields_item_range(
-      const FieldType& node, typename FieldType::num_keys_t index) {
+      const FieldType& node, size_t index) {
     node_offset_t item_start_offset = node.get_item_start_offset(index);
     node_offset_t item_end_offset =
       (index == 0u ? FieldType::SIZE : node.get_item_start_offset(index - 1));
@@ -543,22 +541,22 @@ namespace crimson::os::seastore::onode {
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(SlotType), sizeof(laddr_t)
     // and the minimal size of variable_key.
     using num_keys_t = uint8_t;
-    using key_t = typename SlotType::key_t;
+    using key_t = const typename SlotType::key_t&;
     using my_type_t = _node_fields_013_t<SlotType>;
     static constexpr field_type_t FIELD_TYPE = SlotType::FIELD_TYPE;
     static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
 
-    const key_t& get_key(num_keys_t index) const {
+    key_t get_key(size_t index) const {
       assert(index < num_keys);
       return slots[index].key;
     }
-    node_offset_t get_key_start_offset(num_keys_t index) const {
+    node_offset_t get_key_start_offset(size_t index) const {
       assert(index <= num_keys);
       auto offset = offsetof(my_type_t, slots) + sizeof(SlotType) * index;
       assert(offset < SIZE);
       return offset;
     }
-    node_offset_t get_item_start_offset(num_keys_t index) const {
+    node_offset_t get_item_start_offset(size_t index) const {
       assert(index < num_keys);
       auto offset = slots[index].right_offset;
       assert(offset <= SIZE);
@@ -584,7 +582,7 @@ namespace crimson::os::seastore::onode {
     static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
     static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
 
-    key_t get_key(num_keys_t index) const {
+    key_t get_key(size_t index) const {
       assert(index < num_keys);
       node_offset_t item_end_offset =
         (index == 0 ? SIZE : offsets[index - 1]);
@@ -592,14 +590,14 @@ namespace crimson::os::seastore::onode {
       const char* p_start = fields_start(*this);
       return key_t(p_start + item_end_offset);
     }
-    node_offset_t get_key_start_offset(num_keys_t index) const {
+    node_offset_t get_key_start_offset(size_t index) const {
       assert(index <= num_keys);
       auto offset = offsetof(node_fields_2_t, offsets) +
                     sizeof(node_offset_t) * num_keys;
       assert(offset <= SIZE);
       return offset;
     }
-    node_offset_t get_item_start_offset(num_keys_t index) const {
+    node_offset_t get_item_start_offset(size_t index) const {
       assert(index < num_keys);
       auto offset = offsets[index];
       assert(offset <= SIZE);
@@ -621,28 +619,28 @@ namespace crimson::os::seastore::onode {
   struct _internal_fields_3_t {
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
     using num_keys_t = uint8_t;
-    using key_t = fixed_key_3_t;
+    using key_t = const fixed_key_3_t&;
     using my_type_t = _internal_fields_3_t<MAX_NUM_KEYS>;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
     static constexpr node_offset_t SIZE = sizeof(my_type_t);
 
-    const key_t& get_key(num_keys_t index) const {
+    key_t get_key(size_t index) const {
       assert(index < num_keys);
       return keys[index];
     }
-    template <node_type_t NodeType,
-              typename = std::enable_if_t<NodeType == node_type_t::INTERNAL>>
-    node_offset_t free_size(bool is_level_tail) const {
+    template <node_type_t NodeType>
+    std::enable_if_t<NodeType == node_type_t::INTERNAL, node_offset_t>
+    free_size(bool is_level_tail) const {
       auto allowed_num_keys = is_level_tail ? MAX_NUM_KEYS - 1 : MAX_NUM_KEYS;
       assert(num_keys <= allowed_num_keys);
-      auto free = (allowed_num_keys - num_keys) * (sizeof(key_t) + sizeof(laddr_t));
+      auto free = (allowed_num_keys - num_keys) * (sizeof(fixed_key_3_t) + sizeof(laddr_t));
       assert(free < SIZE);
       return free;
     }
 
     node_header_t header;
     num_keys_t num_keys = 0u;
-    key_t keys[MAX_NUM_KEYS];
+    fixed_key_3_t keys[MAX_NUM_KEYS];
     laddr_t child_addrs[MAX_NUM_KEYS];
   } __attribute__((packed));
   static_assert(_internal_fields_3_t<MAX_NUM_KEYS_I3>::SIZE <= NODE_BLOCK_SIZE &&
@@ -650,6 +648,8 @@ namespace crimson::os::seastore::onode {
   using internal_fields_3_t = _internal_fields_3_t<MAX_NUM_KEYS_I3>;
 
   using leaf_fields_3_t = _node_fields_013_t<slot_3_t>;
+
+  enum class ContainerType { ITERATIVE, INDEXABLE };
 
   /*
    * block layout of a variable-sized item (right-side)
@@ -721,32 +721,23 @@ namespace crimson::os::seastore::onode {
       assert(num_items > 0);
     }
 
-    num_keys_t size() const { return num_items; }
-
-    const internal_sub_item_t& operator[](size_t index) const {
+    // container type system
+    using key_t = const fixed_key_3_t&;
+    using value_t = const laddr_t*;
+    static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
+    num_keys_t keys() const { return num_items; }
+    key_t operator[](size_t index) const {
       assert(index < num_items);
-      return *(first_item - index);
+      return (first_item - index)->get_key();
+    }
+    value_t get_p_value(size_t index) const {
+      assert(index < num_items);
+      return (first_item - index)->get_p_value();
     }
 
    private:
     size_t num_items;
     const internal_sub_item_t* first_item;
-  };
-
-  struct leaf_sub_item_t {
-    leaf_sub_item_t(const item_range_t& range) {
-      assert(range.p_start < range.p_end);
-      auto _p_key = range.p_end - sizeof(fixed_key_3_t);
-      assert(range.p_start < _p_key);
-      p_key = reinterpret_cast<const fixed_key_3_t*>(_p_key);
-      p_value = reinterpret_cast<const onode_t*>(range.p_start);
-      assert(range.p_start + p_value->size == _p_key);
-    }
-    const fixed_key_3_t& get_key() const { return *p_key; }
-    const onode_t* get_p_value() const { return p_value; }
-
-    const fixed_key_3_t* p_key;
-    const onode_t* p_value;
   };
 
   class leaf_sub_items_t {
@@ -763,31 +754,45 @@ namespace crimson::os::seastore::onode {
       auto _p_offsets = _p_num_keys - sizeof(node_offset_t);
       assert(range.p_start < _p_offsets);
       p_offsets = reinterpret_cast<const node_offset_t*>(_p_offsets);
-      p_items_end = reinterpret_cast<const char*>(&get_offset(size() - 1));
+      p_items_end = reinterpret_cast<const char*>(&get_offset(keys() - 1));
       assert(range.p_start < p_items_end);
-      assert(range.p_start == get_item_start(size() - 1));
+      assert(range.p_start == get_item_start(keys() - 1));
     }
 
-    num_keys_t size() const { return *p_num_keys; }
-
-    leaf_sub_item_t operator[](size_t index) const {
-      assert(index < size());
-      return leaf_sub_item_t({get_item_start(index), get_item_end(index)});
+    // container type system
+    using key_t = const fixed_key_3_t&;
+    using value_t = const onode_t*;
+    static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
+    num_keys_t keys() const { return *p_num_keys; }
+    key_t operator[](size_t index) const {
+      assert(index < keys());
+      auto pointer = get_item_end(index);
+      assert(get_item_start(index) < pointer);
+      pointer -= sizeof(fixed_key_3_t);
+      assert(get_item_start(index) < pointer);
+      return *reinterpret_cast<const fixed_key_3_t*>(pointer);
+    }
+    value_t get_p_value(size_t index) const {
+      assert(index < keys());
+      auto pointer = get_item_start(index);
+      value_t value = reinterpret_cast<const onode_t*>(pointer);
+      assert(pointer + value->size + sizeof(fixed_key_3_t) == get_item_end(index));
+      return value;
     }
 
    private:
     const char* get_item_start(size_t index) const {
-      assert(index < size());
+      assert(index < keys());
       return p_items_end - get_offset(index);
     }
 
     const char* get_item_end(size_t index) const {
-      assert(index < size());
+      assert(index < keys());
       return index == 0 ? p_items_end : p_items_end - get_offset(index - 1);
     }
 
     const node_offset_t& get_offset(size_t index) const {
-      assert(index < size());
+      assert(index < keys());
       return *(p_offsets - index);
     }
 
@@ -796,49 +801,46 @@ namespace crimson::os::seastore::onode {
     const char* p_items_end;
   };
 
-  template <typename SubItemsType>
-  struct _item_t {
-    using num_keys_t = typename SubItemsType::num_keys_t;
-    _item_t(const item_range_t& range)
-      : key(range.p_end), sub_items({range.p_start, key.p_start()}) {
-      assert(range.p_start < range.p_end);
-    }
-
-    variable_key_t key;
-    SubItemsType sub_items;
-  };
-
-  template <node_type_t> struct __item_t;
-  template<> struct __item_t<node_type_t::INTERNAL> { using type = _item_t<internal_sub_items_t>; };
-  template<> struct __item_t<node_type_t::LEAF> { using type = _item_t<leaf_sub_items_t>; };
+  template <node_type_t> struct _sub_items_t;
+  template<> struct _sub_items_t<node_type_t::INTERNAL> { using type = internal_sub_items_t; };
+  template<> struct _sub_items_t<node_type_t::LEAF> { using type = leaf_sub_items_t; };
   template <node_type_t NodeType>
-  using item_t = typename __item_t<NodeType>::type;
+  using sub_items_t = typename _sub_items_t<NodeType>::type;
 
   template <node_type_t NodeType>
   class item_iterator_t {
    public:
     item_iterator_t(const item_range_t& range)
-      : p_items_start(range.p_start) {
-      next_item_range(range.p_end);
-    }
+      : p_items_start(range.p_start),
+        item_range(next_item_range(range.p_end)) {}
 
+    // container type system
+    using key_t = const variable_key_t&;
+    static constexpr auto CONTAINER_TYPE = ContainerType::ITERATIVE;
+    size_t position() const { return _position; }
+    key_t get_key() const {
+      if (!key.has_value()) {
+        key = variable_key_t(item_range.p_end);
+        assert(item_range.p_start < (*key).p_start());
+      }
+      return *key;
+    }
+    sub_items_t<NodeType> get_nxt_container() const {
+      return {{item_range.p_start, get_key().p_start()}};
+    }
     bool has_next() const {
       assert(p_items_start <= item_range.p_start);
       return p_items_start < item_range.p_start;
     }
-
-    size_t position() const { return _position; }
-
-    item_t<NodeType> operator*() const { return {item_range}; }
-
     item_iterator_t<NodeType>& operator++() {
-      next_item_range(item_range.p_start);
+      item_range = next_item_range(item_range.p_start);
+      key.reset();
       ++_position;
       return *this;
     }
 
    private:
-    void next_item_range(const char* p_end) {
+    item_range_t next_item_range(const char* p_end) const {
       assert(has_next());
       auto p_item_end = p_end - sizeof(node_offset_t);
       assert(p_items_start < p_item_end);
@@ -850,11 +852,12 @@ namespace crimson::os::seastore::onode {
       } else {
         p_item_start = p_items_start;
       }
-      item_range = {p_item_start, p_item_end};
+      return {p_item_start, p_item_end};
     }
 
     const char* p_items_start;
     item_range_t item_range;
+    mutable std::optional<variable_key_t> key;
     size_t _position = 0u;
   };
 
@@ -932,18 +935,10 @@ namespace crimson::os::seastore::onode {
     static my_type_t end() {
       return {staged_position_t<Stage>::end(), MatchKindBS::NE, nullptr};
     }
-    template <typename = std::enable_if_t<Stage != STAGE_BOTTOM>>
-    static my_type_t leftmost_of(size_t position, const value_type_t<NodeType>* p_value) {
-      return {{position, staged_position_t<Stage - 1>::begin()}, MatchKindBS::NE, p_value};
-    }
-    template <typename = std::enable_if_t<Stage != STAGE_BOTTOM>>
-    static my_type_t from(size_t position, const staged_result_t<NodeType, Stage - 1>& nxt_stage_result) {
+    template <typename T = my_type_t>
+    static std::enable_if_t<Stage != STAGE_BOTTOM, T>
+    from_nxt(size_t position, const staged_result_t<NodeType, Stage - 1>& nxt_stage_result) {
       return {{position, nxt_stage_result.position}, nxt_stage_result.match, nxt_stage_result.p_value};
-    }
-    template <typename IndexType, typename = std::enable_if_t<Stage == STAGE_BOTTOM>>
-    static my_type_t from(const search_result_bs_t<IndexType>& result,
-                          const value_type_t<NodeType>* p_value) {
-      return {{result.position}, result.match, p_value};
     }
 
     staged_position_t<Stage> position;
@@ -964,27 +959,22 @@ namespace crimson::os::seastore::onode {
     const value_type_t<NodeType>* p_value;
   };
 
-  template <node_type_t NodeType, field_type_t FieldType,
-            typename = std::enable_if_t<FieldType != field_type_t::N3>>
-  search_result_sub_item_t<NodeType> sub_item_lower_bound(
-      const item_t<NodeType>& item,
-      const onode_key_t& key,
-      size_t pos_collision,
-      MatchKindStr& s_match) {
+  template <node_type_t NodeType, field_type_t FieldType>
+  std::enable_if_t<FieldType != field_type_t::N3, search_result_sub_item_t<NodeType>>
+  sub_item_lower_bound(const sub_items_t<NodeType>& sub_items, const onode_key_t& key,
+                       size_t pos_collision, MatchKindStr& s_match) {
     // lookup: left-key string-key [right-key]
-    using num_keys_t = typename item_t<NodeType>::num_keys_t;
-    const auto& sub_items = item.sub_items;
     auto ret = binary_search(
-        key, num_keys_t(0u), sub_items.size(),
-        [&sub_items] (num_keys_t index) { return sub_items[index].get_key(); });
-    if (ret.position == sub_items.size()) {
+        key, 0u, sub_items.keys(),
+        [&sub_items] (size_t index) { return sub_items[index]; });
+    if (ret.position == sub_items.keys()) {
       assert(ret.match == MatchKindBS::NE);
       assert(s_match != MatchKindStr::EQNE);
       s_match = MatchKindStr::EQPO;
       return search_result_sub_item_t<NodeType>::end();
     } else {
       s_match = MatchKindStr::EQNE;
-      return {ret.position, ret.match, sub_items[ret.position].get_p_value()};
+      return {ret.position, ret.match, sub_items.get_p_value(ret.position)};
     }
   }
 
@@ -1003,29 +993,26 @@ namespace crimson::os::seastore::onode {
 
   // TODO: generalize lookup logic from left-key to right-key
   // TODO: generalize MatchKindStr solution
-  template <node_type_t NodeType, field_type_t FieldType,
-            typename = std::enable_if_t<FieldType != field_type_t::N3>>
-  search_result_item_t<NodeType> item_lower_bound(
-      const item_range_t& item_range,
-      const onode_key_t& key,
-      MatchKindStr& s_match) {
+  template <node_type_t NodeType, field_type_t FieldType>
+  std::enable_if_t<FieldType != field_type_t::N3, search_result_item_t<NodeType>>
+  item_lower_bound(const item_range_t& item_range, const onode_key_t& key, MatchKindStr& s_match) {
     // lookup: left-key [string-key] right-key
     if constexpr (FieldType <= field_type_t::N1) {
       auto item_iter = item_iterator_t<NodeType>(item_range);
       if (s_match == MatchKindStr::EQPO) {
-        auto item = *item_iter;
-        if (!item.key.is_smallest()) {
-          return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+        auto sub_items = item_iter.get_nxt_container();
+        if (!item_iter.get_key().is_smallest()) {
+          return {{item_iter.position(), 0u}, MatchKindBS::NE, sub_items.get_p_value(0u)};
         } else {
           auto result = sub_item_lower_bound<NodeType, FieldType>(
-              item, key, item_iter.position(), s_match);
+              sub_items, key, item_iter.position(), s_match);
           if (result.is_end()) {
             if (!item_iter.has_next()) {
               return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
             } else {
               ++item_iter;
-              item = *item_iter;
-              return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+              auto _sub_items = item_iter.get_nxt_container();
+              return {{item_iter.position(), 0u}, MatchKindBS::NE, _sub_items.get_p_value(0u)};
             }
           } else {
             assert(result.p_value);
@@ -1036,29 +1023,30 @@ namespace crimson::os::seastore::onode {
         while (item_iter.has_next()) {
           ++item_iter;
         }
-        auto item = *item_iter;
-        assert(item.key.is_largest());
+        auto sub_items = item_iter.get_nxt_container();
+        assert(item_iter.get_key().is_largest());
         auto result = sub_item_lower_bound<NodeType, FieldType>(
-            item, key, item_iter.position(), s_match);
+            sub_items, key, item_iter.position(), s_match);
         assert(!result.is_end());
         assert(result.p_value);
         return {{item_iter.position(), result.position}, result.match, result.p_value};
       } else {
         do {
-          auto item = *item_iter;
-          auto match = compare_to(key, item.key);
+          auto match = compare_to(key, item_iter.get_key());
           if (match == MatchKindCMP::NE) {
-            return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+            auto sub_items = item_iter.get_nxt_container();
+            return {{item_iter.position(), 0u}, MatchKindBS::NE, sub_items.get_p_value(0u)};
           } else if (match == MatchKindCMP::EQ) {
+            auto sub_items = item_iter.get_nxt_container();
             auto result = sub_item_lower_bound<NodeType, FieldType>(
-                item, key, item_iter.position(), s_match);
+                sub_items, key, item_iter.position(), s_match);
             if (result.is_end()) {
               if (!item_iter.has_next()) {
                 return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
               } else {
                 ++item_iter;
-                item = *item_iter;
-                return {{item_iter.position(), 0u}, MatchKindBS::NE, item.sub_items[0u].get_p_value()};
+                auto _sub_items = item_iter.get_nxt_container();
+                return {{item_iter.position(), 0u}, MatchKindBS::NE, _sub_items.get_p_value(0u)};
               }
             } else {
               assert(result.p_value);
@@ -1081,10 +1069,9 @@ namespace crimson::os::seastore::onode {
     }
   }
 
-  template <node_type_t NodeType, field_type_t FieldType,
-            typename = std::enable_if_t<FieldType != field_type_t::N3>>
-  const value_type_t<NodeType>* item_get_p_value(
-      const item_range_t& item_range, const search_position_item_t& position) {
+  template <node_type_t NodeType, field_type_t FieldType>
+  const std::enable_if_t<FieldType != field_type_t::N3, value_type_t<NodeType>*>
+  item_get_p_value(const item_range_t& item_range, const search_position_item_t& position) {
     return nullptr;
   }
 
@@ -1106,13 +1093,12 @@ namespace crimson::os::seastore::onode {
       return {std::numeric_limits<size_t>::max(), {0u, 0u}};
     }
 
-    template <typename IndexType>
-    static search_position_t from(const search_result_bs_t<IndexType>& result_left) {
+    static search_position_t from(const search_result_bs_t& result_left) {
       return {result_left.position, {0u, 0u}};
     }
 
-    template <typename IndexType, node_type_t NodeType>
-    static search_position_t from(const search_result_bs_t<IndexType>& result_left,
+    template <node_type_t NodeType>
+    static search_position_t from(const search_result_bs_t& result_left,
                                   const search_result_item_t<NodeType>& result_right) {
       assert(!result_right.is_end());
       return {result_left.position, result_right.position};
@@ -1126,18 +1112,16 @@ namespace crimson::os::seastore::onode {
   struct search_result_t {
     // TODO: deref LeafNode if destroyed with leaf_node available
     // TODO: make sure to deref LeafNode if is_end()
-    template <typename IndexType>
     search_result_t(LeafNode* node,
-                    const search_result_bs_t<IndexType>& result_left,
+                    const search_result_bs_t& result_left,
                     const onode_t* p_value)
       : leaf_node(node),
         position(search_position_t::from(result_left)),
         match(result_left.match),
         p_value(p_value) {}
 
-    template <typename IndexType>
     search_result_t(LeafNode* node,
-                    const search_result_bs_t<IndexType>& result_left,
+                    const search_result_bs_t& result_left,
                     const search_result_item_t<node_type_t::LEAF>& result_right)
       : leaf_node(node),
         position(search_position_t::from(result_left, result_right)),
@@ -1175,7 +1159,7 @@ namespace crimson::os::seastore::onode {
     virtual node_type_t node_type() const = 0;
     virtual field_type_t field_type() const = 0;
     virtual size_t items() const = 0;
-    virtual size_t keys() const = 0;
+    virtual size_t indexes() const = 0;
     virtual size_t free_size() const = 0;
     virtual size_t total_size() const = 0;
     size_t filled_size() const { return total_size() - free_size(); }
@@ -1226,7 +1210,7 @@ namespace crimson::os::seastore::onode {
        << "+" << node.extent_size() << std::dec
        << (node.is_level_tail() ? "$" : "")
        << "(level=" << (unsigned)node.level()
-       << ", keys=" << node.keys()
+       << ", keys=" << node.indexes()
        << ", filled=" << node.filled_size() << "B"
        << ", free=" << node.free_size() << "B"
        << ")";
@@ -1237,12 +1221,12 @@ namespace crimson::os::seastore::onode {
    public:
     virtual ~LeafNode() = default;
 
-    size_t items() const override final { return keys(); }
+    size_t items() const override final { return indexes(); }
   };
 
   template <typename FieldType, typename ConcreteType>
   class NodeT : virtual public Node {
-   protected:
+   public:
     using num_keys_t = typename FieldType::num_keys_t;
     static constexpr node_type_t NODE_TYPE = ConcreteType::NODE_TYPE;
     static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
@@ -1250,16 +1234,59 @@ namespace crimson::os::seastore::onode {
     static constexpr node_offset_t EXTENT_SIZE =
       (TOTAL_SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
 
-   public:
     virtual ~NodeT() = default;
 
     node_type_t node_type() const override final { return NODE_TYPE; }
     field_type_t field_type() const override final { return FIELD_TYPE; }
-    size_t keys() const override final { return fields().num_keys; }
+    size_t indexes() const override final { return fields().num_keys; }
     size_t free_size() const override final {
       return fields().template free_size<NODE_TYPE>(is_level_tail());
     }
     size_t total_size() const override final { return TOTAL_SIZE; }
+
+    void test();
+
+    // container type system
+    using key_t = typename FieldType::key_t;
+    static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
+    size_t keys() const { return fields().num_keys; }
+    key_t operator[] (size_t position) const { return fields().get_key(position); }
+
+    template <typename T = item_range_t>
+    std::enable_if_t<!std::is_same_v<FieldType, internal_fields_3_t>, T>
+    get_nxt_container(size_t position) const {
+      node_offset_t item_start_offset = fields().get_item_start_offset(position);
+      node_offset_t item_end_offset =
+        (position == 0u ? FieldType::SIZE : fields().get_item_start_offset(position - 1));
+      assert(item_start_offset < item_end_offset);
+      auto item_p_start = fields_start(fields()) + item_start_offset;
+      auto item_p_end = fields_start(fields()) + item_end_offset;
+      if constexpr (FIELD_TYPE == field_type_t::N2) {
+        // range for sub_items_t<NODE_TYPE>
+        item_p_end = variable_key_t(item_p_end).p_start();
+        assert(item_p_start < item_p_end);
+      } else {
+        // range for item_iterator_t<NODE_TYPE>
+      }
+      return {item_p_start, item_p_end};
+    }
+
+    template <typename T = FieldType>
+    std::enable_if_t<std::is_same_v<T, internal_fields_3_t>, const laddr_t*>
+    get_p_value(size_t position) const {
+      assert(position < fields().num_keys);
+      return &fields().child_addrs[position];
+    }
+
+    template <typename T = FieldType>
+    std::enable_if_t<std::is_same_v<T, leaf_fields_3_t>, const onode_t*>
+    get_p_value(size_t position) const {
+      assert(position < fields().num_keys);
+      auto range = get_nxt_container(position);
+      auto ret = reinterpret_cast<const onode_t*>(range.p_start);
+      assert(range.p_start + ret->size == range.p_end);
+      return ret;
+    }
 
    protected:
     const FieldType& fields() const {
@@ -1285,7 +1312,7 @@ namespace crimson::os::seastore::onode {
 
     virtual ~InternalNodeT() = default;
 
-    size_t items() const override final { return this->keys() + 1; }
+    size_t items() const override final { return this->indexes() + 1; }
 
     search_result_t
     lower_bound(const onode_key_t& key, MatchKindStr s_match) override final {
@@ -1390,7 +1417,7 @@ namespace crimson::os::seastore::onode {
     lower_bound(const onode_key_t& key, MatchKindStr s_match) override final {
       // lookup: [left-key] string-key right-key
       auto result_left = fields_lower_bound(this->fields(), key, s_match);
-      if (result_left.position == keys()) {
+      if (result_left.position == this->keys()) {
         assert(result_left.match == MatchKindBS::NE);
         assert(this->is_level_tail());
         return search_result_t::end(this);
@@ -1478,138 +1505,185 @@ namespace crimson::os::seastore::onode {
     return ret;
   }
 
-  enum class ContainerType { ITERATIVE, INDEXABLE };
+  template <node_type_t NodeType>
+  struct staged_params_subitems {
+    using container_t = sub_items_t<NodeType>;
+    static constexpr auto NODE_TYPE = NodeType;
+    static constexpr auto STAGE = STAGE_RIGHT;
+
+    // dummy type in order to make our type system work
+    // any better solution to get rid of this?
+    using next_param_t = staged_params_subitems<NodeType>;
+  };
+
+  template <node_type_t NodeType>
+  struct staged_params_item_iterator {
+    using container_t = item_iterator_t<NodeType>;
+    static constexpr auto NODE_TYPE = NodeType;
+    static constexpr auto STAGE = STAGE_STRING;
+
+    using next_param_t = staged_params_subitems<NodeType>;
+  };
 
   template <typename NodeType>
-  struct staged_params_left_01_t {
+  struct staged_params_node_01 {
     using container_t = NodeType;
-    constexpr auto CONTAINER_TYPE = ContainerType::ITERATIVE;
-    constexpr auto STAGE = STAGE_LEFT;
+    static constexpr auto NODE_TYPE = NodeType::NODE_TYPE;
+    static constexpr auto STAGE = STAGE_LEFT;
+
+    using next_param_t = staged_params_item_iterator<NODE_TYPE>;
+  };
+
+  template <typename NodeType>
+  struct staged_params_node_2 {
+    using container_t = NodeType;
+    static constexpr auto NODE_TYPE = NodeType::NODE_TYPE;
+    static constexpr auto STAGE = STAGE_STRING;
+
+    using next_param_t = staged_params_subitems<NODE_TYPE>;
+  };
+
+  template <typename NodeType>
+  struct staged_params_node_3 {
+    using container_t = NodeType;
+    static constexpr auto NODE_TYPE = NodeType::NODE_TYPE;
+    static constexpr auto STAGE = STAGE_RIGHT;
+
+    // dummy type in order to make our type system work
+    // any better solution to get rid of this?
+    using next_param_t = staged_params_node_3<NodeType>;
   };
 
   template <typename Params>
   struct staged {
-   private:
-    using container_t = Params::container_t;
-    constexpr auto CONTAINER_TYPE = container_t::CONTAINER_TYPE;
-    constexpr auto STAGE = Params::STAGE;
-    constexpr bool IS_BOTTOM = (STAGE == STAGE_BOTTOM);
-    constexpr auto NODE_TYPE = Params::NODE_TYPE;
-    using position_t = staged_position_t<STAGE>;
-    using result_t = staged_result_t<NODE_TYPE, STAGE>;
-    using value_t = const value_type_t<NODE_TYPE>*;
+    static_assert(Params::STAGE >= STAGE_BOTTOM);
+    static_assert(Params::STAGE <= STAGE_TOP);
+    using container_t = typename Params::container_t;
+    using key_t = typename container_t::key_t;
+    using position_t = staged_position_t<Params::STAGE>;
+    using result_t = staged_result_t<Params::NODE_TYPE, Params::STAGE>;
+    using value_t = const value_type_t<Params::NODE_TYPE>*;
+    static constexpr auto CONTAINER_TYPE = container_t::CONTAINER_TYPE;
+    static constexpr bool IS_BOTTOM = (Params::STAGE == STAGE_BOTTOM);
+    static constexpr auto NODE_TYPE = Params::NODE_TYPE;
+    static constexpr auto STAGE = Params::STAGE;
 
-    template <typename = std::enable_if_t<!IS_BOTTOM>>
-    using next_stage_t = staged<Params::next_stage_t>;
-
-    template <typename = std::enable_if_t<CONTAINER_TYPE == ContainerType::INDEXABLE>
-    class iterator_t {
+    template <ContainerType CType, bool Dummy = true> class _iterator_t;
+    template <bool Dummy>
+    class _iterator_t<ContainerType::INDEXABLE, Dummy> {
      /*
-      * indexable container:
-      * CONTAINER_TYPE == ContainerType::INDEXABLE
-      * keys() -> size_t
-      * operator[](size_t) -> key_t
-      *
-      * !IS_BOTTOM:
-      * get_nxt_container(size_t)
-      *
-      * IS_BOTTOM:
-      * get_p_value(size_t) -> value_t
-      *
+      * indexable container type system:
+      *   CONTAINER_TYPE = ContainerType::INDEXABLE
+      *   keys() const -> size_t
+      *   operator[](size_t) const -> key_t
+      * IF !IS_BOTTOM:
+      *   get_nxt_container(size_t) const
+      * IF IS_BOTTOM:
+      *   get_p_value(size_t) const -> value_t
       */
      public:
-      using key_t = decltype((*container)[0u]);
+      using my_type_t = _iterator_t<ContainerType::INDEXABLE>;
 
       size_t position() const { return _position; }
-      key_t get_key() const { return (*container)[_position]; }
-      template <typename = std::enable_if_t<!IS_BOTTOM>>
-      next_stage_t::container_t get_nxt_container() const {
-        return container->get_nxt_container(_position);
+      key_t get_key() const { return container[_position]; }
+      template <typename T = typename staged<typename Params::next_param_t>::container_t>
+      std::enable_if_t<!IS_BOTTOM, T> get_nxt_container() const {
+        return container.get_nxt_container(_position);
       }
-      template <typename = std::enable_if_t<!IS_BOTTOM>>
-      value_t get_p_value(const next_stage_t::position_t& nxt_position) {
+      template <typename T = value_t>
+      std::enable_if_t<!IS_BOTTOM, T> get_p_value(
+          const typename staged<typename Params::next_param_t>::position_t& nxt_position) const {
         auto nxt_container = get_nxt_container();
-        return next_stage_t::get_p_value(nxt_position, &nxt_container);
+        return staged<typename Params::next_param_t>::get_p_value(nxt_position, nxt_container);
       }
-      template <typename = std::enable_if_t<IS_BOTTOM>>
-      value_t get_p_value() const {
+      template <typename T = value_t>
+      std::enable_if_t<IS_BOTTOM, T> get_p_value() const {
         return container.get_p_value(_position);
       }
       bool is_last() const {
-        assert(container->keys());
-        return _position == container->keys() - 1;
+        assert(container.keys());
+        return _position == container.keys() - 1;
       }
-      bool is_end() const { return _position == container->keys(); }
-      iterator_t& operator++() {
+      bool is_end() const { return _position == container.keys(); }
+      my_type_t& operator++() {
         assert(!is_last());
         ++_position;
+        return *this;
       }
-      MatchKindBS seek(const onode_key_t& key, bool exclude_last) const {
-        size_t end_position = container->keys();
+      MatchKindBS seek(const onode_key_t& key, bool exclude_last) {
+        size_t end_position = container.keys();
         if (exclude_last) {
           assert(end_position);
           --end_position;
-          assert(compare_to(key, (*container)[end_position]) == MatchKindCMP::NE);
+          assert(compare_to(key, container[end_position]) == MatchKindCMP::NE);
         }
         auto ret = binary_search(key, _position, end_position,
-            [container] (size_t index) { return (*container)[_position]; });
+            [this] (size_t index) { return container[index]; });
         _position = ret.position;
         return ret.match;
       }
 
-      static iterator_t begin(container_t* container) {
-        return iterator_t(container, 0u);
+      static my_type_t begin(container_t& container) {
+        assert(container.keys() != 0);
+        return my_type_t(container, 0u);
       }
-      static iterator_t last(container_t* container) {
-        assert(container->keys() != 0);
-        return iterator_t(container, container->keys() - 1);
+      static my_type_t last(container_t& container) {
+        assert(container.keys() != 0);
+        return my_type_t(container, container.keys() - 1);
       }
-      static iterator_t at(container_t* container, size_t position) {
-        assert(position < container->keys());
-        return iterator_t(container, position);
+      static my_type_t at(container_t& container, size_t position) {
+        assert(position < container.keys());
+        return my_type_t(container, position);
       }
 
      private:
-      iterator_t(container_t* container, size_t position)
+      _iterator_t(container_t& container, size_t position)
         : container{container}, _position{position} {}
 
-      container_t* container;
+      container_t& container;
       size_t _position;
     };
 
-    template <typename = std::enable_if_t<CONTAINER_TYPE == ContainerType::ITERATIVE>
-    class iterator_t {
+    template <bool Dummy>
+    class _iterator_t<ContainerType::ITERATIVE, Dummy> {
       /*
-       * iterative container (!IS_BOTTOM):
-       * CONTAINER_TYPE == ContainerType::ITERATIVE
-       * position() -> size_t
-       * get_key() -> key_t
-       * get_nxt_container()
-       * operator++()
-       * has_next() -> bool
+       * iterative container type system (!IS_BOTTOM):
+       *   CONTAINER_TYPE = ContainerType::ITERATIVE
+       *   position() const -> size_t
+       *   get_key() const -> key_t
+       *   get_nxt_container() const
+       *   has_next() const -> bool
+       *   operator++()
        */
+      // currently the iterative iterator is only implemented with STAGE_STRING
+      // for in-node space efficiency
       static_assert(STAGE == STAGE_STRING);
      public:
-      using key_t = decltype(container->get_key());
+      using my_type_t = _iterator_t<ContainerType::ITERATIVE>;
 
-      size_t position() const { return container->position(); }
-      key_t get_key() const { return container->get_key(); }
-      next_stage_t::container_t get_nxt_container() const {
-        return container->get_nxt_container();
+      size_t position() const { return p_container->position(); }
+      key_t get_key() const { return p_container->get_key(); }
+      const typename staged<typename Params::next_param_t>::container_t
+      get_nxt_container() const {
+        return p_container->get_nxt_container();
       }
-      value_t get_p_value(const next_stage_t::position_t& nxt_position) {
+      value_t get_p_value(
+          const typename staged<typename Params::next_param_t>::position_t& nxt_position) const {
         auto nxt_container = get_nxt_container();
-        return next_stage_t::get_p_value(nxt_position, &nxt_container);
+        return staged<typename Params::next_param_t>::get_p_value(nxt_position, nxt_container);
       }
-      bool is_last() const { return !container->has_next(); }
-      bool is_end() const { return container == nullptr; }
-      iterator_t& operator++() {
+      bool is_last() const { return !p_container->has_next(); }
+      bool is_end() const { return p_container == nullptr; }
+      my_type_t& operator++() {
+        assert(!is_end());
         assert(!is_last());
-        ++(*container);
+        ++(*p_container);
+        return *this;
       }
-      MatchKindBS seek(const onode_key_t& key, bool exclude_last) const {
+      MatchKindBS seek(const onode_key_t& key, bool exclude_last) {
+        assert(!is_end());
         do {
-          if (exclude_last && !container->has_next()) {
+          if (exclude_last && is_last()) {
             assert(compare_to(key, get_key()) == MatchKindCMP::NE);
             return MatchKindBS::NE;
           }
@@ -1619,73 +1693,78 @@ namespace crimson::os::seastore::onode {
           } else if (match == MatchKindCMP::EQ) {
             return MatchKindBS::EQ;
           } else {
-            if (container->has_next()) {
-              ++(*container);
+            if (p_container->has_next()) {
+              ++(*p_container);
             } else {
-              container = nullptr;
+              // end
               break;
             }
           }
         } while (true);
         assert(!exclude_last);
+        p_container = nullptr;
         return MatchKindBS::NE;
       }
 
-      static iterator_t begin(container_t* container) {
-        assert(container->position() == 0u);
-        return iterator_t(container);
+      static my_type_t begin(container_t& container) {
+        assert(container.position() == 0u);
+        return my_type_t(container);
       }
-      static iterator_t last(container_t* container) {
-        while (container->has_next()) {
-          ++(*container);
+      static my_type_t last(container_t& container) {
+        while (container.has_next()) {
+          ++container;
         }
-        return iterator_t(container);
+        return my_type_t(container);
       }
-      static iterator_t at(container_t* container, size_t position) {
+      static my_type_t at(container_t& container, size_t position) {
         while (position > 0) {
-          ++(*container);
+          assert(container.has_next());
+          ++container;
           --position;
         }
-        return iterator_t(container);
+        return my_type_t(container);
       }
 
      private:
-      iterator_t(container_t* container) : container{container} {}
+      _iterator_t(container_t& container) : p_container{&container} {}
 
-      container_t* container;
+      container_t* p_container;
     };
 
+    // any better solution than https://stackoverflow.com/questions/33099306 ?
+    using iterator_t = _iterator_t<CONTAINER_TYPE>;
+
     static result_t
-    leftmost_result(const iterator_t& iter) {
+    smallest_result(const iterator_t& iter) {
       static_assert(!IS_BOTTOM);
       assert(!iter.is_end());
-      auto pos_leftmost = next_stage_t::position_t::begin();
-      auto value_ptr = iter.get_p_value(pos_leftmost);
-      return {{iter.position(), pos_leftmost}, MatchKindBS::NE, value_ptr};
+      auto pos_smallest = staged<typename Params::next_param_t>::position_t::begin();
+      auto value_ptr = iter.get_p_value(pos_smallest);
+      return {{iter.position(), pos_smallest}, MatchKindBS::NE, value_ptr};
     }
 
     static result_t
-    nxt_lower_bound(const onode_key_t& key, const iterator_t& iter, MatchHistory& history) {
+    nxt_lower_bound(const onode_key_t& key, iterator_t& iter, MatchHistory& history) {
       static_assert(!IS_BOTTOM);
       assert(!iter.is_end());
       auto nxt_container = iter.get_nxt_container();
-      auto nxt_result = next_stage_t::lower_bound(key, nxt_container, history);
+      auto nxt_result = staged<typename Params::next_param_t>::lower_bound(
+          key, nxt_container, history);
       if (nxt_result.is_end()) {
         if (iter.is_last()) {
           return result_t::end();
         } else {
-          return leftmost_result(++iter);
+          return smallest_result(++iter);
         }
       } else {
-        return result_t::from(iter.position(), nxt_result);
+        return result_t::from_nxt(iter.position(), nxt_result);
       }
     }
 
-   public:
-    static value_t get_p_value(const position_t& position, container_t* container) {
+    static value_t get_p_value(const position_t& position, container_t& container) {
       size_t stage_position = position.position;
       auto iter = iterator_t::at(container, stage_position);
-      if constexpr (!IS_BOTTTOM) {
+      if constexpr (!IS_BOTTOM) {
         return iter.get_p_value(position.position_nxt);
       } else {
         return iter.get_p_value();
@@ -1693,66 +1772,97 @@ namespace crimson::os::seastore::onode {
     }
 
     static result_t
-    lower_bound(const onode_key_t& key, container_t* container, MatchHistory& history) {
-      if (history.get<STAGE>() &&
-          *history.get<STAGE>() == MatchKindCMP::EQ) {
-        if constexpr (!IS_BOTTOM) {
-          if (history.is_PO<STAGE - 1>()) {
-            auto iter = iterator_t::begin(container);
-            bool test_key_equal;
-            if constexpr (STAGE == STAGE_STRING) {
-              test_key_equal = (iter.get_key().is_smallest());
-            } else {
-              test_key_equal = (key == iter.get_key());
-            }
-            if (test_key_equal) {
-              return nxt_lower_bound(key, iter, history);
-            } else {
-              return leftmost_result(iter);
-            }
-          } else {
+    lower_bound(const onode_key_t& key, container_t& container, MatchHistory& history) {
+      bool exclude_last = false;
+      if (history.get<STAGE>().has_value()) {
+        if (*history.get<STAGE>() == MatchKindCMP::EQ) {
+          // lookup is short-circuited
+          if constexpr (!IS_BOTTOM) {
             assert(history.get<STAGE - 1>().has_value());
+            if (history.is_PO<STAGE - 1>()) {
+              auto iter = iterator_t::begin(container);
+              bool test_key_equal;
+              if constexpr (STAGE == STAGE_STRING) {
+                test_key_equal = (iter.get_key().is_smallest());
+              } else {
+                test_key_equal = (compare_to(key, iter.get_key()) == MatchKindCMP::EQ);
+              }
+              if (test_key_equal) {
+                return nxt_lower_bound(key, iter, history);
+              } else {
+                return smallest_result(iter);
+              }
+            }
           }
-        }
-        auto iter = iterator_t::last(container);
-        if constexpr (STAGE == STAGE_STRING) {
-          assert(iter.get_key().is_largest());
-        } else {
-          assert(key == iter.get_key());
-        }
-        if constexpr (IS_BOTTOM) {
-          auto value_ptr = iter.get_p_value();
-          return {iter.position(), MatchKindBS::EQ, value_ptr};
-        } else {
-          auto nxt_container = iter.get_nxt_container();
-          auto nxt_result = next_stage_t::lower_bound(key, nxt_container, history);
-          assert(!nxt_result.is_end());
-          return result_t::from(iter.position(), nxt_result);
-        }
-      } else {
-        auto iter = iterator_t::begin(container);
-        bool exclude_last = (history.get<STAGE>().has_value() &&
-            *history.get<STAGE>() == MatchKindCMP::NE);
-        auto bs_match = iter.seek(key, exclude_last);
-        if (!exclude_last && iter.is_end()) {
-          history.set<STAGE>(MatchKindCMP::PO);
-          return result_t::end();
-        }
-        history.set<STAGE>(bs_match == MatchKindBS::EQ ?
-                           MatchKindCMP::EQ : MatchKindCMP::NE);
-        if constexpr (IS_BOTTOM) {
-          auto value_ptr = iter.get_p_value();
-          return result_t::from(iter.position(), bs_match, value_ptr);
-        } else {
-          if (bs_match == MatchKindBS::EQ) {
-            return nxt_lower_bound(key, iter, history);
+          // IS_BOTTOM || !history.is_PO<STAGE - 1>()
+          auto iter = iterator_t::last(container);
+          if constexpr (STAGE == STAGE_STRING) {
+            assert(iter.get_key().is_largest());
           } else {
-            return leftmost_result(iter);
+            assert(compare_to(key, iter.get_key()) == MatchKindCMP::EQ);
           }
+          if constexpr (IS_BOTTOM) {
+            auto value_ptr = iter.get_p_value();
+            return {{iter.position()}, MatchKindBS::EQ, value_ptr};
+          } else {
+            auto nxt_container = iter.get_nxt_container();
+            auto nxt_result = staged<typename Params::next_param_t>::lower_bound(
+                key, nxt_container, history);
+            assert(!nxt_result.is_end());
+            return result_t::from_nxt(iter.position(), nxt_result);
+          }
+        } else if (*history.get<STAGE>() == MatchKindCMP::NE) {
+          exclude_last = true;
+        }
+      }
+      auto iter = iterator_t::begin(container);
+      auto bs_match = iter.seek(key, exclude_last);
+      if (iter.is_end()) {
+        assert(!exclude_last);
+        assert(bs_match == MatchKindBS::NE);
+        history.set<STAGE>(MatchKindCMP::PO);
+        return result_t::end();
+      }
+      history.set<STAGE>(bs_match == MatchKindBS::EQ ?
+                         MatchKindCMP::EQ : MatchKindCMP::NE);
+      if constexpr (IS_BOTTOM) {
+        auto value_ptr = iter.get_p_value();
+        return {{iter.position()}, bs_match, value_ptr};
+      } else {
+        if (bs_match == MatchKindBS::EQ) {
+          return nxt_lower_bound(key, iter, history);
+        } else {
+          return smallest_result(iter);
         }
       }
     }
   };
+
+  template <typename NodeType, typename Enable = void> struct _node_to_stage_t;
+  template <typename NodeType>
+  struct _node_to_stage_t<NodeType,
+      std::enable_if_t<NodeType::FIELD_TYPE == field_type_t::N0 ||
+                       NodeType::FIELD_TYPE == field_type_t::N1>> {
+    using type = staged<staged_params_node_01<NodeType>>;
+  };
+  template <typename NodeType>
+  struct _node_to_stage_t<NodeType,
+      std::enable_if_t<NodeType::FIELD_TYPE == field_type_t::N2>> {
+    using type = staged<staged_params_node_2<NodeType>>;
+  };
+  template <typename NodeType>
+  struct _node_to_stage_t<NodeType,
+      std::enable_if_t<NodeType::FIELD_TYPE == field_type_t::N3>> {
+    using type = staged<staged_params_node_3<NodeType>>;
+  };
+  template <typename NodeType>
+  using node_to_stage_t = typename _node_to_stage_t<NodeType>::type;
+
+  template <typename FieldType, typename ConcreteType>
+  void NodeT<FieldType, ConcreteType>::test() {
+    MatchHistory history;
+    node_to_stage_t<NodeT<FieldType, ConcreteType>>::lower_bound({}, *this, history);
+  }
 
   /*
    * btree interfaces
