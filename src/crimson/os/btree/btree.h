@@ -464,50 +464,9 @@ namespace crimson::os::seastore::onode {
     return _check_PO_t<STAGE>::eval(this);
   }
 
-  enum class MatchKindStr { UNEQ, EQNE, EQPO };
-
-  template <typename FieldType>
-  search_result_bs_t
-  fields_lower_bound(const FieldType& node, const onode_key_t& key, MatchKindStr& s_match) {
-    if constexpr (FieldType::FIELD_TYPE == field_type_t::N2) {
-      // TODO: string key dedup for N2
-      assert(false);
-    }
-
-    auto ret = binary_search(key, 0u, node.num_keys,
-        [&node] (size_t index) { return node.get_key(index); });
-
-#ifndef NDEBUG
-    if constexpr (FieldType::FIELD_TYPE <= field_type_t::N1) {
-      if (s_match == MatchKindStr::EQNE) {
-        assert(ret.position == ((size_t)node.num_keys - 1) && ret.match == MatchKindBS::EQ);
-      } else if (s_match == MatchKindStr::EQPO) {
-        assert(ret.position == 0u);
-      }
-    }
-#endif
-    assert(ret.position <= node.num_keys);
-    return ret;
-  }
-
   template <typename FieldType>
   const char* fields_start(const FieldType& node) {
     return reinterpret_cast<const char*>(&node);
-  }
-
-  struct item_range_t {
-    const char* p_start;
-    const char* p_end;
-  };
-  template <typename FieldType>
-  item_range_t fields_item_range(
-      const FieldType& node, size_t index) {
-    node_offset_t item_start_offset = node.get_item_start_offset(index);
-    node_offset_t item_end_offset =
-      (index == 0u ? FieldType::SIZE : node.get_item_start_offset(index - 1));
-    assert(item_start_offset < item_end_offset);
-    return {fields_start(node) + item_start_offset,
-            fields_start(node) + item_end_offset};
   }
 
   template <node_type_t NODE_TYPE, typename FieldType>
@@ -525,15 +484,6 @@ namespace crimson::os::seastore::onode {
     auto free = offset_end - offset_start;
     assert(free < FieldType::SIZE);
     return free;
-  }
-
-  template <typename FieldType>
-  const laddr_t& fields_last_child_addr(const FieldType& node) {
-    node_offset_t offset_start = node.get_item_start_offset(node.num_keys - 1);
-    assert(offset_start <= FieldType::SIZE);
-    offset_start -= sizeof(laddr_t);
-    auto p_addr = fields_start(node) + offset_start;
-    return *reinterpret_cast<const laddr_t*>(p_addr);
   }
 
   template <typename SlotType>
@@ -651,8 +601,6 @@ namespace crimson::os::seastore::onode {
 
   using leaf_fields_3_t = _node_fields_013_t<slot_3_t>;
 
-  enum class ContainerType { ITERATIVE, INDEXABLE };
-
   /*
    * block layout of a variable-sized item (right-side)
    *
@@ -702,6 +650,13 @@ namespace crimson::os::seastore::onode {
    *        <==== |   1  |0   |0  |   1  |0  |keys|len     |len    |
    * see sub_items_t<node_type_t::LEAF>
    */
+
+  enum class ContainerType { ITERATIVE, INDEXABLE };
+
+  struct item_range_t {
+    const char* p_start;
+    const char* p_end;
+  };
 
   struct internal_sub_item_t {
     const fixed_key_3_t& get_key() const { return key; }
@@ -927,13 +882,13 @@ namespace crimson::os::seastore::onode {
     size_t position;
   };
 
-  using _search_position_t = staged_position_t<STAGE_TOP>;
+  using search_position_t = staged_position_t<STAGE_TOP>;
 
   template <match_stage_t STAGE, typename = std::enable_if_t<STAGE == STAGE_TOP>>
-  const _search_position_t& cast_down(const _search_position_t& pos) { return pos; }
+  const search_position_t& cast_down(const search_position_t& pos) { return pos; }
 
   template <match_stage_t STAGE, typename = std::enable_if_t<STAGE != STAGE_TOP>>
-  staged_position_t<STAGE> cast_down(const _search_position_t& pos) {
+  staged_position_t<STAGE> cast_down(const search_position_t& pos) {
     if constexpr (STAGE == STAGE_STRING) {
 #ifndef NDEBUG
       if (pos.is_end()) {
@@ -958,12 +913,12 @@ namespace crimson::os::seastore::onode {
     }
   }
 
-  _search_position_t&& normalize(_search_position_t&& pos) { return std::move(pos); }
+  search_position_t&& normalize(search_position_t&& pos) { return std::move(pos); }
 
   template <match_stage_t STAGE, typename = std::enable_if_t<STAGE != STAGE_TOP>>
-  _search_position_t normalize(staged_position_t<STAGE>&& pos) {
+  search_position_t normalize(staged_position_t<STAGE>&& pos) {
     if (pos.is_end()) {
-      return _search_position_t::end();
+      return search_position_t::end();
     }
     if constexpr (STAGE == STAGE_STRING) {
       return {0u, std::move(pos)};
@@ -1004,168 +959,6 @@ namespace crimson::os::seastore::onode {
     return {normalize(std::move(result.position)), result.match, result.p_value};
   }
 
-  template <node_type_t NODE_TYPE>
-  struct search_result_sub_item_t {
-    bool is_end() const { return position == std::numeric_limits<size_t>::max(); }
-
-    static search_result_sub_item_t end() {
-      return {std::numeric_limits<size_t>::max(), MatchKindBS::NE, nullptr};
-    }
-
-    size_t position;
-    MatchKindBS match;
-    const value_type_t<NODE_TYPE>* p_value;
-  };
-
-  template <node_type_t NODE_TYPE, field_type_t FIELD_TYPE>
-  std::enable_if_t<FIELD_TYPE != field_type_t::N3, search_result_sub_item_t<NODE_TYPE>>
-  sub_item_lower_bound(const sub_items_t<NODE_TYPE>& sub_items, const onode_key_t& key,
-                       size_t pos_collision, MatchKindStr& s_match) {
-    // lookup: left-key string-key [right-key]
-    auto ret = binary_search(
-        key, 0u, sub_items.keys(),
-        [&sub_items] (size_t index) { return sub_items[index]; });
-    if (ret.position == sub_items.keys()) {
-      assert(ret.match == MatchKindBS::NE);
-      assert(s_match != MatchKindStr::EQNE);
-      s_match = MatchKindStr::EQPO;
-      return search_result_sub_item_t<NODE_TYPE>::end();
-    } else {
-      s_match = MatchKindStr::EQNE;
-      return {ret.position, ret.match, sub_items.get_p_value(ret.position)};
-    }
-  }
-
-  template <node_type_t NODE_TYPE>
-  struct search_result_item_t {
-    bool is_end() const { return position.is_end(); }
-
-    static search_result_item_t end() {
-      return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
-    }
-
-    search_position_item_t position;
-    MatchKindBS match;
-    const value_type_t<NODE_TYPE>* p_value;
-  };
-
-  // TODO: generalize lookup logic from left-key to right-key
-  // TODO: generalize MatchKindStr solution
-  template <node_type_t NODE_TYPE, field_type_t FIELD_TYPE>
-  std::enable_if_t<FIELD_TYPE != field_type_t::N3, search_result_item_t<NODE_TYPE>>
-  item_lower_bound(const item_range_t& item_range, const onode_key_t& key, MatchKindStr& s_match) {
-    // lookup: left-key [string-key] right-key
-    if constexpr (FIELD_TYPE <= field_type_t::N1) {
-      auto item_iter = item_iterator_t<NODE_TYPE>(item_range);
-      if (s_match == MatchKindStr::EQPO) {
-        auto sub_items = item_iter.get_nxt_container();
-        if (!item_iter.get_key().is_smallest()) {
-          return {{item_iter.position(), 0u}, MatchKindBS::NE, sub_items.get_p_value(0u)};
-        } else {
-          auto result = sub_item_lower_bound<NODE_TYPE, FIELD_TYPE>(
-              sub_items, key, item_iter.position(), s_match);
-          if (result.is_end()) {
-            if (!item_iter.has_next()) {
-              return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
-            } else {
-              ++item_iter;
-              auto _sub_items = item_iter.get_nxt_container();
-              return {{item_iter.position(), 0u}, MatchKindBS::NE, _sub_items.get_p_value(0u)};
-            }
-          } else {
-            assert(result.p_value);
-            return {{item_iter.position(), result.position}, result.match, result.p_value};
-          }
-        }
-      } else if (s_match == MatchKindStr::EQNE) {
-        while (item_iter.has_next()) {
-          ++item_iter;
-        }
-        auto sub_items = item_iter.get_nxt_container();
-        assert(item_iter.get_key().is_largest());
-        auto result = sub_item_lower_bound<NODE_TYPE, FIELD_TYPE>(
-            sub_items, key, item_iter.position(), s_match);
-        assert(!result.is_end());
-        assert(result.p_value);
-        return {{item_iter.position(), result.position}, result.match, result.p_value};
-      } else {
-        do {
-          auto match = compare_to(key, item_iter.get_key());
-          if (match == MatchKindCMP::NE) {
-            auto sub_items = item_iter.get_nxt_container();
-            return {{item_iter.position(), 0u}, MatchKindBS::NE, sub_items.get_p_value(0u)};
-          } else if (match == MatchKindCMP::EQ) {
-            auto sub_items = item_iter.get_nxt_container();
-            auto result = sub_item_lower_bound<NODE_TYPE, FIELD_TYPE>(
-                sub_items, key, item_iter.position(), s_match);
-            if (result.is_end()) {
-              if (!item_iter.has_next()) {
-                return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
-              } else {
-                ++item_iter;
-                auto _sub_items = item_iter.get_nxt_container();
-                return {{item_iter.position(), 0u}, MatchKindBS::NE, _sub_items.get_p_value(0u)};
-              }
-            } else {
-              assert(result.p_value);
-              return {{item_iter.position(), result.position}, result.match, result.p_value};
-            }
-          } else {
-            if (item_iter.has_next()) {
-              ++item_iter;
-            } else {
-              break;
-            }
-          }
-        } while (true);
-        return {search_position_item_t::end(), MatchKindBS::NE, nullptr};
-      }
-    } else { // field_type_t::N2
-      // TODO
-      assert(false);
-      return {};
-    }
-  }
-
-  template <node_type_t NODE_TYPE, field_type_t FIELD_TYPE>
-  std::enable_if_t<FIELD_TYPE != field_type_t::N3, const value_type_t<NODE_TYPE>*>
-  item_get_p_value(const item_range_t& item_range, const search_position_item_t& position) {
-    return nullptr;
-  }
-
-  struct search_position_t {
-    bool is_end() const {
-      return pos_key == std::numeric_limits<size_t>::max();
-    }
-
-    bool operator==(const search_position_t& x) const {
-      return pos_key == x.pos_key && pos_item == x.pos_item;
-    }
-    bool operator!=(const search_position_t& x) const { return !(*this == x); }
-    bool operator<(const search_position_t& x) const {
-      return std::make_pair(pos_key, pos_item) <
-             std::make_pair(x.pos_key, x.pos_item);
-    }
-
-    static search_position_t end() {
-      return {std::numeric_limits<size_t>::max(), {0u, 0u}};
-    }
-
-    static search_position_t from(const search_result_bs_t& result_left) {
-      return {result_left.position, {0u, 0u}};
-    }
-
-    template <node_type_t NODE_TYPE>
-    static search_position_t from(const search_result_bs_t& result_left,
-                                  const search_result_item_t<NODE_TYPE>& result_right) {
-      assert(!result_right.is_end());
-      return {result_left.position, result_right.position};
-    }
-
-    size_t pos_key;
-    search_position_item_t pos_item;
-  };
-
   class LeafNode;
   struct search_result_t {
     // TODO: deref LeafNode if destroyed with leaf_node available
@@ -1180,7 +973,7 @@ namespace crimson::os::seastore::onode {
     : public boost::intrusive_ref_counter<Node, boost::thread_unsafe_counter> {
    public:
     struct parent_info_t {
-      _search_position_t position;
+      search_position_t position;
       // TODO: Ref<InternalNode>
       Ref<Node> ptr;
     };
@@ -1279,9 +1072,7 @@ namespace crimson::os::seastore::onode {
     }
     size_t total_size() const override final { return TOTAL_SIZE; }
 
-    const value_t* get_value_ptr(const _search_position_t& position);
-
-    void test();
+    const value_t* get_value_ptr(const search_position_t& position);
 
     // container type system
     using key_get_type = typename FieldType::key_get_type;
@@ -1359,7 +1150,7 @@ namespace crimson::os::seastore::onode {
 
    private:
     // TODO: intrusive
-    std::map<_search_position_t, Ref<Node>> tracked_child_nodes;
+    std::map<search_position_t, Ref<Node>> tracked_child_nodes;
   };
   class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {};
   class InternalNode1 final : public InternalNodeT<node_fields_1_t, InternalNode1> {};
@@ -1694,7 +1485,7 @@ namespace crimson::os::seastore::onode {
     }
 
     static const value_t* get_p_value_normalized(
-        const _search_position_t& position, container_t& container) {
+        const search_position_t& position, container_t& container) {
       return get_p_value(cast_down<STAGE>(position), container);
     }
 
@@ -1793,7 +1584,7 @@ namespace crimson::os::seastore::onode {
   template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
   const value_type_t<NODE_TYPE>*
   NodeT<FieldType, NODE_TYPE, ConcreteType>::get_value_ptr(
-      const _search_position_t& position) {
+      const search_position_t& position) {
     assert(keys());
     if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
       if (position.is_end()) {
@@ -1866,12 +1657,6 @@ namespace crimson::os::seastore::onode {
     return result;
   }
 
-  template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-  void NodeT<FieldType, NODE_TYPE, ConcreteType>::test() {
-    MatchHistory history;
-    node_to_stage_t<NodeT<FieldType, NODE_TYPE, ConcreteType>>::lower_bound({}, *this, history);
-  }
-
   /*
    * btree interfaces
    * requirements are based on:
@@ -1918,11 +1703,11 @@ namespace crimson::os::seastore::onode {
 
      private:
       Cursor(Btree* tree)
-        : tree(*tree), position(_search_position_t::end()), p_value(nullptr) {}
+        : tree(*tree), position(search_position_t::end()), p_value(nullptr) {}
 
       Btree& tree;
       Ref<LeafNode> leaf_node;
-      _search_position_t position;
+      search_position_t position;
       std::optional<onode_key_t> key_copy;
       const onode_t* p_value;
     };
