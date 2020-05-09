@@ -64,23 +64,6 @@ int main(int argc, char* argv[])
     std::cout << "  " << *node << std::endl;
   }
 
-  internal_node_0->test();
-  internal_node_1->test();
-  internal_node_2->test();
-  internal_node_3->test();
-  leaf_node_0->test();
-  leaf_node_1->test();
-  leaf_node_2->test();
-  leaf_node_3->test();
-
-  /*
-  using test1 = staged<staged_params_item_iterator<node_type_t::INTERNAL>>;
-  using test2 = staged<staged_params_item_iterator<node_type_t::INTERNAL>>;
-  MatchHistory history;
-  test1::lower_bound({}, *(test1::container_t*)nullptr, history);
-  test2::lower_bound({}, *(test2::container_t*)nullptr, history);
-  */
-
   // tree tests
   auto& btree = Btree::get();
 
