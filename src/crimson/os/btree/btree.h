@@ -145,14 +145,13 @@ namespace crimson::os::seastore::onode {
   using shard_t = int8_t;
   using pool_t = int64_t;
   using crush_hash_t = uint32_t;
-  // nspace, oid (variable)
   using snap_t = uint64_t;
   using gen_t = uint64_t;
 
   struct onode_key_t {
     shard_t shard;
     pool_t pool;
-    crush_hash_t crush_hash;
+    crush_hash_t crush;
     std::string nspace;
     std::string oid;
     snap_t snap;
@@ -172,9 +171,9 @@ namespace crimson::os::seastore::onode {
   }
   template <typename T>
   MatchKindCMP _compare_crush(const onode_key_t& key, const T& target) {
-    if (key.crush_hash < target.crush_hash)
+    if (key.crush < target.crush)
       return MatchKindCMP::NE;
-    if (key.crush_hash > target.crush_hash)
+    if (key.crush > target.crush)
       return MatchKindCMP::PO;
     return MatchKindCMP::EQ;
   }
@@ -291,32 +290,29 @@ namespace crimson::os::seastore::onode {
     return _compare_shard_pool(key, target);
   }
 
-  struct fixed_key_0_t {
-    static constexpr field_type_t FIELD_TYPE = field_type_t::N0;
+  struct shard_pool_crush_t {
     shard_pool_t shard_pool;
-    crush_hash_t crush_hash;
+    crush_hash_t crush;
   } __attribute__((packed));
-  MatchKindCMP compare_to(const onode_key_t& key, const fixed_key_0_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const shard_pool_crush_t& target) {
     auto ret = _compare_shard_pool(key, target.shard_pool);
     if (ret != MatchKindCMP::EQ)
       return ret;
     return _compare_crush(key, target);
   }
 
-  struct fixed_key_1_t {
-    static constexpr field_type_t FIELD_TYPE = field_type_t::N1;
-    crush_hash_t crush_hash;
+  struct crush_t {
+    crush_hash_t crush;
   } __attribute__((packed));
-  MatchKindCMP compare_to(const onode_key_t& key, const fixed_key_1_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const crush_t& target) {
     return _compare_crush(key, target);
   }
 
-  struct fixed_key_3_t {
-    static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
+  struct snap_gen_t {
     snap_t snap;
     gen_t gen;
   } __attribute__((packed));
-  MatchKindCMP compare_to(const onode_key_t& key, const fixed_key_3_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const snap_gen_t& target) {
     return _compare_snap_gen(key, target);
   }
 
@@ -365,8 +361,8 @@ namespace crimson::os::seastore::onode {
     return toMatchKindCMP(key.compare(0u, key.length(), target.key, *target.size));
   }
 
-  struct variable_key_t {
-    variable_key_t(const char* p_end) : nspace(p_end), oid(nspace.p_next_end()) {}
+  struct ns_oid_view_t {
+    ns_oid_view_t(const char* p_end) : nspace(p_end), oid(nspace.p_next_end()) {}
     bool is_smallest() const { return nspace.is_smallest(); }
     bool is_largest() const { return nspace.is_largest(); }
     const char* p_start() const { return nspace.p_start(); }
@@ -374,12 +370,19 @@ namespace crimson::os::seastore::onode {
     string_key_view_t nspace;
     string_key_view_t oid;
   };
-  MatchKindCMP compare_to(const onode_key_t& key, const variable_key_t& target) {
+  MatchKindCMP compare_to(const onode_key_t& key, const ns_oid_view_t& target) {
     auto ret = compare_to(key.nspace, target.nspace);
     if (ret != MatchKindCMP::EQ)
       return ret;
     return compare_to(key.oid, target.oid);
   }
+
+  struct full_index_view_t {
+    shard_pool_t* shard_pool = nullptr;
+    crush_t* crush = nullptr;
+    std::optional<ns_oid_view_t> ns_oid;
+    snap_gen_t* snap_gen = nullptr;
+  };
 
   enum class MatchKindBS : int8_t { NE = -1, EQ = 0 };
   struct search_result_bs_t {
@@ -407,17 +410,17 @@ namespace crimson::os::seastore::onode {
     return {begin , MatchKindBS::NE};
   }
 
-  template <typename FixedKeyType>
+  template <typename FixedKeyType, field_type_t _FIELD_TYPE>
   struct _slot_t {
     using key_t = FixedKeyType;
-    static constexpr field_type_t FIELD_TYPE = FixedKeyType::FIELD_TYPE;
+    static constexpr field_type_t FIELD_TYPE = _FIELD_TYPE;
 
     key_t key;
     node_offset_t right_offset;
   } __attribute__((packed));
-  using slot_0_t = _slot_t<fixed_key_0_t>;
-  using slot_1_t = _slot_t<fixed_key_1_t>;
-  using slot_3_t = _slot_t<fixed_key_3_t>;
+  using slot_0_t = _slot_t<shard_pool_crush_t, field_type_t::N0>;
+  using slot_1_t = _slot_t<crush_t, field_type_t::N1>;
+  using slot_3_t = _slot_t<snap_gen_t, field_type_t::N3>;
 
   using match_stage_t = uint8_t;
   constexpr match_stage_t STAGE_LEFT = 2u;   // shard/pool/crush
@@ -547,7 +550,7 @@ namespace crimson::os::seastore::onode {
     // TODO: decide by NODE_BLOCK_SIZE, sizeof(node_off_t), sizeof(laddr_t)
     // and the minimal size of variable_key.
     using num_keys_t = uint8_t;
-    using key_t = variable_key_t;
+    using key_t = ns_oid_view_t;
     using key_get_type = key_t;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
     static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
@@ -583,13 +586,13 @@ namespace crimson::os::seastore::onode {
     node_offset_t offsets[];
   } __attribute__((packed));
 
-  // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
+  // TODO: decide by NODE_BLOCK_SIZE, sizeof(snap_gen_t), sizeof(laddr_t)
   static constexpr unsigned MAX_NUM_KEYS_I3 = 170u;
   template <unsigned MAX_NUM_KEYS>
   struct _internal_fields_3_t {
-    using key_get_type = const fixed_key_3_t&;
+    using key_get_type = const snap_gen_t&;
     using my_type_t = _internal_fields_3_t<MAX_NUM_KEYS>;
-    // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t), sizeof(laddr_t)
+    // TODO: decide by NODE_BLOCK_SIZE, sizeof(snap_gen_t), sizeof(laddr_t)
     using num_keys_t = uint8_t;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
     static constexpr node_offset_t SIZE = sizeof(my_type_t);
@@ -603,14 +606,14 @@ namespace crimson::os::seastore::onode {
     free_size(bool is_level_tail) const {
       auto allowed_num_keys = is_level_tail ? MAX_NUM_KEYS - 1 : MAX_NUM_KEYS;
       assert(num_keys <= allowed_num_keys);
-      auto free = (allowed_num_keys - num_keys) * (sizeof(fixed_key_3_t) + sizeof(laddr_t));
+      auto free = (allowed_num_keys - num_keys) * (sizeof(snap_gen_t) + sizeof(laddr_t));
       assert(free < SIZE);
       return free;
     }
 
     node_header_t header;
     num_keys_t num_keys = 0u;
-    fixed_key_3_t keys[MAX_NUM_KEYS];
+    snap_gen_t keys[MAX_NUM_KEYS];
     laddr_t child_addrs[MAX_NUM_KEYS];
   } __attribute__((packed));
   static_assert(_internal_fields_3_t<MAX_NUM_KEYS_I3>::SIZE <= NODE_BLOCK_SIZE &&
@@ -677,11 +680,11 @@ namespace crimson::os::seastore::onode {
   };
 
   struct internal_sub_item_t {
-    const fixed_key_3_t& get_key() const { return key; }
+    const snap_gen_t& get_key() const { return key; }
     #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
     const laddr_t* get_p_value() const { return &value; }
 
-    fixed_key_3_t key;
+    snap_gen_t key;
     laddr_t value;
   } __attribute__((packed));
 
@@ -697,7 +700,7 @@ namespace crimson::os::seastore::onode {
     }
 
     // container type system
-    using key_get_type = const fixed_key_3_t&;
+    using key_get_type = const snap_gen_t&;
     static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
     num_keys_t keys() const { return num_items; }
     key_get_type operator[](size_t index) const {
@@ -716,7 +719,7 @@ namespace crimson::os::seastore::onode {
 
   class leaf_sub_items_t {
    public:
-    // TODO: decide by NODE_BLOCK_SIZE, sizeof(fixed_key_3_t),
+    // TODO: decide by NODE_BLOCK_SIZE, sizeof(snap_gen_t),
     //       and the minimal size of onode_t
     using num_keys_t = uint8_t;
 
@@ -734,22 +737,22 @@ namespace crimson::os::seastore::onode {
     }
 
     // container type system
-    using key_get_type = const fixed_key_3_t&;
+    using key_get_type = const snap_gen_t&;
     static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
     num_keys_t keys() const { return *p_num_keys; }
     key_get_type operator[](size_t index) const {
       assert(index < keys());
       auto pointer = get_item_end(index);
       assert(get_item_start(index) < pointer);
-      pointer -= sizeof(fixed_key_3_t);
+      pointer -= sizeof(snap_gen_t);
       assert(get_item_start(index) < pointer);
-      return *reinterpret_cast<const fixed_key_3_t*>(pointer);
+      return *reinterpret_cast<const snap_gen_t*>(pointer);
     }
     const onode_t* get_p_value(size_t index) const {
       assert(index < keys());
       auto pointer = get_item_start(index);
       auto value = reinterpret_cast<const onode_t*>(pointer);
-      assert(pointer + value->size + sizeof(fixed_key_3_t) == get_item_end(index));
+      assert(pointer + value->size + sizeof(snap_gen_t) == get_item_end(index));
       return value;
     }
 
@@ -788,12 +791,12 @@ namespace crimson::os::seastore::onode {
         item_range(next_item_range(range.p_end)) {}
 
     // container type system
-    using key_get_type = const variable_key_t&;
+    using key_get_type = const ns_oid_view_t&;
     static constexpr auto CONTAINER_TYPE = ContainerType::ITERATIVE;
     size_t position() const { return _position; }
     key_get_type get_key() const {
       if (!key.has_value()) {
-        key = variable_key_t(item_range.p_end);
+        key = ns_oid_view_t(item_range.p_end);
         assert(item_range.p_start < (*key).p_start());
       }
       return *key;
@@ -830,7 +833,7 @@ namespace crimson::os::seastore::onode {
 
     const char* p_items_start;
     item_range_t item_range;
-    mutable std::optional<variable_key_t> key;
+    mutable std::optional<ns_oid_view_t> key;
     size_t _position = 0u;
   };
 
@@ -1139,7 +1142,7 @@ namespace crimson::os::seastore::onode {
       auto item_p_end = fields_start(fields()) + item_end_offset;
       if constexpr (FIELD_TYPE == field_type_t::N2) {
         // range for sub_items_t<NODE_TYPE>
-        item_p_end = variable_key_t(item_p_end).p_start();
+        item_p_end = ns_oid_view_t(item_p_end).p_start();
         assert(item_p_start < item_p_end);
       } else {
         // range for item_iterator_t<NODE_TYPE>

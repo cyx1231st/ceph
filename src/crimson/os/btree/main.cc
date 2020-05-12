@@ -17,9 +17,10 @@ int main(int argc, char* argv[])
 
   // struct sizes
   std::cout << "size node_header_t: " << sizeof(node_header_t) << std::endl;
-  std::cout << "size fixed_key_0_t: " << sizeof(fixed_key_0_t) << std::endl;
-  std::cout << "size fixed_key_1_t: " << sizeof(fixed_key_1_t) << std::endl;
-  std::cout << "size fixed_key_3_t: " << sizeof(fixed_key_3_t) << std::endl;
+  std::cout << "size shard_pool_t: " << sizeof(shard_pool_t) << std::endl;
+  std::cout << "size shard_pool_crush_t: " << sizeof(shard_pool_crush_t) << std::endl;
+  std::cout << "size crush_t: " << sizeof(crush_t) << std::endl;
+  std::cout << "size snap_gen_t: " << sizeof(snap_gen_t) << std::endl;
   std::cout << "size slot_0_t: " << sizeof(slot_0_t) << std::endl;
   std::cout << "size slot_1_t: " << sizeof(slot_1_t) << std::endl;
   std::cout << "size slot_3_t: " << sizeof(slot_3_t) << std::endl;
