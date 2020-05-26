@@ -15,21 +15,46 @@ int main(int argc, char* argv[])
   // TODO: move to unit tests
   install_standard_sighandlers();
 
-  // struct sizes
-  std::cout << "size node_header_t: " << sizeof(node_header_t) << std::endl;
-  std::cout << "size shard_pool_t: " << sizeof(shard_pool_t) << std::endl;
-  std::cout << "size shard_pool_crush_t: " << sizeof(shard_pool_crush_t) << std::endl;
-  std::cout << "size crush_t: " << sizeof(crush_t) << std::endl;
-  std::cout << "size snap_gen_t: " << sizeof(snap_gen_t) << std::endl;
-  std::cout << "size slot_0_t: " << sizeof(slot_0_t) << std::endl;
-  std::cout << "size slot_1_t: " << sizeof(slot_1_t) << std::endl;
-  std::cout << "size slot_3_t: " << sizeof(slot_3_t) << std::endl;
-  std::cout << "size node_fields_0_t: " << sizeof(node_fields_0_t) << std::endl;
-  std::cout << "size node_fields_1_t: " << sizeof(node_fields_1_t) << std::endl;
-  std::cout << "size node_fields_2_t: " << sizeof(node_fields_2_t) << std::endl;
-  std::cout << "size internal_fields_3_t: " << sizeof(internal_fields_3_t) << std::endl;
-  std::cout << "size leaf_fields_3_t: " << sizeof(leaf_fields_3_t) << std::endl;
-  std::cout << "size internal_sub_item_t: " << sizeof(internal_sub_item_t) << std::endl;
+  // sizes of struct
+  std::cout << "sizes of struct: " << std::endl;
+  std::cout << "node_header_t: " << sizeof(node_header_t) << std::endl;
+  std::cout << "shard_pool_t: " << sizeof(shard_pool_t) << std::endl;
+  std::cout << "shard_pool_crush_t: " << sizeof(shard_pool_crush_t) << std::endl;
+  std::cout << "crush_t: " << sizeof(crush_t) << std::endl;
+  std::cout << "snap_gen_t: " << sizeof(snap_gen_t) << std::endl;
+  std::cout << "slot_0_t: " << sizeof(slot_0_t) << std::endl;
+  std::cout << "slot_1_t: " << sizeof(slot_1_t) << std::endl;
+  std::cout << "slot_3_t: " << sizeof(slot_3_t) << std::endl;
+  std::cout << "node_fields_0_t: " << sizeof(node_fields_0_t) << std::endl;
+  std::cout << "node_fields_1_t: " << sizeof(node_fields_1_t) << std::endl;
+  std::cout << "node_fields_2_t: " << sizeof(node_fields_2_t) << std::endl;
+  std::cout << "internal_fields_3_t: " << sizeof(internal_fields_3_t) << std::endl;
+  std::cout << "leaf_fields_3_t: " << sizeof(leaf_fields_3_t) << std::endl;
+  std::cout << "internal_sub_item_t: " << sizeof(internal_sub_item_t) << std::endl;
+  std::cout << std::endl;
+
+  // sizes of an insertion
+  auto f_sum = [] (std::tuple<node_offset_t, node_offset_t> input) {
+    return std::get<0>(input) + std::get<1>(input);
+  };
+  std::cout << "sizes of a full-string insertion('ns', 'oid', onode_t{1}): " << std::endl;
+  onode_key_t key = {0, 0, 0, "ns", "oid", 0, 0};
+  onode_t value = {1};
+  std::cout << "internal_sub_items_t: " << internal_sub_items_t::estimate_insertion() << std::endl;
+  std::cout << "item_iterator_t<INTERNAL>: "
+            << item_iterator_t<node_type_t::INTERNAL>::estimate_insertion(&key) << std::endl;
+  std::cout << "InternalNode0:" << f_sum(InternalNode0::estimate_insertion(&key)) << std::endl;
+  std::cout << "InternalNode1:" << f_sum(InternalNode1::estimate_insertion(&key)) << std::endl;
+  std::cout << "InternalNode2:" << f_sum(InternalNode2::estimate_insertion(&key)) << std::endl;
+  std::cout << "InternalNode3:" << f_sum(InternalNode3::estimate_insertion(&key)) << std::endl;
+  std::cout << "leaf_sub_items_t: " << leaf_sub_items_t::estimate_insertion(value) << std::endl;
+  std::cout << "item_iterator_t<LEAF>: "
+            << item_iterator_t<node_type_t::LEAF>::estimate_insertion(&key, value) << std::endl;
+  std::cout << "LeafNode0:" << f_sum(LeafNode0::estimate_insertion(&key, value)) << std::endl;
+  std::cout << "LeafNode1:" << f_sum(LeafNode1::estimate_insertion(&key, value)) << std::endl;
+  std::cout << "LeafNode2:" << f_sum(LeafNode2::estimate_insertion(&key, value)) << std::endl;
+  std::cout << "LeafNode3:" << f_sum(LeafNode3::estimate_insertion(&key, value)) << std::endl;
+  std::cout << std::endl;
 
   // node tests
   auto internal_node_0 = InternalNode0::allocate(1u, false);
@@ -62,8 +87,9 @@ int main(int argc, char* argv[])
 
   std::cout << "allocated nodes:" << std::endl;
   for (auto& node : nodes) {
-    std::cout << "  " << *node << std::endl;
+    std::cout << *node << std::endl;
   }
+  std::cout << std::endl;
 
   // tree tests
   auto& btree = Btree::get();
