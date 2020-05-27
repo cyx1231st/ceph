@@ -55,14 +55,17 @@ namespace crimson::os::seastore::onode {
       assert(block_offset + sizeof(T) <= length);
       return static_cast<const T*>(ptr_offset(block_offset));
     }
-    void copy_in(const void* from, loff_t to_block_offset, loff_t len) {
+    const void* copy_in(const void* from, loff_t to_block_offset, loff_t len) {
       assert(valid);
       assert(to_block_offset + len <= length);
-      std::memcpy(ptr_offset(to_block_offset), from, len);
+      auto to = ptr_offset(to_block_offset);
+      std::memcpy(to, from, len);
+      return to;
     }
     template <typename T>
-    void copy_in(const T& from, loff_t to_block_offset) {
-      copy_in(&from, to_block_offset, sizeof(from));
+    const T* copy_in(const T& from, loff_t to_block_offset) {
+      auto ret = copy_in(&from, to_block_offset, sizeof(from));
+      return (const T*)ret;
     }
     void shift(loff_t from_block_offset, loff_t len, int shift_offset) {
       assert(valid);
@@ -341,6 +344,9 @@ namespace crimson::os::seastore::onode {
       return (snap == x.snap && gen == x.gen);
     }
     bool operator!=(const snap_gen_t& x) const { return !(*this == x); }
+    static snap_gen_t from_key(const onode_key_t& key) {
+      return {key.snap, key.gen};
+    }
 
     snap_t snap;
     gen_t gen;
@@ -400,6 +406,29 @@ namespace crimson::os::seastore::onode {
     }
     bool operator!=(const string_key_view_t& x) const { return !(*this == x); }
 
+    static void do_insert_str(const std::string& str,
+                              node_offset_t& offset,
+                              LogicalCachedExtent& extent) {
+      offset -= sizeof(string_size_t);
+      assert(str.length() < std::numeric_limits<string_size_t>::max());
+      extent.copy_in((string_size_t)str.length(), offset);
+      offset -= str.length();
+      extent.copy_in(str.data(), offset, str.length());
+    }
+
+    static void do_insert_dedup(const string_key_view_t::Type& dedup_type,
+                                node_offset_t& offset,
+                                LogicalCachedExtent& extent) {
+      offset -= sizeof(string_size_t);
+      if (dedup_type == string_key_view_t::Type::MIN) {
+        extent.copy_in((string_size_t)0u, offset);
+      } else if (dedup_type == string_key_view_t::Type::MAX) {
+        extent.copy_in(std::numeric_limits<string_size_t>::max(), offset);
+      } else {
+        assert(false);
+      }
+    }
+
     const char* p_key;
     const string_size_t* p_size;
   };
@@ -434,6 +463,21 @@ namespace crimson::os::seastore::onode {
         return sizeof(string_size_t);
       } else {
         return 2 * sizeof(string_size_t) + key->nspace.size() + key->oid.size();
+      }
+    }
+
+    static void do_insert(const onode_key_t& key,
+                          const ns_oid_view_t::Type& dedup_type,
+                          node_offset_t& offset,
+                          LogicalCachedExtent& extent) {
+      if (dedup_type == ns_oid_view_t::Type::STR) {
+        string_key_view_t::do_insert_str(
+            key.nspace, offset, extent);
+        string_key_view_t::do_insert_str(
+            key.oid, offset, extent);
+      } else {
+        string_key_view_t::do_insert_dedup(
+            dedup_type, offset, extent);
       }
     }
 
@@ -894,6 +938,9 @@ namespace crimson::os::seastore::onode {
    * |   fix|o-  |fix|   off|off|num |
    * |...key|node|key|...set|set|sub |
    * |   1  |0   |0  |   1  |0  |keys|
+   *         ^        |       |
+   *         |        |       |
+   *         +--------+ <=====+
    */
   class leaf_sub_items_t {
    public:
@@ -914,10 +961,25 @@ namespace crimson::os::seastore::onode {
       assert(range.p_start == get_item_start(keys() - 1));
     }
 
+    const node_offset_t& get_offset(size_t index) const {
+      assert(index < keys());
+      return *(p_offsets - index);
+    }
+
+    const char* get_item_start(size_t index) const {
+      assert(index < keys());
+      return p_items_end - get_offset(index);
+    }
+
+    const char* get_item_end(size_t index) const {
+      assert(index <= keys());
+      return index == 0 ? p_items_end : get_item_start(index - 1);
+    }
+
     // container type system
     using key_get_type = const snap_gen_t&;
     static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
-    num_keys_t keys() const { return *p_num_keys; }
+    const num_keys_t& keys() const { return *p_num_keys; }
     key_get_type operator[](size_t index) const {
       assert(index < keys());
       auto pointer = get_item_end(index);
@@ -938,22 +1000,22 @@ namespace crimson::os::seastore::onode {
       return value.size + sizeof(snap_gen_t) + sizeof(node_offset_t);
     }
 
+    static const onode_t* do_insert(const onode_key_t& key,
+                                    const onode_t& value,
+                                    node_offset_t& offset,
+                                    LogicalCachedExtent& extent) {
+      offset -= sizeof(leaf_sub_items_t::num_keys_t);
+      extent.copy_in(leaf_sub_items_t::num_keys_t(1), offset);
+      offset -= sizeof(node_offset_t);
+      extent.copy_in(node_offset_t(sizeof(snap_gen_t) + value.size), offset);
+      offset -= sizeof(snap_gen_t);
+      extent.copy_in(snap_gen_t::from_key(key), offset);
+      offset -= value.size;
+      auto ret = extent.copy_in(&value, offset, value.size);
+      return (const onode_t*)ret;
+    }
+
    private:
-    const char* get_item_start(size_t index) const {
-      assert(index < keys());
-      return p_items_end - get_offset(index);
-    }
-
-    const char* get_item_end(size_t index) const {
-      assert(index < keys());
-      return index == 0 ? p_items_end : p_items_end - get_offset(index - 1);
-    }
-
-    const node_offset_t& get_offset(size_t index) const {
-      assert(index < keys());
-      return *(p_offsets - index);
-    }
-
     const num_keys_t* p_num_keys;
     const node_offset_t* p_offsets;
     const char* p_items_end;
@@ -987,6 +1049,8 @@ namespace crimson::os::seastore::onode {
     item_iterator_t(const item_range_t& range)
       : p_items_start(range.p_start),
         item_range(next_item_range(range.p_end)) {}
+
+    const item_range_t& get_item_range() const { return item_range; }
 
     // container type system
     using key_get_type = const ns_oid_view_t&;
@@ -1034,8 +1098,16 @@ namespace crimson::os::seastore::onode {
               const onode_key_t& key,
               const onode_t& value,
               const ns_oid_view_t::Type& dedup_type,
+              bool is_last,
               LogicalCachedExtent& extent) {
-      return nullptr;
+      auto offset = range.end;
+      offset -= sizeof(node_offset_t);
+      node_offset_t offset_next = (is_last ? 0u : offset - range.start);
+      extent.copy_in(offset_next, offset);
+      ns_oid_view_t::do_insert(key, dedup_type, offset, extent);
+      auto p_value = leaf_sub_items_t::do_insert(key, value, offset, extent);
+      assert(offset == range.start);
+      return p_value;
     }
 
    private:
@@ -1630,6 +1702,12 @@ namespace crimson::os::seastore::onode {
             --i_stage;
           }
         }
+#ifndef NDEBUG
+        if (position.is_end()) {
+          assert(this->is_level_tail());
+          assert(is_PO);
+        }
+#endif
 
         // take ns/oid deduplication into consideration
         const onode_key_t* p_key = &key;
@@ -1666,16 +1744,19 @@ namespace crimson::os::seastore::onode {
         // calculate insert position
         search_position_t i_position = position;
         if (is_PO) {
-          if (i_position != search_position_t::begin()) {
+          if (i_position != search_position_t::begin() &&
+              !i_position.is_end()) {
             switch (i_stage) {
              size_t* p_pos;
              case STAGE_RIGHT:
               p_pos = &i_position.position_nxt.position_nxt.position;
+              assert(*p_pos != std::numeric_limits<size_t>::max());
               if (*p_pos > 0) {
                 --*p_pos;
                 break;
               }
               *p_pos = std::numeric_limits<size_t>::max();
+              assert(*p_pos != std::numeric_limits<size_t>::max());
               [[fallthrough]];
              case STAGE_STRING:
               p_pos = &i_position.position_nxt.position;
@@ -1687,15 +1768,16 @@ namespace crimson::os::seastore::onode {
               [[fallthrough]];
              case STAGE_LEFT:
               p_pos = &i_position.position;
+              assert(*p_pos != std::numeric_limits<size_t>::max());
               assert(*p_pos > 0);
               --*p_pos;
             }
-          } else {
-            // insert into position::begin() at stage STAGE_LEFT
           }
         }
 
         // modify block at STAGE_LEFT
+        assert(i_position.position < this->keys() ||
+               i_position.position == std::numeric_limits<size_t>::max());
         if (i_position.position != std::numeric_limits<size_t>::max()) {
           for (const auto* p_slot = &this->fields().slots[i_position.position];
                p_slot < &this->fields().slots[this->keys()]; ++p_slot) {
@@ -1703,18 +1785,17 @@ namespace crimson::os::seastore::onode {
                                   (const char*)p_slot - fields_start(this->fields()));
           }
         }
-        size_t* p_pos = &i_position.position;
+        size_t pos = i_position.position;
         if (i_stage == STAGE_LEFT) {
           node_offset_t insert_offset_left;
           node_offset_t insert_offset_right;
-          if (*p_pos == std::numeric_limits<size_t>::max()) {
-            *p_pos = this->keys();
-            insert_offset_left = this->fields().get_key_start_offset(this->keys());
-            insert_offset_right = this->fields().get_item_end_offset(this->keys());
+          if (pos == std::numeric_limits<size_t>::max()) {
+            pos = i_position.position = this->keys();
+            insert_offset_left = this->fields().get_key_start_offset(pos);
+            insert_offset_right = this->fields().get_item_end_offset(pos);
           } else {
-            assert(*p_pos < this->keys());
             // shift left part
-            auto block_shift_start = this->fields().get_key_start_offset(*p_pos);
+            auto block_shift_start = this->fields().get_key_start_offset(pos);
             auto block_shift_end = this->fields().get_key_start_offset(this->keys());
             this->extent->shift(block_shift_start,
                                 block_shift_end - block_shift_start,
@@ -1722,7 +1803,7 @@ namespace crimson::os::seastore::onode {
             insert_offset_left = block_shift_start;
             // shift right part
             block_shift_start = this->fields().get_item_end_offset(this->keys());
-            block_shift_end = this->fields().get_item_end_offset(*p_pos);
+            block_shift_end = this->fields().get_item_end_offset(pos);
             this->extent->shift(block_shift_start,
                                 block_shift_end - block_shift_start,
                                 -(int)estimated_size_right);
@@ -1731,22 +1812,107 @@ namespace crimson::os::seastore::onode {
           i_position.position_nxt = search_position_t::nxt_type_t::begin();
           this->extent->copy_in(this->fields().num_keys + 1, offsetof(FieldType, num_keys));
           this->extent->copy_in(shard_pool_crush_t::from_key(key), insert_offset_left);
-          this->extent->copy_in(this->fields().get_item_end_offset(*p_pos) - estimated_size_right,
+          this->extent->copy_in(this->fields().get_item_end_offset(pos) - estimated_size_right,
                                 insert_offset_left + sizeof(shard_pool_crush_t));
 
           assert(insert_offset_right > estimated_size_right);
           auto p_value = item_iterator_t<NODE_TYPE>::do_insert(
               insert_range_t{node_offset_t(insert_offset_right - estimated_size_right), insert_offset_right},
-              key, value, dedup_type, *this->extent);
+              key, value, dedup_type, true, *this->extent);
 
           return tree_cursor_t{this, i_position, p_value};
         }
+        if (pos == std::numeric_limits<size_t>::max()) {
+          pos = i_position.position = this->keys() - 1;
+        }
 
         // modify block at STAGE_STRING
+        auto range = this->get_nxt_container(pos);
+        item_iterator_t<NODE_TYPE> iter(range);
+        pos = i_position.position_nxt.position;
+        if (pos == std::numeric_limits<size_t>::max()) {
+          // staged::_iterator_t::last
+          while (iter.has_next()) {
+            ++iter;
+          }
+        } else {
+          // staged::_iterator_t::at
+          auto position = pos;
+          while (position > 0) {
+            assert(iter.has_next());
+            ++iter;
+            --position;
+          }
+        }
+        if (i_stage == STAGE_STRING) {
+          node_offset_t block_shift_start = this->fields().get_item_end_offset(this->keys());
+          node_offset_t block_shift_end;
+          bool is_last;
+          auto& item_range = iter.get_item_range();
+          if (pos == std::numeric_limits<size_t>::max()) {
+            this->extent->copy_in(node_offset_t(item_range.p_end - item_range.p_start),
+                                  node_offset_t(item_range.p_end - fields_start(this->fields())));
+            block_shift_end = item_range.p_start - fields_start(this->fields());
+            is_last = true;
+            pos = i_position.position_nxt.position = iter.position() + 1;
+          } else {
+            block_shift_end = item_range.p_end + sizeof(node_offset_t) - fields_start(this->fields());
+            is_last = false;
+          }
+          i_position.position_nxt.position_nxt = search_position_t::nxt_type_t::nxt_type_t::begin();
+          this->extent->shift(block_shift_start,
+                              block_shift_end - block_shift_start,
+                              -(int)estimated_size_right);
+          auto p_value = item_iterator_t<NODE_TYPE>::do_insert(
+              insert_range_t{node_offset_t(block_shift_end - estimated_size_right), block_shift_end},
+              key, value, dedup_type, is_last, *this->extent);
+          return tree_cursor_t{this, i_position, p_value};
+        }
+        if (pos == std::numeric_limits<size_t>::max()) {
+          pos = i_position.position_nxt.position = iter.position();
+        }
 
         // modify block at STAGE_RIGHT
-
-        return std::nullopt;
+        assert(i_stage == STAGE_RIGHT);
+        leaf_sub_items_t sub_items = iter.get_nxt_container();
+        if (i_position.position_nxt.position_nxt.position == std::numeric_limits<size_t>::max()) {
+          i_position.position_nxt.position_nxt.position = sub_items.keys();
+        }
+        pos = i_position.position_nxt.position_nxt.position;
+        // a. [... item(pos)] << estimated_size_right
+        node_offset_t block_shift_start = this->fields().get_item_end_offset(this->keys());
+        node_offset_t block_shift_end;
+        block_shift_end = sub_items.get_item_end(pos) - fields_start(this->fields());
+        this->extent->shift(block_shift_start,
+                            block_shift_end - block_shift_start,
+                            -(int)estimated_size_right);
+        // b. insert item
+        auto p_value = this->extent->copy_in(&value, block_shift_end, value.size);
+        auto key_offset = block_shift_end + value.size;
+        this->extent->copy_in(snap_gen_t::from_key(key), key_offset);
+        // c. compensate affected offsets
+        auto item_size = value.size + sizeof(snap_gen_t);
+        for (auto i = pos; i < sub_items.keys(); ++i) {
+          const node_offset_t& offset_i = sub_items.get_offset(i);
+          this->extent->copy_in(node_offset_t(offset_i + item_size),
+                                (const char*)&offset_i - fields_start(this->fields()));
+        }
+        // d. [item(pos-1) ... item(0) ... offset(pos)] <<< sizeof(node_offset_t)
+        const char* p_offset = (pos == 0 ?
+                                (const char*)&sub_items.get_offset(0) - sizeof(node_offset_t) :
+                                (const char*)&sub_items.get_offset(pos - 1));
+        block_shift_start = block_shift_end + estimated_size_right;
+        block_shift_end = p_offset - fields_start(this->fields());
+        this->extent->shift(block_shift_start,
+                            block_shift_end - block_shift_start,
+                            -(int)sizeof(node_offset_t));
+        // e. insert offset
+        node_offset_t offset_to_item = sub_items.get_item_end(0) + sizeof(node_offset_t) - fields_start(this->fields());
+        this->extent->copy_in(offset_to_item, block_shift_end);
+        // f. update num_sub_keys
+        node_offset_t offset_num_keys = (const char*)&sub_items.keys() - fields_start(this->fields());
+        this->extent->copy_in(sub_items.keys() + 1, offset_num_keys);
+        return tree_cursor_t{this, i_position, (const onode_t*)p_value};
       } else {
         // not implemented
         assert(false);
