@@ -782,7 +782,7 @@ namespace crimson::os::seastore::onode {
     }
 #endif
 
-    static node_offset_t estimate_insertion() { return sizeof(SlotType); }
+    static node_offset_t estimate_insert_one() { return sizeof(SlotType); }
 
     node_header_t header;
     num_keys_t num_keys = 0u;
@@ -850,7 +850,7 @@ namespace crimson::os::seastore::onode {
     }
 #endif
 
-    static node_offset_t estimate_insertion() { return sizeof(node_offset_t); }
+    static node_offset_t estimate_insert_one() { return sizeof(node_offset_t); }
 
     node_header_t header;
     num_keys_t num_keys = 0u;
@@ -917,7 +917,7 @@ namespace crimson::os::seastore::onode {
     }
 #endif
 
-    static node_offset_t estimate_insertion() {
+    static node_offset_t estimate_insert_one() {
       return sizeof(snap_gen_t) + sizeof(laddr_t);
     }
 
@@ -1027,8 +1027,12 @@ namespace crimson::os::seastore::onode {
       return (p_first_item - index)->get_p_value();
     }
 
-    static node_offset_t estimate_insertion() {
+    static node_offset_t estimate_insert_one() {
       return sizeof(internal_sub_item_t);
+    }
+
+    static node_offset_t estimate_insert_new() {
+      return estimate_insert_one();
     }
 
    private:
@@ -1106,8 +1110,12 @@ namespace crimson::os::seastore::onode {
       return value;
     }
 
-    static node_offset_t estimate_insertion(const onode_t& value) {
+    static node_offset_t estimate_insert_one(const onode_t& value) {
       return value.size + sizeof(snap_gen_t) + sizeof(node_offset_t);
+    }
+
+    static node_offset_t estimate_insert_new(const onode_t& value) {
+      return estimate_insert_one(value) + sizeof(num_keys_t);
     }
 
     static const onode_t* do_insert(const onode_key_t& key,
@@ -1191,17 +1199,26 @@ namespace crimson::os::seastore::onode {
 
     template <node_type_t NT = NODE_TYPE>
     static std::enable_if_t<NT == node_type_t::INTERNAL, node_offset_t>
-    estimate_insertion(const onode_key_t* p_key) {
-      return (internal_sub_items_t::estimate_insertion() +
+    estimate_insert_one(const onode_key_t* p_key) {
+      return (internal_sub_items_t::estimate_insert_new() +
+              ns_oid_view_t::estimate_size(p_key) + sizeof(node_offset_t));
+    }
+
+    template <node_type_t NT = NODE_TYPE>
+    static std::enable_if_t<NT == node_type_t::INTERNAL, node_offset_t>
+    estimate_insert_new(const onode_key_t* p_key) { return estimate_insert_one<NT>(p_key); }
+
+    template <node_type_t NT = NODE_TYPE>
+    static std::enable_if_t<NT == node_type_t::LEAF, node_offset_t>
+    estimate_insert_one(const onode_key_t* p_key, const onode_t& value) {
+      return (leaf_sub_items_t::estimate_insert_new(value) +
               ns_oid_view_t::estimate_size(p_key) + sizeof(node_offset_t));
     }
 
     template <node_type_t NT = NODE_TYPE>
     static std::enable_if_t<NT == node_type_t::LEAF, node_offset_t>
-    estimate_insertion(const onode_key_t* p_key, const onode_t& value) {
-      return (leaf_sub_items_t::estimate_insertion(value) +
-              sizeof(leaf_sub_items_t::num_keys_t) +
-              ns_oid_view_t::estimate_size(p_key) + sizeof(node_offset_t));
+    estimate_insert_new(const onode_key_t* p_key, const onode_t& value) {
+      return estimate_insert_one<NT>(p_key, value);
     }
 
     template <node_type_t NT = NODE_TYPE>
@@ -1634,14 +1651,14 @@ namespace crimson::os::seastore::onode {
     template <node_type_t NT = NODE_TYPE>
     static std::enable_if_t<NT == node_type_t::INTERNAL,
                             std::tuple<node_offset_t, node_offset_t>>
-    estimate_insertion(const onode_key_t* p_key) {
-      node_offset_t left_size = FieldType::estimate_insertion();
+    estimate_insert_one(const onode_key_t* p_key) {
+      node_offset_t left_size = FieldType::estimate_insert_one();
       node_offset_t right_size;
       if constexpr (FIELD_TYPE == field_type_t::N0 ||
                     FIELD_TYPE == field_type_t::N1) {
-        right_size = item_iterator_t<NODE_TYPE>::estimate_insertion(p_key);
+        right_size = item_iterator_t<NODE_TYPE>::estimate_insert_new(p_key);
       } else if (FIELD_TYPE == field_type_t::N2) {
-        right_size = internal_sub_items_t::estimate_insertion() +
+        right_size = internal_sub_items_t::estimate_insert_new() +
                      ns_oid_view_t::estimate_size(p_key);
       } else {
         right_size = 0u;
@@ -1652,15 +1669,14 @@ namespace crimson::os::seastore::onode {
     template <node_type_t NT = NODE_TYPE>
     static std::enable_if_t<NT == node_type_t::LEAF,
                             std::tuple<node_offset_t, node_offset_t>>
-    estimate_insertion(const onode_key_t* p_key, const onode_t& value) {
-      node_offset_t left_size = FieldType::estimate_insertion();
+    estimate_insert_one(const onode_key_t* p_key, const onode_t& value) {
+      node_offset_t left_size = FieldType::estimate_insert_one();
       node_offset_t right_size;
       if constexpr (FIELD_TYPE == field_type_t::N0 ||
                     FIELD_TYPE == field_type_t::N1) {
-        right_size = item_iterator_t<NODE_TYPE>::estimate_insertion(p_key, value);
+        right_size = item_iterator_t<NODE_TYPE>::estimate_insert_new(p_key, value);
       } else if (FIELD_TYPE == field_type_t::N2) {
-        right_size = leaf_sub_items_t::estimate_insertion(value) +
-                     sizeof(leaf_sub_items_t::num_keys_t) +
+        right_size = leaf_sub_items_t::estimate_insert_new(value) +
                      ns_oid_view_t::estimate_size(p_key);
       } else {
         right_size = value.size;
@@ -1851,13 +1867,13 @@ namespace crimson::os::seastore::onode {
         node_offset_t estimated_size_right;
         switch (i_stage) {
          case STAGE_LEFT:
-          std::tie(estimated_size_left, estimated_size_right) = this->estimate_insertion(p_key, value);
+          std::tie(estimated_size_left, estimated_size_right) = this->estimate_insert_one(p_key, value);
           break;
          case STAGE_STRING:
-          estimated_size_right = item_iterator_t<NODE_TYPE>::estimate_insertion(p_key, value);
+          estimated_size_right = item_iterator_t<NODE_TYPE>::estimate_insert_one(p_key, value);
           break;
          case STAGE_RIGHT:
-          estimated_size_right = leaf_sub_items_t::estimate_insertion(value);
+          estimated_size_right = leaf_sub_items_t::estimate_insert_one(value);
           break;
         }
 
