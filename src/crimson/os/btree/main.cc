@@ -260,8 +260,11 @@ int main(int argc, char* argv[])
         [&f_validate_insert_new, &onodes] (auto& key) {
       f_validate_insert_new(key, onodes.pick());
     });
-    // TODO: assert tree level is still 1
     btree.dump(std::cout) << std::endl;
+    assert(btree.height() == 1);
+
+    // TODO: better coverage to validate left part and right part won't
+    // crisscross.
   }
 
   transaction_manager.free_all();
