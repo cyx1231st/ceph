@@ -8,11 +8,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
-#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <type_traits>
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
@@ -34,6 +34,9 @@ namespace crimson::os::seastore::onode {
     uint16_t size; // address up to 64 KiB sized node
     // omap, extent_map, inline data
   } __attribute__((packed));
+  std::ostream& operator<<(std::ostream& os, const onode_t& node) {
+    return os << "onode(" << node.size << ")";
+  }
 
   // memory-based, synchronous and simplified version of
   // crimson::os::seastore::LogicalCachedExtent
@@ -311,6 +314,9 @@ namespace crimson::os::seastore::onode {
   MatchKindCMP compare_to(const onode_key_t& key, const shard_pool_t& target) {
     return _compare_shard_pool(key, target);
   }
+  std::ostream& operator<<(std::ostream& os, const shard_pool_t& sp) {
+    return os << (unsigned)sp.shard << "," << sp.pool;
+  }
 
   struct crush_t {
     bool operator==(const crush_t& x) const { return crush == x.crush; }
@@ -321,6 +327,9 @@ namespace crimson::os::seastore::onode {
   } __attribute__((packed));
   MatchKindCMP compare_to(const onode_key_t& key, const crush_t& target) {
     return _compare_crush(key, target);
+  }
+  std::ostream& operator<<(std::ostream& os, const crush_t& c) {
+    return os << c.crush;
   }
 
   struct shard_pool_crush_t {
@@ -341,6 +350,9 @@ namespace crimson::os::seastore::onode {
       return ret;
     return _compare_crush(key, target.crush);
   }
+  std::ostream& operator<<(std::ostream& os, const shard_pool_crush_t& spc) {
+    return os << spc.shard_pool << "," << spc.crush;
+  }
 
   struct snap_gen_t {
     bool operator==(const snap_gen_t& x) const {
@@ -356,6 +368,9 @@ namespace crimson::os::seastore::onode {
   } __attribute__((packed));
   MatchKindCMP compare_to(const onode_key_t& key, const snap_gen_t& target) {
     return _compare_snap_gen(key, target);
+  }
+  std::ostream& operator<<(std::ostream& os, const snap_gen_t& sg) {
+    return os << sg.snap << "," << sg.gen;
   }
 
   struct string_key_view_t {
@@ -436,6 +451,8 @@ namespace crimson::os::seastore::onode {
     const char* p_size;
     // TODO: remove if p_size is aligned
     string_size_t size;
+
+    friend std::ostream& operator<<(std::ostream&, const string_key_view_t&);
   };
   MatchKindCMP compare_to(const std::string& key, const string_key_view_t& target) {
     assert(key.length());
@@ -446,6 +463,16 @@ namespace crimson::os::seastore::onode {
     }
     assert(target.p_key);
     return toMatchKindCMP(key.compare(0u, key.length(), target.p_key, target.size));
+  }
+  std::ostream& operator<<(std::ostream& os, const string_key_view_t& view) {
+    auto type = view.type();
+    if (type == string_key_view_t::Type::MIN) {
+      return os << "MIN";
+    } else if (type == string_key_view_t::Type::MAX) {
+      return os << "MAX";
+    } else {
+      return os << "\"" << std::string(view.p_key, 0, view.size) << "\"";
+    }
   }
 
   struct ns_oid_view_t {
@@ -494,6 +521,9 @@ namespace crimson::os::seastore::onode {
     if (ret != MatchKindCMP::EQ)
       return ret;
     return compare_to(key.oid, target.oid);
+  }
+  std::ostream& operator<<(std::ostream& os, const ns_oid_view_t& ns_oid) {
+    return os << ns_oid.nspace << "," << ns_oid.oid;
   }
 
   struct index_view_t {
@@ -1404,6 +1434,8 @@ namespace crimson::os::seastore::onode {
     laddr_t laddr() const { return extent->get_laddr(); }
     level_t level() const { return extent->get_ptr<node_header_t>(0u)->level; }
 
+    virtual std::ostream& dump(std::ostream&) = 0;
+
     static Ref<Node> load(laddr_t, bool is_level_tail, const parent_info_t&);
 
    protected:
@@ -1522,6 +1554,8 @@ namespace crimson::os::seastore::onode {
         return ret;
       }
     }
+
+    std::ostream& dump(std::ostream&) override final;
 
     template <node_type_t NT = NODE_TYPE>
     static std::enable_if_t<NT == node_type_t::INTERNAL,
@@ -1891,14 +1925,14 @@ namespace crimson::os::seastore::onode {
         if (pos == std::numeric_limits<size_t>::max()) {
           pos = i_position.position_nxt.position = iter.position();
         }
-
-        // modify block at STAGE_RIGHT
-        assert(i_stage == STAGE_RIGHT);
         if (iter.has_next()) {
           assert(iter.get_back_offset());
           this->extent->copy_in(node_offset_t(iter.get_back_offset() + estimated_size_right),
                                 iter.get_item_range().p_end - fields_start(this->fields()));
         }
+
+        // modify block at STAGE_RIGHT
+        assert(i_stage == STAGE_RIGHT);
         leaf_sub_items_t sub_items = iter.get_nxt_container();
         if (i_position.position_nxt.position_nxt.position == std::numeric_limits<size_t>::max()) {
           i_position.position_nxt.position_nxt.position = sub_items.keys();
@@ -2092,11 +2126,11 @@ namespace crimson::os::seastore::onode {
       }
       bool is_last() const {
         assert(container.keys());
-        return _position == container.keys() - 1;
+        return _position + 1 == container.keys();
       }
       bool is_end() const { return _position == container.keys(); }
       my_type_t& operator++() {
-        assert(!is_last());
+        assert(!is_end());
         ++_position;
         return *this;
       }
@@ -2157,7 +2191,10 @@ namespace crimson::os::seastore::onode {
       get_nxt_container() const {
         return p_container->get_nxt_container();
       }
-      bool is_last() const { return !p_container->has_next(); }
+      bool is_last() const {
+        assert(!is_end());
+        return !p_container->has_next();
+      }
       bool is_end() const { return p_container == nullptr; }
       my_type_t& operator++() {
         assert(!is_end());
@@ -2374,6 +2411,34 @@ namespace crimson::os::seastore::onode {
       }
       return normalize(std::move(result));
     }
+
+    static std::ostream& dump(std::ostream& os,
+                              container_t& container,
+                              const std::string& prefix) {
+      auto iter = iterator_t::begin(container);
+      assert(!iter.is_end());
+      std::string prefix_blank(prefix.size(), ' ');
+      const std::string* p_prefix = &prefix;
+      do {
+        std::ostringstream sos;
+        sos << *p_prefix << iter.get_key() << ": ";
+        std::string i_prefix = sos.str();
+        if constexpr (!IS_BOTTOM) {
+          auto nxt_container = iter.get_nxt_container();
+          staged<typename Params::next_param_t>::dump(os, nxt_container, i_prefix);
+        } else {
+          auto value_ptr = iter.get_p_value();
+          os << "\n" << i_prefix << *value_ptr;
+        }
+        if (iter.is_last()) {
+          break;
+        } else {
+          ++iter;
+          p_prefix = &prefix_blank;
+        }
+      } while (true);
+      return os;
+    }
   };
 
   template <typename NodeType, typename Enable = void> struct _node_to_stage_t;
@@ -2426,6 +2491,16 @@ namespace crimson::os::seastore::onode {
       assert(!position.is_end());
     }
     return node_to_stage_t<my_type_t>::get_p_value_normalized(position, *this);
+  }
+
+  template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
+  std::ostream& NodeT<FieldType, NODE_TYPE, ConcreteType>::dump(std::ostream& os) {
+    os << *this << ":";
+    if (this->keys()) {
+      return node_to_stage_t<my_type_t>::dump(os, *this, "");
+    } else {
+      return os << " empty!";
+    }
   }
 
   template <typename FieldType, typename ConcreteType>
@@ -2569,8 +2644,8 @@ namespace crimson::os::seastore::onode {
       return Cursor::make_end(this);
     }
     // stats
-    void dump() {
-      std::cout << *root_node << std::endl;
+    std::ostream& dump(std::ostream& os) {
+      return root_node->dump(os);
     }
 
     static Btree& get() {
