@@ -695,13 +695,23 @@ namespace crimson::os::seastore::onode {
     return _check_PO_t<STAGE>::eval(this);
   }
 
+  struct memory_range_t {
+    const char* p_start;
+    const char* p_end;
+  };
+
+  struct node_range_t {
+    node_offset_t start;
+    node_offset_t end;
+  };
+
   template <typename FieldType>
   const char* fields_start(const FieldType& node) {
     return reinterpret_cast<const char*>(&node);
   }
 
   template <node_type_t NODE_TYPE, typename FieldType>
-  node_offset_t fields_free_size(const FieldType& node, bool is_level_tail) {
+  node_range_t fields_free_range(const FieldType& node, bool is_level_tail) {
     node_offset_t offset_start = node.get_key_start_offset(node.num_keys);
     node_offset_t offset_end =
       (node.num_keys == 0 ? FieldType::SIZE
@@ -712,9 +722,8 @@ namespace crimson::os::seastore::onode {
       }
     }
     assert(offset_start <= offset_end);
-    auto free = offset_end - offset_start;
-    assert(free < FieldType::SIZE);
-    return free;
+    assert(offset_end - offset_start < FieldType::SIZE);
+    return {offset_start, offset_end};
   }
 
   // internal/leaf node N0, N1; leaf node N3
@@ -750,8 +759,28 @@ namespace crimson::os::seastore::onode {
     }
     template <node_type_t NODE_TYPE>
     node_offset_t free_size(bool is_level_tail) const {
-      return fields_free_size<NODE_TYPE>(*this, is_level_tail);
+      auto range = fields_free_range<NODE_TYPE>(*this, is_level_tail);
+      return range.end - range.start;
     }
+#ifndef NDEBUG
+    template <node_type_t NODE_TYPE>
+    void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
+      auto range = fields_free_range<NODE_TYPE>(*this, is_level_tail);
+      for (auto i = range.start; i < range.end; ++i) {
+        extent.copy_in(uint8_t(0xc5), i);
+      }
+    }
+
+    template <node_type_t NODE_TYPE>
+    void validate_unused(bool is_level_tail) const {
+      auto range = fields_free_range<NODE_TYPE>(*this, is_level_tail);
+      for (auto i = fields_start(*this) + range.start;
+           i < fields_start(*this) + range.end;
+           ++i) {
+        assert(*i == char(0xc5));
+      }
+    }
+#endif
 
     static node_offset_t estimate_insertion() { return sizeof(SlotType); }
 
@@ -798,8 +827,28 @@ namespace crimson::os::seastore::onode {
     }
     template <node_type_t NODE_TYPE>
     node_offset_t free_size(bool is_level_tail) const {
-      return fields_free_size<NODE_TYPE>(*this, is_level_tail);
+      auto range = fields_free_range<NODE_TYPE>(*this, is_level_tail);
+      return range.end - range.start;
     }
+#ifndef NDEBUG
+    template <node_type_t NODE_TYPE>
+    void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
+      auto range = fields_free_range<NODE_TYPE>(*this, is_level_tail);
+      for (auto i = range.start; i < range.end; ++i) {
+        extent.copy_in(uint8_t(0xc5), i);
+      }
+    }
+
+    template <node_type_t NODE_TYPE>
+    void validate_unused(bool is_level_tail) const {
+      auto range = fields_free_range<NODE_TYPE>(*this, is_level_tail);
+      for (auto i = fields_start(*this) + range.start;
+           i < fields_start(*this) + range.end;
+           ++i) {
+        assert(*i == char(0xc5));
+      }
+    }
+#endif
 
     static node_offset_t estimate_insertion() { return sizeof(node_offset_t); }
 
@@ -832,6 +881,41 @@ namespace crimson::os::seastore::onode {
       assert(free < SIZE);
       return free;
     }
+#ifndef NDEBUG
+    template <node_type_t NODE_TYPE>
+    void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
+      node_offset_t begin = (const char*)&keys[num_keys] - fields_start(*this);
+      node_offset_t end = (const char*)&child_addrs[0] - fields_start(*this);
+      for (auto i = begin; i < end; ++i) {
+        extent.copy_in(uint8_t(0xc5), i);
+      }
+      begin = (const char*)&child_addrs[num_keys] - fields_start(*this);
+      end = NODE_BLOCK_SIZE;
+      if (is_level_tail) {
+        begin += sizeof(laddr_t);
+      }
+      for (auto i = begin; i < end; ++i) {
+        extent.copy_in(uint8_t(0xc5), i);
+      }
+    }
+
+    template <node_type_t NODE_TYPE>
+    void validate_unused(bool is_level_tail) const {
+      auto begin = (const char*)&keys[num_keys];
+      auto end = (const char*)&child_addrs[0];
+      for (auto i = begin; i < end; ++i) {
+        assert(*i == uint8_t(0xc5));
+      }
+      begin = (const char*)&child_addrs[num_keys];
+      end = fields_start(*this) + NODE_BLOCK_SIZE;
+      if (is_level_tail) {
+        begin += sizeof(laddr_t);
+      }
+      for (auto i = begin; i < end; ++i) {
+        assert(*i == char(0xc5));
+      }
+    }
+#endif
 
     static node_offset_t estimate_insertion() {
       return sizeof(snap_gen_t) + sizeof(laddr_t);
@@ -900,16 +984,6 @@ namespace crimson::os::seastore::onode {
 
   enum class ContainerType { ITERATIVE, INDEXABLE };
 
-  struct item_range_t {
-    const char* p_start;
-    const char* p_end;
-  };
-
-  struct insert_range_t {
-    node_offset_t start;
-    node_offset_t end;
-  };
-
   struct internal_sub_item_t {
     const snap_gen_t& get_key() const { return key; }
     #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
@@ -933,7 +1007,7 @@ namespace crimson::os::seastore::onode {
    public:
     using num_keys_t = size_t;
 
-    internal_sub_items_t(const item_range_t& range) {
+    internal_sub_items_t(const memory_range_t& range) {
       assert(range.p_start < range.p_end);
       assert((range.p_end - range.p_start) % sizeof(internal_sub_item_t) == 0);
       num_items = (range.p_end - range.p_start) / sizeof(internal_sub_item_t);
@@ -983,7 +1057,7 @@ namespace crimson::os::seastore::onode {
     //       and the minimal size of onode_t
     using num_keys_t = uint8_t;
 
-    leaf_sub_items_t(const item_range_t& range) {
+    leaf_sub_items_t(const memory_range_t& range) {
       assert(range.p_start < range.p_end);
       auto _p_num_keys = range.p_end - sizeof(num_keys_t);
       assert(range.p_start < _p_num_keys);
@@ -1083,10 +1157,10 @@ namespace crimson::os::seastore::onode {
   template <node_type_t NODE_TYPE>
   class item_iterator_t {
    public:
-    item_iterator_t(const item_range_t& range)
+    item_iterator_t(const memory_range_t& range)
       : p_items_start(range.p_start) { next_item_range(range.p_end); }
 
-    const item_range_t& get_item_range() const { return item_range; }
+    const memory_range_t& get_item_range() const { return item_range; }
     node_offset_t get_back_offset() const { return back_offset; }
 
     // container type system
@@ -1132,7 +1206,7 @@ namespace crimson::os::seastore::onode {
 
     template <node_type_t NT = NODE_TYPE>
     static std::enable_if_t<NT == node_type_t::LEAF, const onode_t*>
-    do_insert(const insert_range_t& range,
+    do_insert(const node_range_t& range,
               const onode_key_t& key,
               const onode_t& value,
               const ns_oid_view_t::Type& dedup_type,
@@ -1164,7 +1238,7 @@ namespace crimson::os::seastore::onode {
     }
 
     const char* p_items_start;
-    item_range_t item_range;
+    memory_range_t item_range;
     node_offset_t back_offset;
     mutable std::optional<ns_oid_view_t> key;
     size_t _position = 0u;
@@ -1523,7 +1597,7 @@ namespace crimson::os::seastore::onode {
     size_t keys() const { return fields().num_keys; }
     key_get_type operator[] (size_t position) const { return fields().get_key(position); }
 
-    template <typename T = item_range_t>
+    template <typename T = memory_range_t>
     std::enable_if_t<!std::is_same_v<FieldType, internal_fields_3_t>, T>
     get_nxt_container(size_t position) const {
       node_offset_t item_start_offset = fields().get_item_start_offset(position);
@@ -1599,6 +1673,12 @@ namespace crimson::os::seastore::onode {
       return *extent->get_ptr<FieldType>(0u);
     }
 
+#ifndef NDEBUG
+    void validate_unused() const {
+      fields().template validate_unused<NODE_TYPE>(is_level_tail());
+    }
+#endif
+
     static Ref<ConcreteType> _allocate(level_t level, bool is_level_tail) {
       // might be asynchronous
       auto extent = transaction_manager.alloc_extent(EXTENT_SIZE);
@@ -1606,6 +1686,9 @@ namespace crimson::os::seastore::onode {
       extent->copy_in(num_keys_t(0u), sizeof(node_header_t));
       auto ret = Ref<ConcreteType>(new ConcreteType());
       ret->init(extent, is_level_tail);
+#ifndef NDEBUG
+      ret->fields().template fill_unused<NODE_TYPE>(is_level_tail, *extent);
+#endif
       return ret;
     }
   };
@@ -1867,10 +1950,13 @@ namespace crimson::os::seastore::onode {
                                 insert_offset_left + sizeof(shard_pool_crush_t));
 
           auto p_value = item_iterator_t<NODE_TYPE>::do_insert(
-              insert_range_t{node_offset_t(insert_offset_right - estimated_size_right), insert_offset_right},
+              node_range_t{node_offset_t(insert_offset_right - estimated_size_right), insert_offset_right},
               key, value, dedup_type, true, *this->extent);
 
           assert(this->free_size() == free_size_before - estimated_size_left - estimated_size_right);
+#ifndef NDEBUG
+          this->validate_unused();
+#endif
           return tree_cursor_t{this, i_position, p_value};
         }
         if (pos == std::numeric_limits<size_t>::max()) {
@@ -1916,7 +2002,7 @@ namespace crimson::os::seastore::onode {
                               block_shift_end - block_shift_start,
                               -(int)estimated_size_right);
           auto p_value = item_iterator_t<NODE_TYPE>::do_insert(
-              insert_range_t{node_offset_t(block_shift_end - estimated_size_right), block_shift_end},
+              node_range_t{node_offset_t(block_shift_end - estimated_size_right), block_shift_end},
               key, value, dedup_type, is_last, *this->extent);
           f_compensate_left_offsets(left_index);
           assert(this->free_size() == free_size_before - estimated_size_left - estimated_size_right);
@@ -2644,6 +2730,7 @@ namespace crimson::os::seastore::onode {
       return Cursor::make_end(this);
     }
     // stats
+    size_t height() const { return root_node->level() + 1; }
     std::ostream& dump(std::ostream& os) {
       return root_node->dump(os);
     }
