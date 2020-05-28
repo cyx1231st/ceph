@@ -1,6 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*-
 // vim: ts=8 sw=2 smarttab
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -35,7 +36,7 @@ class Onodes {
   }
 
   const onode_t& pick() const {
-#if 1
+#if 0
     // always pick the largest onode
     return *onodes[onodes.size() - 1];
 #else
@@ -142,7 +143,7 @@ int main(int argc, char* argv[])
 
   /*************** tree tests ***************/
   auto& btree = Btree::get();
-  auto onodes = Onodes(32);
+  auto onodes = Onodes(15);
   auto f_validate_cursor = [] (const Btree::Cursor& cursor, const onode_t& onode) {
     assert(!cursor.is_end());
     assert(cursor.value());
@@ -168,7 +169,7 @@ int main(int argc, char* argv[])
     };
 
     // insert key1, onode1 at STAGE_LEFT
-    auto key1 = onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3};
+    auto key1 = onode_key_t{3, 3, 3, "ns3", "oid3", 3, 3};
     auto& onode1 = onodes.pick();
     auto p_value1 = f_validate_insert_new(key1, onode1);
 
@@ -186,7 +187,7 @@ int main(int argc, char* argv[])
 
     // insert key2, onode2 to key1's left at STAGE_LEFT
     // insert node front at STAGE_LEFT
-    auto key2 = onode_key_t{2, 2, 2, "ns2", "oid2", 3, 3};
+    auto key2 = onode_key_t{2, 2, 2, "ns3", "oid3", 3, 3};
     auto& onode2 = onodes.pick();
     f_validate_insert_new(key2, onode2);
 
@@ -197,32 +198,32 @@ int main(int argc, char* argv[])
     f_validate_insert_new(key3, onode3);
 
     // insert key4, onode4 to key1's left at STAGE_STRING (collision)
-    auto key4 = onode_key_t{3, 3, 3, "ns0", "oid0", 3, 3};
+    auto key4 = onode_key_t{3, 3, 3, "ns2", "oid2", 3, 3};
     auto& onode4 = onodes.pick();
     f_validate_insert_new(key4, onode4);
 
     // insert key5, onode5 to key1's right at STAGE_STRING (collision)
-    auto key5 = onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3};
+    auto key5 = onode_key_t{3, 3, 3, "ns4", "oid4", 3, 3};
     auto& onode5 = onodes.pick();
     f_validate_insert_new(key5, onode5);
 
     // insert key6, onode6 to key1's left at STAGE_RIGHT
-    auto key6 = onode_key_t{3, 3, 3, "ns1", "oid1", 2, 2};
+    auto key6 = onode_key_t{3, 3, 3, "ns3", "oid3", 2, 2};
     auto& onode6 = onodes.pick();
     f_validate_insert_new(key6, onode6);
 
     // insert key7, onode7 to key1's right at STAGE_RIGHT
-    auto key7 = onode_key_t{3, 3, 3, "ns1", "oid1", 4, 4};
+    auto key7 = onode_key_t{3, 3, 3, "ns3", "oid3", 4, 4};
     auto& onode7 = onodes.pick();
     f_validate_insert_new(key7, onode7);
 
     // insert node front at STAGE_RIGHT
-    auto key8 = onode_key_t{2, 2, 2, "ns2", "oid2", 2, 2};
+    auto key8 = onode_key_t{2, 2, 2, "ns3", "oid3", 2, 2};
     auto& onode8 = onodes.pick();
     f_validate_insert_new(key8, onode8);
 
     // insert node front at STAGE_STRING (collision)
-    auto key9 = onode_key_t{2, 2, 2, "ns0", "oid0", 3, 3};
+    auto key9 = onode_key_t{2, 2, 2, "ns2", "oid2", 3, 3};
     auto& onode9 = onodes.pick();
     f_validate_insert_new(key9, onode9);
 
@@ -232,11 +233,35 @@ int main(int argc, char* argv[])
     f_validate_insert_new(key10, onode10);
 
     // insert node last at STAGE_STRING (collision)
-    auto key11 = onode_key_t{4, 4, 4, "ns11", "oid11", 3, 3};
+    auto key11 = onode_key_t{4, 4, 4, "ns4", "oid4", 3, 3};
     auto& onode11 = onodes.pick();
     f_validate_insert_new(key11, onode11);
 
-    btree.dump();
+    // insert key, value randomly until a perfect 3-ary tree is formed
+    std::vector<onode_key_t> keys{
+      onode_key_t{2, 2, 2, "ns2", "oid2", 2, 2},
+      onode_key_t{2, 2, 2, "ns2", "oid2", 4, 4},
+      onode_key_t{2, 2, 2, "ns3", "oid3", 4, 4},
+      onode_key_t{2, 2, 2, "ns4", "oid4", 2, 2},
+      onode_key_t{2, 2, 2, "ns4", "oid4", 3, 3},
+      onode_key_t{2, 2, 2, "ns4", "oid4", 4, 4},
+      onode_key_t{3, 3, 3, "ns2", "oid2", 2, 2},
+      onode_key_t{3, 3, 3, "ns2", "oid2", 4, 4},
+      onode_key_t{3, 3, 3, "ns4", "oid4", 2, 2},
+      onode_key_t{3, 3, 3, "ns4", "oid4", 4, 4},
+      onode_key_t{4, 4, 4, "ns2", "oid2", 2, 2},
+      onode_key_t{4, 4, 4, "ns2", "oid2", 3, 3},
+      onode_key_t{4, 4, 4, "ns2", "oid2", 4, 4},
+      onode_key_t{4, 4, 4, "ns3", "oid3", 2, 2},
+      onode_key_t{4, 4, 4, "ns4", "oid4", 2, 2},
+      onode_key_t{4, 4, 4, "ns4", "oid4", 4, 4}};
+    std::random_shuffle(keys.begin(), keys.end());
+    std::for_each(keys.begin(), keys.end(),
+        [&f_validate_insert_new, &onodes] (auto& key) {
+      f_validate_insert_new(key, onodes.pick());
+    });
+    // TODO: assert tree level is still 1
+    btree.dump(std::cout) << std::endl;
   }
 
   transaction_manager.free_all();
