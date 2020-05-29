@@ -168,8 +168,9 @@ int main(int argc, char* argv[])
   {
     auto key_s = onode_key_t{0, 0, 0, "ns", "oid", 0, 0};
     auto key_e = onode_key_t{std::numeric_limits<shard_t>::max(), 0, 0, "ns", "oid", 0, 0};
-    auto cursor = btree.find(key_s);
-    assert(cursor.is_end());
+    assert(btree.find(key_s).is_end());
+    assert(btree.begin().is_end());
+    assert(btree.last().is_end());
 
     auto f_validate_insert_new =
         [&btree, &f_validate_cursor] (const onode_key_t& key, const onode_t& value) {
@@ -251,30 +252,56 @@ int main(int argc, char* argv[])
     f_validate_insert_new(key11, onode11);
 
     // insert key, value randomly until a perfect 3-ary tree is formed
-    std::vector<onode_key_t> keys{
-      onode_key_t{2, 2, 2, "ns2", "oid2", 2, 2},
-      onode_key_t{2, 2, 2, "ns2", "oid2", 4, 4},
-      onode_key_t{2, 2, 2, "ns3", "oid3", 4, 4},
-      onode_key_t{2, 2, 2, "ns4", "oid4", 2, 2},
-      onode_key_t{2, 2, 2, "ns4", "oid4", 3, 3},
-      onode_key_t{2, 2, 2, "ns4", "oid4", 4, 4},
-      onode_key_t{3, 3, 3, "ns2", "oid2", 2, 2},
-      onode_key_t{3, 3, 3, "ns2", "oid2", 4, 4},
-      onode_key_t{3, 3, 3, "ns4", "oid4", 2, 2},
-      onode_key_t{3, 3, 3, "ns4", "oid4", 4, 4},
-      onode_key_t{4, 4, 4, "ns2", "oid2", 2, 2},
-      onode_key_t{4, 4, 4, "ns2", "oid2", 3, 3},
-      onode_key_t{4, 4, 4, "ns2", "oid2", 4, 4},
-      onode_key_t{4, 4, 4, "ns3", "oid3", 2, 2},
-      onode_key_t{4, 4, 4, "ns4", "oid4", 2, 2},
-      onode_key_t{4, 4, 4, "ns4", "oid4", 4, 4}};
-    std::random_shuffle(keys.begin(), keys.end());
-    std::for_each(keys.begin(), keys.end(),
-        [&f_validate_insert_new, &onodes] (auto& key) {
-      f_validate_insert_new(key, onodes.pick());
+    std::vector<std::pair<onode_key_t, const onode_t*>> kvs{
+      {onode_key_t{2, 2, 2, "ns2", "oid2", 2, 2}, &onodes.pick()},
+      {onode_key_t{2, 2, 2, "ns2", "oid2", 4, 4}, &onodes.pick()},
+      {onode_key_t{2, 2, 2, "ns3", "oid3", 4, 4}, &onodes.pick()},
+      {onode_key_t{2, 2, 2, "ns4", "oid4", 2, 2}, &onodes.pick()},
+      {onode_key_t{2, 2, 2, "ns4", "oid4", 3, 3}, &onodes.pick()},
+      {onode_key_t{2, 2, 2, "ns4", "oid4", 4, 4}, &onodes.pick()},
+      {onode_key_t{3, 3, 3, "ns2", "oid2", 2, 2}, &onodes.pick()},
+      {onode_key_t{3, 3, 3, "ns2", "oid2", 4, 4}, &onodes.pick()},
+      {onode_key_t{3, 3, 3, "ns4", "oid4", 2, 2}, &onodes.pick()},
+      {onode_key_t{3, 3, 3, "ns4", "oid4", 4, 4}, &onodes.pick()},
+      {onode_key_t{4, 4, 4, "ns2", "oid2", 2, 2}, &onodes.pick()},
+      {onode_key_t{4, 4, 4, "ns2", "oid2", 3, 3}, &onodes.pick()},
+      {onode_key_t{4, 4, 4, "ns2", "oid2", 4, 4}, &onodes.pick()},
+      {onode_key_t{4, 4, 4, "ns3", "oid3", 2, 2}, &onodes.pick()},
+      {onode_key_t{4, 4, 4, "ns4", "oid4", 2, 2}, &onodes.pick()},
+      {onode_key_t{4, 4, 4, "ns4", "oid4", 4, 4}, &onodes.pick()}};
+    auto& smallest_value = *kvs[0].second;
+    auto& largest_value = *kvs[kvs.size() - 1].second;
+    std::random_shuffle(kvs.begin(), kvs.end());
+    std::for_each(kvs.begin(), kvs.end(), [&f_validate_insert_new] (auto& kv) {
+      f_validate_insert_new(kv.first, *kv.second);
     });
-    btree.dump(std::cout) << std::endl;
     assert(btree.height() == 1);
+
+    // validate values keep intact
+    auto f_validate_kv =
+        [&btree, &f_validate_cursor] (const onode_key_t& key, const onode_t& value) {
+      auto cursor = btree.lower_bound(key);
+      f_validate_cursor(cursor, value);
+    };
+    f_validate_kv(key1, onode1);
+    f_validate_kv(key2, onode2);
+    f_validate_kv(key3, onode3);
+    f_validate_kv(key4, onode4);
+    f_validate_kv(key5, onode5);
+    f_validate_kv(key6, onode6);
+    f_validate_kv(key7, onode7);
+    f_validate_kv(key8, onode8);
+    f_validate_kv(key9, onode9);
+    f_validate_kv(key10, onode10);
+    f_validate_kv(key11, onode11);
+    std::for_each(kvs.begin(), kvs.end(), [&f_validate_kv] (auto& kv) {
+      f_validate_kv(kv.first, *kv.second);
+    });
+    f_validate_kv(key_s, smallest_value);
+    f_validate_cursor(btree.begin(), smallest_value);
+    f_validate_cursor(btree.last(), largest_value);
+
+    btree.dump(std::cout) << std::endl;
 
     // TODO: better coverage to validate left part and right part won't
     // crisscross.
