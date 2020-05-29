@@ -1943,6 +1943,7 @@ namespace crimson::os::seastore::onode {
 
         auto free_size_before = this->free_size();
         if (free_size_before < (estimated_size_left + estimated_size_right)) {
+          p_value = nullptr;
           return;
         }
 
