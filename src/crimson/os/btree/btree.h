@@ -608,6 +608,28 @@ namespace crimson::os::seastore::onode {
     return {begin , MatchKindBS::NE};
   }
 
+  // TODO: merge to binary_search()
+  template <typename PivotType, typename FGet>
+  search_result_bs_t binary_search1(
+      const PivotType& pivot, size_t begin, size_t end, FGet&& f_get) {
+    assert(begin <= end);
+    while (begin < end) {
+      auto total = begin + end;
+      auto mid = total >> 1;
+      // do not copy if return value is reference
+      decltype(f_get(mid)) target = f_get(mid);
+      auto match = pivot - target;
+      if (match < 0) {
+        end = mid;
+      } else if (match > 0) {
+        begin = mid + 1;
+      } else {
+        return {mid, MatchKindBS::EQ};
+      }
+    }
+    return {begin , MatchKindBS::NE};
+  }
+
   template <typename FixedKeyType, field_type_t _FIELD_TYPE>
   struct _slot_t {
     using key_t = FixedKeyType;
@@ -711,7 +733,7 @@ namespace crimson::os::seastore::onode {
   }
 
   template <node_type_t NODE_TYPE, typename FieldType>
-  node_range_t fields_free_range_at(
+  node_range_t fields_free_range_before(
       const FieldType& node, bool is_level_tail, size_t position) {
     assert(position <= node.num_keys);
     node_offset_t offset_start = node.get_key_start_offset(position);
@@ -761,14 +783,14 @@ namespace crimson::os::seastore::onode {
       return index == 0 ? SIZE : get_item_start_offset(index - 1);
     }
     template <node_type_t NODE_TYPE>
-    node_offset_t free_size_at(bool is_level_tail, size_t position) const {
-      auto range = fields_free_range_at<NODE_TYPE>(*this, is_level_tail, position);
+    node_offset_t free_size_before(bool is_level_tail, size_t position) const {
+      auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, position);
       return range.end - range.start;
     }
 #ifndef NDEBUG
     template <node_type_t NODE_TYPE>
     void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
-      auto range = fields_free_range_at<NODE_TYPE>(*this, is_level_tail, num_keys);
+      auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
       for (auto i = range.start; i < range.end; ++i) {
         extent.copy_in(uint8_t(0xc5), i);
       }
@@ -776,7 +798,7 @@ namespace crimson::os::seastore::onode {
 
     template <node_type_t NODE_TYPE>
     void validate_unused(bool is_level_tail) const {
-      auto range = fields_free_range_at<NODE_TYPE>(*this, is_level_tail, num_keys);
+      auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
       for (auto i = fields_start(*this) + range.start;
            i < fields_start(*this) + range.end;
            ++i) {
@@ -831,14 +853,14 @@ namespace crimson::os::seastore::onode {
       return index == 0 ? SIZE : get_item_start_offset(index - 1);
     }
     template <node_type_t NODE_TYPE>
-    node_offset_t free_size_at(bool is_level_tail, size_t position) const {
-      auto range = fields_free_range_at<NODE_TYPE>(*this, is_level_tail, position);
+    node_offset_t free_size_before(bool is_level_tail, size_t position) const {
+      auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, position);
       return range.end - range.start;
     }
 #ifndef NDEBUG
     template <node_type_t NODE_TYPE>
     void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
-      auto range = fields_free_range_at<NODE_TYPE>(*this, is_level_tail, num_keys);
+      auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
       for (auto i = range.start; i < range.end; ++i) {
         extent.copy_in(uint8_t(0xc5), i);
       }
@@ -846,7 +868,7 @@ namespace crimson::os::seastore::onode {
 
     template <node_type_t NODE_TYPE>
     void validate_unused(bool is_level_tail) const {
-      auto range = fields_free_range_at<NODE_TYPE>(*this, is_level_tail, num_keys);
+      auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
       for (auto i = fields_start(*this) + range.start;
            i < fields_start(*this) + range.end;
            ++i) {
@@ -880,7 +902,7 @@ namespace crimson::os::seastore::onode {
     }
     template <node_type_t NODE_TYPE>
     std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, node_offset_t>
-    free_size_at(bool is_level_tail, size_t position) const {
+    free_size_before(bool is_level_tail, size_t position) const {
       assert(position <= num_keys);
       auto allowed_num_keys = is_level_tail ? MAX_NUM_KEYS - 1 : MAX_NUM_KEYS;
       assert(position <= allowed_num_keys);
@@ -1177,6 +1199,9 @@ namespace crimson::os::seastore::onode {
 
     const memory_range_t& get_item_range() const { return item_range; }
     node_offset_t get_back_offset() const { return back_offset; }
+    size_t size() const {
+      return item_range.p_end - item_range.p_start + sizeof(node_offset_t);
+    };
 
     // container type system
     using key_get_type = const ns_oid_view_t&;
@@ -1608,7 +1633,7 @@ namespace crimson::os::seastore::onode {
     node_type_t node_type() const override final { return NODE_TYPE; }
     field_type_t field_type() const override final { return FIELD_TYPE; }
     size_t free_size() const override final {
-      return fields().template free_size_at<NODE_TYPE>(is_level_tail(), keys());
+      return fields().template free_size_before<NODE_TYPE>(is_level_tail(), keys());
     }
     size_t total_size() const override final { return TOTAL_SIZE; }
     index_view_t get_index_view(const search_position_t&) const override final;
@@ -1827,27 +1852,178 @@ namespace crimson::os::seastore::onode {
                                   const match_stat_t& mstat,
                                   const MatchHistory& history) override final {
       const onode_t* p_value;
-      search_position_t i_position; 
+      search_position_t i_position;
       match_stage_t i_stage;
-      ns_oid_view_t::Type dedup_type;
-      node_offset_t estimated_size_left;
-      node_offset_t estimated_size_right;
+      ns_oid_view_t::Type i_dedup_type;
+      node_offset_t i_estimated_size_left;
+      node_offset_t i_estimated_size_right;
       try_insert_value(key, value, position, mstat, history,
-          p_value, i_position, i_stage, dedup_type,
-          estimated_size_left, estimated_size_right);
+          p_value, i_position, i_stage, i_dedup_type,
+          i_estimated_size_left, i_estimated_size_right);
       if (p_value != nullptr) {
         return {this, i_position, p_value};
       }
 
-      // identify split at STAGE_LEFT
-      assert(false);
-      // TODO (optimize)
-      // try to acquire space from siblings ... see btrfs
-      // try to insert value
-      // if failed:
-      // TODO
-      //   split ...
-      //   insert value (should not fail)
+      if constexpr (FIELD_TYPE == field_type_t::N0) {
+        size_t i_estimated_size = i_estimated_size_left + i_estimated_size_right;
+        size_t target_size = FieldType::SIZE_USABLE / 2;
+        // TODO adjust NODE_BLOCK_SIZE according to this requirement
+        assert(i_estimated_size < target_size);
+
+        std::optional<bool> i_to_left;
+        search_position_t s_position;
+
+        auto f_set_i_to_left = [&i_to_left] (
+            bool s_same_stage, size_t r_pos,
+            size_t& i_pos, size_t& s_pos) -> bool {
+          assert(!i_to_left.has_value());
+          if (s_same_stage) {
+            if (r_pos <= i_pos) {
+              // ...[s_pos-1] |!| (i_pos) [s_pos]...
+              // ...[s_pos-1] |?| [s_pos]...(i_pos)...
+              i_to_left = false;
+              s_pos = r_pos;
+              if (i_pos != std::numeric_limits<size_t>::max()) {
+                assert(r_pos != std::numeric_limits<size_t>::max());
+                i_pos -= r_pos;
+              }
+              if (s_pos == i_pos) {
+                // ...[s_pos-1] |!| (i_pos) [s_pos]...
+                return true;
+              }
+            } else {
+              assert(r_pos != std::numeric_limits<size_t>::max());
+              // ...[s_pos-1] (i_pos)) |?| [s_pos]...
+              // ...(i_pos)...[s_pos-1] |?| [s_pos]...
+              i_to_left = true;
+              s_pos = r_pos - 1;
+              if (s_pos == i_pos) {
+                // ...[s_pos-1] (i_pos)) |?| [s_pos]...
+                i_pos = std::numeric_limits<size_t>::max();
+              }
+            }
+          } else {
+            assert(r_pos != std::numeric_limits<size_t>::max());
+            if (r_pos < i_pos) {
+              // ...[s_pos-1] |?| [s_pos]...[(i_pos)[s_pos_k]...
+              i_to_left = false;
+              if (i_pos != std::numeric_limits<size_t>::max()) {
+                i_pos -= r_pos;
+              }
+            } else if (r_pos > i_pos) {
+              // ...[(i_pos)s_pos-1] |?| [s_pos]...
+              // ...[(i_pos)s_pos_k]...[s_pos-1] |?| [s_pos]...
+              i_to_left = true;
+            } else {
+              // ...[s_pos-1] |?| [(i_pos)s_pos]...
+              // i_to_left = std::nullopt;
+            }
+            s_pos = r_pos;
+          }
+          return false;
+        };
+
+        // split position at STAGE_LEFT
+        auto& i_pos_2 = i_position.position;
+        auto& s_pos_2 = s_position.position;
+        bool s_same_stage = (i_stage == STAGE_LEFT);
+        size_t s_max_pos = (s_same_stage ? this->keys() : this->keys() - 1);
+        auto f_get_used_size_stage_2 = [&] (size_t _position) {
+          auto extra_size = 0;
+          if (_position >= i_pos_2) {
+            if (s_same_stage) {
+              --_position;
+            }
+            extra_size = i_estimated_size;
+          }
+          auto free_size = this->fields().template free_size_before<NODE_TYPE>(
+              this->is_level_tail(), _position);
+          return FieldType::SIZE_USABLE - free_size + extra_size;
+        };
+        auto result = binary_search1(
+            target_size, 1, s_max_pos, f_get_used_size_stage_2);
+        assert(result.position <= this->keys());
+        auto current_size = this->fields().template free_size_before<NODE_TYPE>(
+            this->is_level_tail(), result.position);
+        if (result.position >= this->keys()) {
+          assert(s_same_stage);
+          assert(result.position == this->keys());
+          if (result.position <= i_pos_2) {
+            // ...[s_pos-1] |!| (i_pos)
+            assert(i_pos_2 == std::numeric_limits<size_t>::max());
+            result.position = std::numeric_limits<size_t>::max();
+          }
+        }
+        bool ret = f_set_i_to_left(
+            s_same_stage, result.position, i_pos_2, s_pos_2);
+        if (ret) {
+          s_position.position_nxt = search_position_t::nxt_type_t::begin();
+          // TODO: proceed split and insert
+        }
+
+        // split position at STAGE_STRING
+        auto range = this->get_nxt_container(s_position.position);
+        item_iterator_t<NODE_TYPE> iter(range);
+        auto& i_pos_1 = i_position.position_nxt.position;
+        auto& s_pos_1 = s_position.position_nxt.position;
+        if (!i_to_left.has_value()) {
+          s_same_stage = (i_stage == STAGE_STRING);
+        }
+        size_t result_1 = 0;
+        do {
+          size_t nxt_size = current_size;
+          if (!i_to_left.has_value()) {
+            if (i_pos_1 == result_1) {
+              nxt_size += i_estimated_size;
+              if (s_same_stage) {
+                if (nxt_size > target_size) {
+                  break;
+                }
+                current_size = nxt_size;
+                ++result_1;
+              }
+            }
+          }
+          nxt_size += iter.size();
+          if (nxt_size > target_size) {
+            break;
+          }
+          current_size = nxt_size;
+          ++result_1;
+          if (iter.has_next()) {
+            ++iter;
+          } else {
+            result_1 = std::numeric_limits<size_t>::max();
+            break;
+          }
+        } while (true);
+        if (!i_to_left.has_value()) {
+          bool ret = f_set_i_to_left(
+              s_same_stage, result_1, i_pos_1, s_pos_1);
+          if (ret) {
+            s_position.position_nxt.position_nxt =
+              search_position_t::nxt_type_t::nxt_type_t::begin();
+            // TODO: proceed split and insert
+          }
+        } else {
+          assert(result_1 != std::numeric_limits<size_t>::max());
+          s_pos_1 = result_1;
+        }
+
+        // identify split at STAGE_LEFT
+
+        assert(false);
+        // TODO
+        // split and insert
+        // propagate index to parent
+
+        // TODO (optimize)
+        // try to acquire space from siblings ... see btrfs
+        // try to insert value
+        // if failed:
+      } else {
+        assert(false);
+      }
     }
 
     void try_insert_value(const onode_key_t& key,
