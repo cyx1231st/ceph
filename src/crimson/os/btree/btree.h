@@ -1333,6 +1333,15 @@ namespace crimson::os::seastore::onode {
     size_t position;
     nxt_type_t position_nxt;
   };
+  template <match_stage_t STAGE>
+  std::ostream& operator<<(std::ostream& os, const staged_position_t<STAGE>& pos) {
+    if (pos.position == std::numeric_limits<size_t>::max()) {
+      os << "END";
+    } else {
+      os << pos.position;
+    }
+    return os << ", " << pos.position_nxt;
+  }
 
   template <>
   struct staged_position_t<STAGE_BOTTOM> {
@@ -1347,6 +1356,14 @@ namespace crimson::os::seastore::onode {
 
     size_t position;
   };
+  template <>
+  std::ostream& operator<<(std::ostream& os, const staged_position_t<STAGE_BOTTOM>& pos) {
+    if (pos.position == std::numeric_limits<size_t>::max()) {
+      return os << "END";
+    } else {
+      return os << pos.position;
+    }
+  }
 
   using search_position_t = staged_position_t<STAGE_TOP>;
 
@@ -1882,229 +1899,22 @@ namespace crimson::os::seastore::onode {
         return {this, i_position, p_value};
       }
 
-      if constexpr (FIELD_TYPE == field_type_t::N0) {
-        size_t i_estimated_size = i_estimated_size_left + i_estimated_size_right;
-        size_t target_size = FieldType::SIZE_USABLE / 2;
-        // TODO adjust NODE_BLOCK_SIZE according to this requirement
-        assert(i_estimated_size < target_size);
+      node_offset_t i_estimated_size = i_estimated_size_left + i_estimated_size_right;
+      search_position_t s_position;
+      bool i_to_left = locate_split_position(
+          i_position, i_stage, i_estimated_size, s_position);
+      std::cout << "should split:"
+                << "\n  insert at: " << i_position << ", size=" << i_estimated_size
+                << "\n  split at: " << s_position << ", is_left=" << i_to_left << std::endl;
+      return {};
+      // TODO
+      // split and insert
+      // propagate index to parent
 
-        std::optional<bool> i_to_left;
-        search_position_t s_position;
-
-        auto f_set_i_to_left_same_stage = [&i_to_left] (
-            size_t r_pos, size_t& i_pos, size_t& s_pos) -> bool {
-          assert(!i_to_left.has_value());
-          if (r_pos <= i_pos) {
-            // ...[s_pos-1] |!| (i_pos) [s_pos]...
-            // ...[s_pos-1] |?| [s_pos]...(i_pos)...
-            i_to_left = false;
-            s_pos = r_pos;
-            if (i_pos != std::numeric_limits<size_t>::max()) {
-              assert(r_pos != std::numeric_limits<size_t>::max());
-              i_pos -= r_pos;
-            }
-            if (s_pos == i_pos) {
-              // ...[s_pos-1] |!| (i_pos) [s_pos]...
-              return true;
-            }
-          } else {
-            assert(r_pos != std::numeric_limits<size_t>::max());
-            // ...[s_pos-1] (i_pos)) |?| [s_pos]...
-            // ...(i_pos)...[s_pos-1] |?| [s_pos]...
-            i_to_left = true;
-            s_pos = r_pos - 1;
-            if (s_pos == i_pos) {
-              // ...[s_pos-1] (i_pos)) |?| [s_pos]...
-              i_pos = std::numeric_limits<size_t>::max();
-            }
-          }
-          return false;
-        };
-
-        auto f_set_i_to_left = [&i_to_left, &f_set_i_to_left_same_stage] (
-            bool s_same_stage, size_t r_pos,
-            size_t& i_pos, size_t& s_pos) -> bool {
-          if (s_same_stage) {
-            return f_set_i_to_left_same_stage(r_pos, i_pos, s_pos);
-          }
-
-          assert(r_pos != std::numeric_limits<size_t>::max());
-          if (r_pos < i_pos) {
-            // ...[s_pos-1] |?| [s_pos]...[(i_pos)[s_pos_k]...
-            i_to_left = false;
-            if (i_pos != std::numeric_limits<size_t>::max()) {
-              i_pos -= r_pos;
-            }
-          } else if (r_pos > i_pos) {
-            // ...[(i_pos)s_pos-1] |?| [s_pos]...
-            // ...[(i_pos)s_pos_k]...[s_pos-1] |?| [s_pos]...
-            i_to_left = true;
-          } else {
-            // ...[s_pos-1] |?| [(i_pos)s_pos]...
-            // i_to_left = std::nullopt;
-          }
-          s_pos = r_pos;
-          return false;
-        };
-
-        // split position at STAGE_LEFT
-        auto& i_pos_2 = i_position.position;
-        auto& s_pos_2 = s_position.position;
-        bool s_same_stage = (i_stage == STAGE_LEFT);
-        size_t s_max_pos = (s_same_stage ? this->keys() : this->keys() - 1);
-        auto f_get_used_size_stage_2 = [this, i_pos_2, i_estimated_size, s_same_stage]
-            (size_t position) {
-          size_t ret = 0;
-          if (position == i_pos_2) {
-            ret += i_estimated_size;
-          } else if (position > i_pos_2) {
-            ret += i_estimated_size;
-            if (s_same_stage) {
-              --position;
-            }
-          }
-          ret += this->kv_size_before(position);
-          return ret;
-        };
-        auto result = binary_search1(
-            target_size, 1, s_max_pos, f_get_used_size_stage_2);
-        auto current_size = f_get_used_size_stage_2(result.position);
-        assert(result.position <= this->keys());
-        if (result.position == this->keys()) {
-          assert(s_same_stage);
-          if (result.position <= i_pos_2) {
-            // ...[s_pos-1] |!| (i_pos)
-            assert(i_pos_2 == std::numeric_limits<size_t>::max());
-            result.position = std::numeric_limits<size_t>::max();
-          }
-        }
-        bool ret = f_set_i_to_left(
-            s_same_stage, result.position, i_pos_2, s_pos_2);
-        if (ret) {
-          s_position.position_nxt = search_position_t::nxt_type_t::begin();
-          // TODO: proceed split and insert
-        }
-
-        // split position at STAGE_STRING
-        assert(current_size <= target_size);
-        auto range_1 = this->get_nxt_container(s_pos_2);
-        item_iterator_t<NODE_TYPE> iter(range_1);
-        auto& i_pos_1 = i_position.position_nxt.position;
-        auto& s_pos_1 = s_position.position_nxt.position;
-        if (!i_to_left.has_value()) {
-          s_same_stage = (i_stage == STAGE_STRING);
-        }
-        size_t r_pos_1 = 0;
-        do {
-          size_t nxt_size = current_size;
-          if (!i_to_left.has_value()) {
-            if (i_pos_1 == r_pos_1) {
-              nxt_size += i_estimated_size;
-              if (s_same_stage) {
-                if (nxt_size > target_size) {
-                  break;
-                }
-                current_size = nxt_size;
-                ++r_pos_1;
-              }
-            }
-          }
-          nxt_size += iter.size();
-          if (nxt_size > target_size) {
-            break;
-          }
-          current_size = nxt_size;
-          ++r_pos_1;
-          if (iter.has_next()) {
-            ++iter;
-          } else {
-            r_pos_1 = std::numeric_limits<size_t>::max();
-            break;
-          }
-        } while (true);
-        if (i_to_left.has_value()) {
-          s_pos_1 = r_pos_1;
-        } else {
-          bool ret = f_set_i_to_left(
-              s_same_stage, r_pos_1, i_pos_1, s_pos_1);
-          if (i_to_left.has_value() && *i_to_left == false) {
-            assert(i_pos_2 == s_pos_2);
-            i_pos_2 = 0;
-          }
-          if (ret) {
-            s_position.position_nxt.position_nxt =
-              search_position_t::nxt_type_t::nxt_type_t::begin();
-            // TODO: proceed split and insert
-          }
-        }
-        assert(s_pos_1 == iter.position());
-
-        // identify split at STAGE_LEFT
-        assert(current_size <= target_size);
-        auto range_0 = iter.get_nxt_container();
-        leaf_sub_items_t sub_items(range_0);
-        auto& i_pos_0 = i_position.position_nxt.position_nxt.position;
-        auto& s_pos_0 = s_position.position_nxt.position_nxt.position;
-        if (!i_to_left.has_value()) {
-          assert(i_stage == STAGE_RIGHT);
-          s_same_stage = true;
-        }
-        s_max_pos = (s_same_stage ? sub_items.keys() : sub_items.keys() - 1);
-        auto f_get_used_size_stage_0 =
-            [&sub_items, i_pos_0, i_estimated_size, s_same_stage, current_size]
-            (size_t position) {
-          size_t ret = current_size;
-          if (position == i_pos_0) {
-            ret += i_estimated_size;
-          } else if (position > i_pos_0) {
-            ret += i_estimated_size;
-            if (s_same_stage) {
-              --position;
-            }
-          }
-          ret += sub_items.kv_size_before(position);
-          return ret;
-        };
-        auto result_0 = binary_search1(
-            target_size, 0, s_max_pos, f_get_used_size_stage_0);
-        auto r_pos_0 = result_0.position;
-#ifndef NDEBUG
-        current_size = f_get_used_size_stage_0(r_pos_0);
-        assert(current_size <= target_size);
-#endif
-        assert(r_pos_0 <= sub_items.keys());
-        if (r_pos_0 == sub_items.keys()) {
-          assert(s_same_stage);
-          if (r_pos_0 <= i_pos_0) {
-            // ...[s_pos-1] |!| (i_pos)
-            assert(i_pos_0 == std::numeric_limits<size_t>::max());
-            r_pos_0 = std::numeric_limits<size_t>::max();
-          }
-        }
-        if (i_to_left.has_value()) {
-          s_pos_0 = r_pos_0;
-        } else {
-          f_set_i_to_left_same_stage(r_pos_0, i_pos_0, s_pos_0);
-          if (*i_to_left == false) {
-            assert(i_pos_2 == s_pos_2);
-            assert(i_pos_1 == s_pos_1);
-            i_pos_2 = 0;
-            i_pos_1 = 0;
-          }
-        }
-
-        assert(false);
-        // TODO
-        // split and insert
-        // propagate index to parent
-
-        // TODO (optimize)
-        // try to acquire space from siblings ... see btrfs
-        // try to insert value
-        // if failed:
-      } else {
-        assert(false);
-      }
+      // TODO (optimize)
+      // try to acquire space from siblings ... see btrfs
+      // try to insert value
+      // if failed:
     }
 
     void try_insert_value(const onode_key_t& key,
@@ -2378,6 +2188,243 @@ namespace crimson::os::seastore::onode {
         // not implemented
         assert(false);
         return;
+      }
+    }
+
+    bool locate_split_position(
+        search_position_t& i_position,
+        match_stage_t i_stage,
+        size_t i_estimated_size,
+        search_position_t& s_position) {
+      // TODO: should be generalized
+      if constexpr (FIELD_TYPE == field_type_t::N0) {
+        size_t target_size = FieldType::SIZE_USABLE / 2;
+        // TODO adjust NODE_BLOCK_SIZE according to this requirement
+        assert(i_estimated_size < target_size);
+
+        std::optional<bool> i_to_left;
+
+        auto f_set_i_to_left_same_stage = [&i_to_left] (
+            size_t r_pos, size_t& i_pos, size_t& s_pos) -> bool {
+          assert(!i_to_left.has_value());
+          if (r_pos <= i_pos) {
+            // ...[s_pos-1] |!| (i_pos) [s_pos]...
+            // ...[s_pos-1] |?| [s_pos]...(i_pos)...
+            i_to_left = false;
+            s_pos = r_pos;
+            if (i_pos != std::numeric_limits<size_t>::max()) {
+              assert(r_pos != std::numeric_limits<size_t>::max());
+              i_pos -= r_pos;
+            }
+            if (s_pos == i_pos) {
+              // ...[s_pos-1] |!| (i_pos) [s_pos]...
+              return true;
+            }
+          } else {
+            assert(r_pos != std::numeric_limits<size_t>::max());
+            // ...[s_pos-1] (i_pos)) |?| [s_pos]...
+            // ...(i_pos)...[s_pos-1] |?| [s_pos]...
+            i_to_left = true;
+            s_pos = r_pos - 1;
+            if (s_pos == i_pos) {
+              // ...[s_pos-1] (i_pos)) |?| [s_pos]...
+              i_pos = std::numeric_limits<size_t>::max();
+            }
+          }
+          return false;
+        };
+
+        auto f_set_i_to_left = [&i_to_left, &f_set_i_to_left_same_stage] (
+            bool s_same_stage, size_t r_pos,
+            size_t& i_pos, size_t& s_pos) -> bool {
+          if (s_same_stage) {
+            return f_set_i_to_left_same_stage(r_pos, i_pos, s_pos);
+          }
+
+          assert(r_pos != std::numeric_limits<size_t>::max());
+          if (r_pos < i_pos) {
+            // ...[s_pos-1] |?| [s_pos]...[(i_pos)[s_pos_k]...
+            i_to_left = false;
+            if (i_pos != std::numeric_limits<size_t>::max()) {
+              i_pos -= r_pos;
+            }
+          } else if (r_pos > i_pos) {
+            // ...[(i_pos)s_pos-1] |?| [s_pos]...
+            // ...[(i_pos)s_pos_k]...[s_pos-1] |?| [s_pos]...
+            i_to_left = true;
+          } else {
+            // ...[s_pos-1] |?| [(i_pos)s_pos]...
+            // i_to_left = std::nullopt;
+          }
+          s_pos = r_pos;
+          return false;
+        };
+
+        // split position at STAGE_LEFT
+        auto& i_pos_2 = i_position.position;
+        auto& s_pos_2 = s_position.position;
+        bool s_same_stage = (i_stage == STAGE_LEFT);
+        size_t s_max_pos = (s_same_stage ? this->keys() : this->keys() - 1);
+        auto f_get_used_size_stage_2 = [this, i_pos_2, i_estimated_size, s_same_stage]
+            (size_t position) {
+          size_t ret = 0;
+          if (position == i_pos_2) {
+            ret += i_estimated_size;
+          } else if (position > i_pos_2) {
+            ret += i_estimated_size;
+            if (s_same_stage) {
+              --position;
+            }
+          }
+          ret += this->kv_size_before(position);
+          return ret;
+        };
+        auto result_2 = binary_search1(
+            target_size, 1, s_max_pos, f_get_used_size_stage_2);
+        auto r_pos_2 = result_2.position;
+        auto current_size = f_get_used_size_stage_2(r_pos_2);
+        assert(r_pos_2 <= this->keys());
+        if (r_pos_2 == this->keys()) {
+          assert(s_same_stage);
+          if (r_pos_2 <= i_pos_2) {
+            // ...[s_pos-1] |!| (i_pos)
+            assert(i_pos_2 == std::numeric_limits<size_t>::max());
+            r_pos_2 = std::numeric_limits<size_t>::max();
+          }
+        }
+        bool ret = f_set_i_to_left(
+            s_same_stage, r_pos_2, i_pos_2, s_pos_2);
+        if (ret) {
+          s_position.position_nxt = search_position_t::nxt_type_t::begin();
+          std::cout << "[2] size_to_left=" << current_size
+                    << ", target_split_size=" << target_size
+                    << ", original_size=" << this->kv_size_before(this->keys())
+                    << ", insert_size= " << i_estimated_size
+                    << std::endl;
+          return *i_to_left;
+        }
+
+        // split position at STAGE_STRING
+        assert(current_size <= target_size);
+        auto range_1 = this->get_nxt_container(s_pos_2);
+        item_iterator_t<NODE_TYPE> iter(range_1);
+        auto& i_pos_1 = i_position.position_nxt.position;
+        auto& s_pos_1 = s_position.position_nxt.position;
+        if (!i_to_left.has_value()) {
+          s_same_stage = (i_stage == STAGE_STRING);
+        }
+        size_t r_pos_1 = 0;
+        do {
+          size_t nxt_size = current_size;
+          if (!i_to_left.has_value()) {
+            if (i_pos_1 == r_pos_1) {
+              nxt_size += i_estimated_size;
+              if (s_same_stage) {
+                if (nxt_size > target_size) {
+                  break;
+                }
+                current_size = nxt_size;
+                ++r_pos_1;
+              }
+            }
+          }
+          nxt_size += iter.size();
+          if (nxt_size > target_size) {
+            break;
+          }
+          current_size = nxt_size;
+          ++r_pos_1;
+          if (iter.has_next()) {
+            ++iter;
+          } else {
+            r_pos_1 = std::numeric_limits<size_t>::max();
+            break;
+          }
+        } while (true);
+        if (i_to_left.has_value()) {
+          s_pos_1 = r_pos_1;
+        } else {
+          bool ret = f_set_i_to_left(
+              s_same_stage, r_pos_1, i_pos_1, s_pos_1);
+          if (i_to_left.has_value() && *i_to_left == false) {
+            assert(i_pos_2 == s_pos_2);
+            i_pos_2 = 0;
+          }
+          if (ret) {
+            s_position.position_nxt.position_nxt =
+              search_position_t::nxt_type_t::nxt_type_t::begin();
+            std::cout << "[1] size_to_left=" << current_size
+                      << ", target_split_size=" << target_size
+                      << ", original_size=" << this->kv_size_before(this->keys())
+                      << ", insert_size= " << i_estimated_size
+                      << std::endl;
+            return *i_to_left;
+          }
+        }
+        assert(s_pos_1 == iter.position());
+
+        // identify split at STAGE_LEFT
+        assert(current_size <= target_size);
+        auto range_0 = iter.get_nxt_container();
+        leaf_sub_items_t sub_items(range_0);
+        auto& i_pos_0 = i_position.position_nxt.position_nxt.position;
+        auto& s_pos_0 = s_position.position_nxt.position_nxt.position;
+        if (!i_to_left.has_value()) {
+          assert(i_stage == STAGE_RIGHT);
+          s_same_stage = true;
+        }
+        s_max_pos = (s_same_stage ? sub_items.keys() : sub_items.keys() - 1);
+        auto f_get_used_size_stage_0 =
+            [&sub_items, i_pos_0, i_estimated_size, s_same_stage, current_size]
+            (size_t position) {
+          size_t ret = current_size;
+          if (position == i_pos_0) {
+            ret += i_estimated_size;
+          } else if (position > i_pos_0) {
+            ret += i_estimated_size;
+            if (s_same_stage) {
+              --position;
+            }
+          }
+          ret += sub_items.kv_size_before(position);
+          return ret;
+        };
+        auto result_0 = binary_search1(
+            target_size, 0, s_max_pos, f_get_used_size_stage_0);
+        auto r_pos_0 = result_0.position;
+#ifndef NDEBUG
+        current_size = f_get_used_size_stage_0(r_pos_0);
+        assert(current_size <= target_size);
+        std::cout << "[0] size_to_left=" << current_size
+                  << ", target_split_size=" << target_size
+                  << ", original_size=" << this->kv_size_before(this->keys())
+                  << ", insert_size= " << i_estimated_size
+                  << std::endl;
+#endif
+        assert(r_pos_0 <= sub_items.keys());
+        if (r_pos_0 == sub_items.keys()) {
+          assert(s_same_stage);
+          if (r_pos_0 <= i_pos_0) {
+            // ...[s_pos-1] |!| (i_pos)
+            assert(i_pos_0 == std::numeric_limits<size_t>::max());
+            r_pos_0 = std::numeric_limits<size_t>::max();
+          }
+        }
+        if (i_to_left.has_value()) {
+          s_pos_0 = r_pos_0;
+        } else {
+          f_set_i_to_left_same_stage(r_pos_0, i_pos_0, s_pos_0);
+          if (*i_to_left == false) {
+            assert(i_pos_2 == s_pos_2);
+            assert(i_pos_1 == s_pos_1);
+            i_pos_2 = 0;
+            i_pos_1 = 0;
+          }
+        }
+        return *i_to_left;
+      } else {
+        // not implemented
+        assert(false);
       }
     }
 

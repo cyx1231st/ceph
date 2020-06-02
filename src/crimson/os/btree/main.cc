@@ -18,21 +18,29 @@ class Onodes {
  public:
   Onodes(size_t n) {
     for (size_t i = 1; i <= n; ++i) {
-      auto index_int32 = 2 * i - 1;
-      auto size = 8 * i;
-      auto p_ints = (uint32_t*)std::malloc(size);
-      *(p_ints + index_int32) = size * 137;
-      auto p_onode = (onode_t*)p_ints;
-      p_onode->size = size;
-      validate(*p_onode);
+      auto p_onode = &create(i * 8);
       onodes.push_back(p_onode);
     }
   }
 
   ~Onodes() {
-    std::for_each(onodes.begin(), onodes.end(), [] (onode_t* onode) {
+    std::for_each(tracked_onodes.begin(), tracked_onodes.end(),
+                  [] (onode_t* onode) {
       std::free(onode);
     });
+  }
+
+  const onode_t& create(size_t size) {
+    assert(size >= sizeof(onode_t) + sizeof(uint32_t));
+    uint32_t target = size * 137;
+    auto p_mem = (char*)std::malloc(size);
+    auto p_onode = (onode_t*)p_mem;
+    tracked_onodes.push_back(p_onode);
+    p_onode->size = size;
+    p_mem += (size - sizeof(uint32_t));
+    std::memcpy(p_mem, &target, sizeof(uint32_t));
+    validate(*p_onode);
+    return *p_onode;
   }
 
   const onode_t& pick() const {
@@ -47,7 +55,7 @@ class Onodes {
   }
 
   static void validate(const onode_t& node) {
-    auto p_target = (const char*)&node + node.size - 4;
+    auto p_target = (const char*)&node + node.size - sizeof(uint32_t);
     uint32_t target;
     std::memcpy(&target, p_target, sizeof(uint32_t));
     assert(target == node.size * 137);
@@ -55,7 +63,8 @@ class Onodes {
 
  private:
   mutable std::random_device rd;
-  std::vector<onode_t*> onodes;
+  std::vector<const onode_t*> onodes;
+  std::vector<onode_t*> tracked_onodes;
 };
 
 int main(int argc, char* argv[])
