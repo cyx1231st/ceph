@@ -608,26 +608,25 @@ namespace crimson::os::seastore::onode {
     return {begin , MatchKindBS::NE};
   }
 
-  // TODO: merge to binary_search()
   template <typename PivotType, typename FGet>
-  search_result_bs_t binary_search1(
-      const PivotType& pivot, size_t begin, size_t end, FGet&& f_get) {
-    assert(begin <= end);
-    while (begin < end) {
-      auto total = begin + end;
+  search_result_bs_t binary_search_r(
+      size_t rend, size_t rbegin, FGet&& f_get, const PivotType& key) {
+    assert(rend <= rbegin);
+    while (rend < rbegin) {
+      auto total = rend + rbegin + 1;
       auto mid = total >> 1;
       // do not copy if return value is reference
       decltype(f_get(mid)) target = f_get(mid);
-      auto match = pivot - target;
+      int match = target - key;
       if (match < 0) {
-        end = mid;
+        rend = mid;
       } else if (match > 0) {
-        begin = mid + 1;
+        rbegin = mid - 1;
       } else {
         return {mid, MatchKindBS::EQ};
       }
     }
-    return {begin , MatchKindBS::NE};
+    return {rbegin, MatchKindBS::NE};
   }
 
   template <typename FixedKeyType, field_type_t _FIELD_TYPE>
@@ -1900,12 +1899,19 @@ namespace crimson::os::seastore::onode {
       }
 
       node_offset_t i_estimated_size = i_estimated_size_left + i_estimated_size_right;
+
+      std::cout << "before split: insert at: " << i_position << std::endl;
+
       search_position_t s_position;
       bool i_to_left = locate_split_position(
           i_position, i_stage, i_estimated_size, s_position);
+
       std::cout << "should split:"
-                << "\n  insert at: " << i_position << ", size=" << i_estimated_size
-                << "\n  split at: " << s_position << ", is_left=" << i_to_left << std::endl;
+                << "\n  insert at: " << i_position
+                << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
+                << "\n  split at: " << s_position << ", is_left=" << i_to_left
+                << std::endl << std::endl;
+
       return {};
       // TODO
       // split and insert
@@ -2202,6 +2208,7 @@ namespace crimson::os::seastore::onode {
         // TODO adjust NODE_BLOCK_SIZE according to this requirement
         assert(i_estimated_size < target_size);
 
+        size_t current_size;
         std::optional<bool> i_to_left;
 
         auto f_set_i_to_left_same_stage = [&i_to_left] (
@@ -2234,14 +2241,9 @@ namespace crimson::os::seastore::onode {
           return false;
         };
 
-        auto f_set_i_to_left = [&i_to_left, &f_set_i_to_left_same_stage] (
-            bool s_same_stage, size_t r_pos,
-            size_t& i_pos, size_t& s_pos) -> bool {
-          if (s_same_stage) {
-            return f_set_i_to_left_same_stage(r_pos, i_pos, s_pos);
-          }
-
-          assert(r_pos != std::numeric_limits<size_t>::max());
+        auto f_set_i_to_left_diff_stage = [&i_to_left] (
+            size_t r_pos, size_t& i_pos, size_t& s_pos) -> void {
+          assert(!i_to_left.has_value());
           if (r_pos < i_pos) {
             // ...[s_pos-1] |?| [s_pos]...[(i_pos)[s_pos_k]...
             i_to_left = false;
@@ -2257,51 +2259,59 @@ namespace crimson::os::seastore::onode {
             // i_to_left = std::nullopt;
           }
           s_pos = r_pos;
-          return false;
         };
 
         // split position at STAGE_LEFT
         auto& i_pos_2 = i_position.position;
         auto& s_pos_2 = s_position.position;
-        bool s_same_stage = (i_stage == STAGE_LEFT);
-        size_t s_max_pos = (s_same_stage ? this->keys() : this->keys() - 1);
-        auto f_get_used_size_stage_2 = [this, i_pos_2, i_estimated_size, s_same_stage]
-            (size_t position) {
-          size_t ret = 0;
-          if (position == i_pos_2) {
-            ret += i_estimated_size;
-          } else if (position > i_pos_2) {
-            ret += i_estimated_size;
-            if (s_same_stage) {
+        size_t r_pos_2;
+        if (i_stage == STAGE_LEFT) {
+          auto f_get_used_size_stage_2 = [this, i_pos_2, i_estimated_size]
+              (size_t position) {
+            size_t ret = 0;
+            if (position > i_pos_2) {
+              ret += i_estimated_size;
               --position;
             }
+            ret += this->kv_size_before(position);
+            return ret;
+          };
+          r_pos_2 = binary_search_r(
+              1, this->keys(), f_get_used_size_stage_2, target_size).position;
+          assert(r_pos_2 <= this->keys());
+          current_size = f_get_used_size_stage_2(r_pos_2);
+          if (r_pos_2 == this->keys()) {
+            if (r_pos_2 <= i_pos_2) {
+              // ...[s_pos-1] |!| (i_pos)
+              assert(i_pos_2 == std::numeric_limits<size_t>::max());
+              r_pos_2 = std::numeric_limits<size_t>::max();
+            }
           }
-          ret += this->kv_size_before(position);
-          return ret;
-        };
-        auto result_2 = binary_search1(
-            target_size, 1, s_max_pos, f_get_used_size_stage_2);
-        auto r_pos_2 = result_2.position;
-        auto current_size = f_get_used_size_stage_2(r_pos_2);
-        assert(r_pos_2 <= this->keys());
-        if (r_pos_2 == this->keys()) {
-          assert(s_same_stage);
-          if (r_pos_2 <= i_pos_2) {
-            // ...[s_pos-1] |!| (i_pos)
-            assert(i_pos_2 == std::numeric_limits<size_t>::max());
-            r_pos_2 = std::numeric_limits<size_t>::max();
+          bool ret = f_set_i_to_left_same_stage(r_pos_2, i_pos_2, s_pos_2);
+          if (ret) {
+            s_position.position_nxt = search_position_t::nxt_type_t::begin();
+            std::cout << "[2] size_to_left=" << current_size
+                      << ", target_split_size=" << target_size
+                      << ", original_size=" << this->kv_size_before(this->keys())
+                      << ", insert_size= " << i_estimated_size
+                      << std::endl;
+            return *i_to_left;
           }
-        }
-        bool ret = f_set_i_to_left(
-            s_same_stage, r_pos_2, i_pos_2, s_pos_2);
-        if (ret) {
-          s_position.position_nxt = search_position_t::nxt_type_t::begin();
-          std::cout << "[2] size_to_left=" << current_size
-                    << ", target_split_size=" << target_size
-                    << ", original_size=" << this->kv_size_before(this->keys())
-                    << ", insert_size= " << i_estimated_size
-                    << std::endl;
-          return *i_to_left;
+        } else {
+          auto f_get_used_size_stage_2 = [this, i_pos_2, i_estimated_size]
+              (size_t position) {
+            size_t ret = 0;
+            if (position > i_pos_2) {
+              ret += i_estimated_size;
+            }
+            ret += this->kv_size_before(position);
+            return ret;
+          };
+          r_pos_2 = binary_search_r(
+              1, this->keys() - 1, f_get_used_size_stage_2, target_size).position;
+          assert(r_pos_2 < this->keys());
+          current_size = f_get_used_size_stage_2(r_pos_2);
+          f_set_i_to_left_diff_stage(r_pos_2, i_pos_2, s_pos_2);
         }
 
         // split position at STAGE_STRING
@@ -2310,16 +2320,14 @@ namespace crimson::os::seastore::onode {
         item_iterator_t<NODE_TYPE> iter(range_1);
         auto& i_pos_1 = i_position.position_nxt.position;
         auto& s_pos_1 = s_position.position_nxt.position;
-        if (!i_to_left.has_value()) {
-          s_same_stage = (i_stage == STAGE_STRING);
-        }
         size_t r_pos_1 = 0;
+        /* TODO templatize
         do {
           size_t nxt_size = current_size;
           if (!i_to_left.has_value()) {
             if (i_pos_1 == r_pos_1) {
               nxt_size += i_estimated_size;
-              if (s_same_stage) {
+              if (i_stage == STAGE_STRING) {
                 if (nxt_size > target_size) {
                   break;
                 }
@@ -2341,11 +2349,49 @@ namespace crimson::os::seastore::onode {
             break;
           }
         } while (true);
+        */
         if (i_to_left.has_value()) {
+          do {
+            size_t nxt_size = current_size;
+            nxt_size += iter.size();
+            if (nxt_size > target_size) {
+              break;
+            }
+            current_size = nxt_size;
+            ++r_pos_1;
+            if (iter.has_next()) {
+              ++iter;
+            } else {
+              r_pos_1 = std::numeric_limits<size_t>::max();
+              break;
+            }
+          } while (true);
           s_pos_1 = r_pos_1;
-        } else {
-          bool ret = f_set_i_to_left(
-              s_same_stage, r_pos_1, i_pos_1, s_pos_1);
+        } else if (i_stage == STAGE_STRING) {
+          do {
+            size_t nxt_size = current_size;
+            if (i_pos_1 == r_pos_1) {
+              nxt_size += i_estimated_size;
+              if (nxt_size > target_size) {
+                break;
+              }
+              current_size = nxt_size;
+              ++r_pos_1;
+            }
+            nxt_size += iter.size();
+            if (nxt_size > target_size) {
+              break;
+            }
+            current_size = nxt_size;
+            ++r_pos_1;
+            if (iter.has_next()) {
+              ++iter;
+            } else {
+              r_pos_1 = std::numeric_limits<size_t>::max();
+              break;
+            }
+          } while (true);
+          bool ret = f_set_i_to_left_same_stage(r_pos_1, i_pos_1, s_pos_1);
           if (i_to_left.has_value() && *i_to_left == false) {
             assert(i_pos_2 == s_pos_2);
             i_pos_2 = 0;
@@ -2360,6 +2406,30 @@ namespace crimson::os::seastore::onode {
                       << std::endl;
             return *i_to_left;
           }
+        } else {
+          do {
+            size_t nxt_size = current_size;
+            if (i_pos_1 == r_pos_1) {
+              nxt_size += i_estimated_size;
+            }
+            nxt_size += iter.size();
+            if (nxt_size > target_size) {
+              break;
+            }
+            current_size = nxt_size;
+            ++r_pos_1;
+            if (iter.has_next()) {
+              ++iter;
+            } else {
+              r_pos_1 = std::numeric_limits<size_t>::max();
+              break;
+            }
+          } while (true);
+          f_set_i_to_left_diff_stage(r_pos_1, i_pos_1, s_pos_1);
+          if (*i_to_left == false) {
+            assert(i_pos_2 == s_pos_2);
+            i_pos_2 = 0;
+          }
         }
         assert(s_pos_1 == iter.position());
 
@@ -2369,50 +2439,33 @@ namespace crimson::os::seastore::onode {
         leaf_sub_items_t sub_items(range_0);
         auto& i_pos_0 = i_position.position_nxt.position_nxt.position;
         auto& s_pos_0 = s_position.position_nxt.position_nxt.position;
+        size_t r_pos_0;
         if (!i_to_left.has_value()) {
           assert(i_stage == STAGE_RIGHT);
-          s_same_stage = true;
-        }
-        s_max_pos = (s_same_stage ? sub_items.keys() : sub_items.keys() - 1);
-        auto f_get_used_size_stage_0 =
-            [&sub_items, i_pos_0, i_estimated_size, s_same_stage, current_size]
-            (size_t position) {
-          size_t ret = current_size;
-          if (position == i_pos_0) {
-            ret += i_estimated_size;
-          } else if (position > i_pos_0) {
-            ret += i_estimated_size;
-            if (s_same_stage) {
+          auto f_get_used_size_stage_0 =
+              [&sub_items, i_pos_0, i_estimated_size, current_size]
+              (size_t position) {
+            size_t ret = current_size;
+            if (position > i_pos_0) {
+              ret += i_estimated_size;
               --position;
             }
-          }
-          ret += sub_items.kv_size_before(position);
-          return ret;
-        };
-        auto result_0 = binary_search1(
-            target_size, 0, s_max_pos, f_get_used_size_stage_0);
-        auto r_pos_0 = result_0.position;
+            ret += sub_items.kv_size_before(position);
+            return ret;
+          };
+          r_pos_0 = binary_search_r(
+              0, sub_items.keys(), f_get_used_size_stage_0, target_size).position;
+          assert(r_pos_0 <= sub_items.keys());
 #ifndef NDEBUG
-        current_size = f_get_used_size_stage_0(r_pos_0);
-        assert(current_size <= target_size);
-        std::cout << "[0] size_to_left=" << current_size
-                  << ", target_split_size=" << target_size
-                  << ", original_size=" << this->kv_size_before(this->keys())
-                  << ", insert_size= " << i_estimated_size
-                  << std::endl;
+          current_size = f_get_used_size_stage_0(r_pos_0);
 #endif
-        assert(r_pos_0 <= sub_items.keys());
-        if (r_pos_0 == sub_items.keys()) {
-          assert(s_same_stage);
-          if (r_pos_0 <= i_pos_0) {
-            // ...[s_pos-1] |!| (i_pos)
-            assert(i_pos_0 == std::numeric_limits<size_t>::max());
-            r_pos_0 = std::numeric_limits<size_t>::max();
+          if (r_pos_0 == sub_items.keys()) {
+            if (r_pos_0 <= i_pos_0) {
+              // ...[s_pos-1] |!| (i_pos)
+              assert(i_pos_0 == std::numeric_limits<size_t>::max());
+              r_pos_0 = std::numeric_limits<size_t>::max();
+            }
           }
-        }
-        if (i_to_left.has_value()) {
-          s_pos_0 = r_pos_0;
-        } else {
           f_set_i_to_left_same_stage(r_pos_0, i_pos_0, s_pos_0);
           if (*i_to_left == false) {
             assert(i_pos_2 == s_pos_2);
@@ -2420,7 +2473,31 @@ namespace crimson::os::seastore::onode {
             i_pos_2 = 0;
             i_pos_1 = 0;
           }
+        } else {
+          auto current_size_1 = current_size + sizeof(node_offset_t) +
+                                ns_oid_view_t::estimate_size(nullptr);
+          auto f_get_used_size_stage_0 = [&sub_items, current_size, current_size_1] (size_t position) {
+            if (position == 0) {
+              return current_size;
+            } else {
+              return current_size_1 + sub_items.kv_size_before(position);
+            }
+          };
+          r_pos_0 = binary_search_r(
+              0, sub_items.keys() - 1, f_get_used_size_stage_0, target_size).position;
+          assert(r_pos_0 < sub_items.keys());
+#ifndef NDEBUG
+          current_size = f_get_used_size_stage_0(r_pos_0);
+#endif
+          s_pos_0 = r_pos_0;
         }
+
+        assert(current_size <= target_size);
+        std::cout << "[0] size_to_left=" << current_size
+                  << ", target_split_size=" << target_size
+                  << ", original_size=" << this->kv_size_before(this->keys())
+                  << ", insert_size= " << i_estimated_size
+                  << std::endl;
         return *i_to_left;
       } else {
         // not implemented
