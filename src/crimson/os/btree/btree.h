@@ -2204,9 +2204,9 @@ namespace crimson::os::seastore::onode {
         search_position_t& s_position) {
       // TODO: should be generalized
       if constexpr (FIELD_TYPE == field_type_t::N0) {
-        size_t target_size = FieldType::SIZE_USABLE / 2;
+        size_t target_size = (FieldType::SIZE_USABLE + i_estimated_size) / 2;
         // TODO adjust NODE_BLOCK_SIZE according to this requirement
-        assert(i_estimated_size < target_size);
+        assert(i_estimated_size < FieldType::SIZE_USABLE / 2);
 
         size_t current_size;
         std::optional<bool> i_to_left;
@@ -2277,9 +2277,10 @@ namespace crimson::os::seastore::onode {
             return ret;
           };
           r_pos_2 = binary_search_r(
-              1, this->keys(), f_get_used_size_stage_2, target_size).position;
+              0, this->keys(), f_get_used_size_stage_2, target_size).position;
           assert(r_pos_2 <= this->keys());
           current_size = f_get_used_size_stage_2(r_pos_2);
+          assert(current_size <= target_size);
           if (r_pos_2 == this->keys()) {
             if (r_pos_2 <= i_pos_2) {
               // ...[s_pos-1] |!| (i_pos)
@@ -2293,7 +2294,7 @@ namespace crimson::os::seastore::onode {
             std::cout << "[2] size_to_left=" << current_size
                       << ", target_split_size=" << target_size
                       << ", original_size=" << this->kv_size_before(this->keys())
-                      << ", insert_size= " << i_estimated_size
+                      << ", insert_size=" << i_estimated_size
                       << std::endl;
             return *i_to_left;
           }
@@ -2308,14 +2309,14 @@ namespace crimson::os::seastore::onode {
             return ret;
           };
           r_pos_2 = binary_search_r(
-              1, this->keys() - 1, f_get_used_size_stage_2, target_size).position;
+              0, this->keys() - 1, f_get_used_size_stage_2, target_size).position;
           assert(r_pos_2 < this->keys());
           current_size = f_get_used_size_stage_2(r_pos_2);
+          assert(current_size <= target_size);
           f_set_i_to_left_diff_stage(r_pos_2, i_pos_2, s_pos_2);
         }
 
         // split position at STAGE_STRING
-        assert(current_size <= target_size);
         auto range_1 = this->get_nxt_container(s_pos_2);
         item_iterator_t<NODE_TYPE> iter(range_1);
         auto& i_pos_1 = i_position.position_nxt.position;
@@ -2392,7 +2393,7 @@ namespace crimson::os::seastore::onode {
             }
           } while (true);
           bool ret = f_set_i_to_left_same_stage(r_pos_1, i_pos_1, s_pos_1);
-          if (i_to_left.has_value() && *i_to_left == false) {
+          if (*i_to_left == false) {
             assert(i_pos_2 == s_pos_2);
             i_pos_2 = 0;
           }
@@ -2402,7 +2403,7 @@ namespace crimson::os::seastore::onode {
             std::cout << "[1] size_to_left=" << current_size
                       << ", target_split_size=" << target_size
                       << ", original_size=" << this->kv_size_before(this->keys())
-                      << ", insert_size= " << i_estimated_size
+                      << ", insert_size=" << i_estimated_size
                       << std::endl;
             return *i_to_left;
           }
@@ -2426,12 +2427,13 @@ namespace crimson::os::seastore::onode {
             }
           } while (true);
           f_set_i_to_left_diff_stage(r_pos_1, i_pos_1, s_pos_1);
-          if (*i_to_left == false) {
+          if (i_to_left.has_value() && *i_to_left == false) {
             assert(i_pos_2 == s_pos_2);
             i_pos_2 = 0;
           }
         }
-        assert(s_pos_1 == iter.position());
+        assert(s_pos_1 == iter.position() ||
+               s_pos_1 == std::numeric_limits<size_t>::max());
 
         // identify split at STAGE_LEFT
         assert(current_size <= target_size);
@@ -2496,7 +2498,7 @@ namespace crimson::os::seastore::onode {
         std::cout << "[0] size_to_left=" << current_size
                   << ", target_split_size=" << target_size
                   << ", original_size=" << this->kv_size_before(this->keys())
-                  << ", insert_size= " << i_estimated_size
+                  << ", insert_size=" << i_estimated_size
                   << std::endl;
         return *i_to_left;
       } else {
