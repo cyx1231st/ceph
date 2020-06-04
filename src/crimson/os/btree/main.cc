@@ -44,7 +44,7 @@ class Onodes {
   }
 
   const onode_t& pick() const {
-#if 0
+#if 1
     // always pick the largest onode
     return *onodes[onodes.size() - 1];
 #else
@@ -314,6 +314,30 @@ int main(int argc, char* argv[])
 
     // TODO: better coverage to validate left part and right part won't
     // crisscross.
+
+    btree.insert(onode_key_t{1, 1, 1, "ns3", "oid3", 3, 3}, onodes.create(1280));
+    btree.insert(onode_key_t{2, 2, 2, "ns1", "oid1", 3, 3}, onodes.create(1280));
+    btree.insert(onode_key_t{2, 2, 2, "ns2", "oid2", 1, 1}, onodes.create(1280));
+    std::cout << std::endl;
+
+    btree.insert(onode_key_t{2, 2, 2, "ns4", "oid4", 5, 5}, onodes.create(1280));
+    btree.insert(onode_key_t{2, 2, 2, "ns5", "oid5", 3, 3}, onodes.create(1280));
+    btree.insert(onode_key_t{2, 3, 3, "ns3", "oid3", 3, 3}, onodes.create(1280));
+    btree.insert(onode_key_t{3, 3, 3, "ns2", "oid2", 1, 1}, onodes.create(1280));
+    btree.insert(onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3}, onodes.create(1280));
+    std::cout << std::endl;
+
+    btree.insert(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onodes.create(1280));
+    btree.insert(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onodes.create(1280));
+    btree.insert(onode_key_t{3, 4, 4, "ns3", "oid3", 3, 3}, onodes.create(1280));
+    btree.insert(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onodes.create(1280));
+    btree.insert(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onodes.create(1280));
+    std::cout << std::endl;
+
+    btree.insert(onode_key_t{4, 4, 4, "ns4", "oid4", 5, 5}, onodes.create(1280));
+    btree.insert(onode_key_t{4, 4, 4, "ns5", "oid5", 3, 3}, onodes.create(1280));
+    btree.insert(onode_key_t{5, 5, 5, "ns3", "oid3", 3, 3}, onodes.create(1280));
+    std::cout << std::endl;
   }
 
   transaction_manager.free_all();
