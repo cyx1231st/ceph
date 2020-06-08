@@ -1244,6 +1244,7 @@ namespace crimson::os::seastore::onode {
       return p_items_start < item_range.p_start;
     }
     const item_iterator_t<NODE_TYPE>& operator++() const {
+      assert(has_next());
       next_item_range(item_range.p_start);
       key.reset();
       ++_position;
@@ -1280,11 +1281,10 @@ namespace crimson::os::seastore::onode {
               const onode_key_t& key,
               const onode_t& value,
               const ns_oid_view_t::Type& dedup_type,
-              bool is_last,
               LogicalCachedExtent& extent) {
       auto offset = range.end;
       offset -= sizeof(node_offset_t);
-      node_offset_t offset_next = (is_last ? 0u : offset - range.start);
+      node_offset_t offset_next = (offset - range.start);
       extent.copy_in(offset_next, offset);
       ns_oid_view_t::do_insert(key, dedup_type, offset, extent);
       auto p_value = leaf_sub_items_t::do_insert(key, value, offset, extent);
@@ -1297,13 +1297,9 @@ namespace crimson::os::seastore::onode {
       auto p_item_end = p_end - sizeof(node_offset_t);
       assert(p_items_start < p_item_end);
       back_offset = *reinterpret_cast<const node_offset_t*>(p_item_end);
-      const char* p_item_start;
-      if (back_offset) {
-        p_item_start = p_item_end - back_offset;
-        assert(p_items_start < p_item_start);
-      } else {
-        p_item_start = p_items_start;
-      }
+      assert(back_offset);
+      const char* p_item_start = p_item_end - back_offset;
+      assert(p_items_start <= p_item_start);
       item_range = {p_item_start, p_item_end};
     }
 
@@ -1911,16 +1907,17 @@ namespace crimson::os::seastore::onode {
 
       node_offset_t i_estimated_size = i_estimated_size_left + i_estimated_size_right;
 
-      std::cout << "before split: insert at: " << i_position << std::endl;
+      std::cout << "should split:"
+                << "\n  insert at: " << i_position
+                << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
+                << std::endl;
 
       search_position_t s_position;
       bool i_to_left = locate_split_position(
           i_position, i_stage, i_estimated_size, s_position);
 
-      std::cout << "should split:"
+      std::cout << "\n  split at: " << s_position << ", is_left=" << i_to_left
                 << "\n  insert at: " << i_position
-                << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
-                << "\n  split at: " << s_position << ", is_left=" << i_to_left
                 << std::endl << std::endl;
 
       return {};
@@ -1931,7 +1928,6 @@ namespace crimson::os::seastore::onode {
       // TODO (optimize)
       // try to acquire space from siblings ... see btrfs
       // try to insert value
-      // if failed:
     }
 
     void try_insert_value(const onode_key_t& key,
@@ -2082,7 +2078,7 @@ namespace crimson::os::seastore::onode {
 
           p_value = item_iterator_t<NODE_TYPE>::do_insert(
               node_range_t{node_offset_t(insert_offset_right - estimated_size_right), insert_offset_right},
-              key, value, dedup_type, true, *this->extent);
+              key, value, dedup_type, *this->extent);
 
           assert(this->free_size() == free_size_before - estimated_size_left - estimated_size_right);
 #ifndef NDEBUG
@@ -2116,17 +2112,12 @@ namespace crimson::os::seastore::onode {
         if (i_stage == STAGE_STRING) {
           node_offset_t block_shift_start = this->fields().get_item_end_offset(this->keys());
           node_offset_t block_shift_end;
-          bool is_last;
           auto& item_range = iter.get_item_range();
           if (pos == std::numeric_limits<size_t>::max()) {
-            this->extent->copy_in(node_offset_t(item_range.p_end - item_range.p_start),
-                                  node_offset_t(item_range.p_end - fields_start(this->fields())));
             block_shift_end = item_range.p_start - fields_start(this->fields());
-            is_last = true;
             pos = i_position.position_nxt.position = iter.position() + 1;
           } else {
             block_shift_end = item_range.p_end + sizeof(node_offset_t) - fields_start(this->fields());
-            is_last = false;
           }
           i_position.position_nxt.position_nxt = search_position_t::nxt_type_t::nxt_type_t::begin();
           this->extent->shift(block_shift_start,
@@ -2134,7 +2125,7 @@ namespace crimson::os::seastore::onode {
                               -(int)estimated_size_right);
           p_value = item_iterator_t<NODE_TYPE>::do_insert(
               node_range_t{node_offset_t(block_shift_end - estimated_size_right), block_shift_end},
-              key, value, dedup_type, is_last, *this->extent);
+              key, value, dedup_type, *this->extent);
           f_compensate_left_offsets(left_index);
           assert(this->free_size() == free_size_before - estimated_size_left - estimated_size_right);
 #ifndef NDEBUG
@@ -2145,11 +2136,8 @@ namespace crimson::os::seastore::onode {
         if (pos == std::numeric_limits<size_t>::max()) {
           pos = i_position.position_nxt.position = iter.position();
         }
-        if (iter.has_next()) {
-          assert(iter.get_back_offset());
-          this->extent->copy_in(node_offset_t(iter.get_back_offset() + estimated_size_right),
-                                iter.get_item_range().p_end - fields_start(this->fields()));
-        }
+        this->extent->copy_in(node_offset_t(iter.get_back_offset() + estimated_size_right),
+                              iter.get_item_range().p_end - fields_start(this->fields()));
 
         // modify block at STAGE_RIGHT
         assert(i_stage == STAGE_RIGHT);
