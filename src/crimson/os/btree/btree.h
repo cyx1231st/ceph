@@ -1757,16 +1757,22 @@ namespace crimson::os::seastore::onode {
       return {left_size, right_size};
     }
 
-   protected:
-    const FieldType& fields() const {
-      return *extent->get_ptr<FieldType>(0u);
-    }
-
 #ifndef NDEBUG
     void validate_unused() const {
       fields().template validate_unused<NODE_TYPE>(is_level_tail());
     }
+
+    Ref<Node> test_clone() const {
+      auto ret = ConcreteType::_allocate(0u, is_level_tail());
+      ret->extent->copy_in(extent->get_ptr<void>(0u), 0u, EXTENT_SIZE);
+      return ret;
+    }
 #endif
+
+   protected:
+    const FieldType& fields() const {
+      return *extent->get_ptr<FieldType>(0u);
+    }
 
     static Ref<ConcreteType> _allocate(level_t level, bool is_level_tail) {
       // might be asynchronous
@@ -2245,11 +2251,10 @@ namespace crimson::os::seastore::onode {
               // offset i_position to right
               i_pos_2 = 0;
               s_position.position_nxt = search_position_t::nxt_type_t::begin();
-              std::cout << "[2] size_to_left=" << current_size
+              std::cout << "  [2] size_to_left=" << current_size
                         << ", target_split_size=" << target_size
                         << ", original_size=" << this->kv_size_before(this->keys())
-                        << ", insert_size=" << i_estimated_size
-                        << std::endl;
+                        << ", insert_size=" << i_estimated_size;
               return *i_to_left;
             } else {
               // ...[s_pos-1] |?[s_pos]| ...(i_pos)...
@@ -2344,7 +2349,6 @@ namespace crimson::os::seastore::onode {
             }
             nxt_size += iter.size();
             if (nxt_size > target_size) {
-              assert(i_pos_1 != std::numeric_limits<size_t>::max());
               break;
             }
             current_size = nxt_size;
@@ -2380,11 +2384,10 @@ namespace crimson::os::seastore::onode {
               }
               s_position.position_nxt.position_nxt =
                 search_position_t::nxt_type_t::nxt_type_t::begin();
-              std::cout << "[1] size_to_left=" << current_size
+              std::cout << "  [1] size_to_left=" << current_size
                         << ", target_split_size=" << target_size
                         << ", original_size=" << this->kv_size_before(this->keys())
-                        << ", insert_size=" << i_estimated_size
-                        << std::endl;
+                        << ", insert_size=" << i_estimated_size;
               return *i_to_left;
             } else {
               // ...[s_pos-1] |?[s_pos]| ...(i_pos)...
@@ -2431,7 +2434,6 @@ namespace crimson::os::seastore::onode {
             extra_size = 0;
             ++iter;
           } while (true);
-          assert(i_pos_1 != std::numeric_limits<size_t>::max());
           s_pos_1 = iter.position();
 
           if (s_pos_1 < i_pos_1) {
@@ -2562,11 +2564,10 @@ namespace crimson::os::seastore::onode {
           }
         }
 
-        std::cout << "[0] size_to_left=" << current_size
+        std::cout << "  [0] size_to_left=" << current_size
                   << ", target_split_size=" << target_size
                   << ", original_size=" << this->kv_size_before(this->keys())
-                  << ", insert_size=" << i_estimated_size
-                  << std::endl;
+                  << ", insert_size=" << i_estimated_size;
         return *i_to_left;
       } else {
         // not implemented
