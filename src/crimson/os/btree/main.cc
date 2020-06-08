@@ -44,14 +44,12 @@ class Onodes {
   }
 
   const onode_t& pick() const {
-#if 1
-    // always pick the largest onode
-    return *onodes[onodes.size() - 1];
-#else
-    // pick randomly
     auto index = rd() % onodes.size();
     return *onodes[index];
-#endif
+  }
+
+  const onode_t& pick_largest() const {
+    return *onodes[onodes.size() - 1];
   }
 
   static void validate(const onode_t& node) {
@@ -310,33 +308,73 @@ int main(int argc, char* argv[])
     f_validate_cursor(btree.begin(), smallest_value);
     f_validate_cursor(btree.last(), largest_value);
 
-    btree.dump(std::cout) << std::endl;
+    btree.dump(std::cout) << std::endl << std::endl;
 
     // TODO: better coverage to validate left part and right part won't
     // crisscross.
+  }
 
-    btree.insert(onode_key_t{1, 1, 1, "ns3", "oid3", 3, 3}, onodes.create(1280));
-    btree.insert(onode_key_t{2, 2, 2, "ns1", "oid1", 3, 3}, onodes.create(1280));
-    btree.insert(onode_key_t{2, 2, 2, "ns2", "oid2", 1, 1}, onodes.create(1280));
+  // in-node split
+  {
+    auto leaf_node = LeafNode0::allocate(true);
+
+    // insert key, value randomly until a perfect 3-ary tree is formed
+    onode_key_t key;
+    for (unsigned i = 2; i <= 4; ++i) {
+      for (unsigned j = 2; j <= 4; ++j) {
+        for (unsigned k = 2; k <= 4; ++k) {
+          key.shard = i;
+          key.pool = i;
+          key.crush = i;
+          std::ostringstream os_ns;
+          os_ns << "ns" << j;
+          key.nspace = os_ns.str();
+          std::ostringstream os_oid;
+          os_oid << "oid" << j;
+          key.oid = os_oid.str();
+          key.snap = k;
+          key.gen = k;
+
+          MatchHistory history;
+          auto [cursor, success] = leaf_node->insert(key, onodes.pick_largest(), history);
+          assert(success == true);
+          assert(cursor.leaf_node == leaf_node);
+          assert(cursor.p_value);
+          Onodes::validate(*cursor.p_value);
+        }
+      }
+    }
+    leaf_node->dump(std::cout) << std::endl << std::endl;
+
+    auto f_split = [&leaf_node] (const onode_key_t& key, const onode_t& value) {
+      auto node = leaf_node->test_clone();
+      MatchHistory history;
+      auto [cursor, success] = node->insert(key, value, history);
+    };
+    auto& onode = onodes.create(1280);
+
+    f_split(onode_key_t{1, 1, 1, "ns3", "oid3", 3, 3}, onode);
+    f_split(onode_key_t{2, 2, 2, "ns1", "oid1", 3, 3}, onode);
+    f_split(onode_key_t{2, 2, 2, "ns2", "oid2", 1, 1}, onode);
     std::cout << std::endl;
 
-    btree.insert(onode_key_t{2, 2, 2, "ns4", "oid4", 5, 5}, onodes.create(1280));
-    btree.insert(onode_key_t{2, 2, 2, "ns5", "oid5", 3, 3}, onodes.create(1280));
-    btree.insert(onode_key_t{2, 3, 3, "ns3", "oid3", 3, 3}, onodes.create(1280));
-    btree.insert(onode_key_t{3, 3, 3, "ns2", "oid2", 1, 1}, onodes.create(1280));
-    btree.insert(onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3}, onodes.create(1280));
+    f_split(onode_key_t{2, 2, 2, "ns4", "oid4", 5, 5}, onode);
+    f_split(onode_key_t{2, 2, 2, "ns5", "oid5", 3, 3}, onode);
+    f_split(onode_key_t{2, 3, 3, "ns3", "oid3", 3, 3}, onode);
+    f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 1, 1}, onode);
+    f_split(onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3}, onode);
     std::cout << std::endl;
 
-    btree.insert(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onodes.create(1280));
-    btree.insert(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onodes.create(1280));
-    btree.insert(onode_key_t{3, 4, 4, "ns3", "oid3", 3, 3}, onodes.create(1280));
-    btree.insert(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onodes.create(1280));
-    btree.insert(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onodes.create(1280));
+    f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onode);
+    f_split(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onode);
+    f_split(onode_key_t{3, 4, 4, "ns3", "oid3", 3, 3}, onode);
+    f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode);
+    f_split(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onode);
     std::cout << std::endl;
 
-    btree.insert(onode_key_t{4, 4, 4, "ns4", "oid4", 5, 5}, onodes.create(1280));
-    btree.insert(onode_key_t{4, 4, 4, "ns5", "oid5", 3, 3}, onodes.create(1280));
-    btree.insert(onode_key_t{5, 5, 5, "ns3", "oid3", 3, 3}, onodes.create(1280));
+    f_split(onode_key_t{4, 4, 4, "ns4", "oid4", 5, 5}, onode);
+    f_split(onode_key_t{4, 4, 4, "ns5", "oid5", 3, 3}, onode);
+    f_split(onode_key_t{5, 5, 5, "ns3", "oid3", 3, 3}, onode);
     std::cout << std::endl;
   }
 
