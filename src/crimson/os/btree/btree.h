@@ -58,7 +58,9 @@ namespace crimson::os::seastore::onode {
     template <typename T>
     const T* get_ptr(loff_t block_offset) const {
       assert(valid);
-      assert(block_offset + sizeof(T) <= length);
+      if constexpr (!std::is_same_v<T, void>) {
+        assert(block_offset + sizeof(T) <= length);
+      }
       return static_cast<const T*>(ptr_offset(block_offset));
     }
     const void* copy_in(const void* from, loff_t to_block_offset, loff_t len) {
@@ -1418,6 +1420,15 @@ namespace crimson::os::seastore::onode {
     }
   }
 
+  // TODO: should be generalized
+  template <node_type_t NODE_TYPE>
+  struct search_iterator_t {
+    search_position_t position;
+    match_stage_t stage;
+    std::optional<item_iterator_t<NODE_TYPE>> container_1;
+    std::optional<sub_items_t<NODE_TYPE>> container_0;
+  };
+
   using match_stat_t = int8_t;
   constexpr match_stat_t MSTAT_PO = -2; // index is search_position_t::end()
   constexpr match_stat_t MSTAT_EQ = -1; // key == index
@@ -1619,6 +1630,8 @@ namespace crimson::os::seastore::onode {
       _parent_info = info;
       init(_extent, _is_level_tail_);
     }
+
+    void set_level_tail(bool value) { _is_level_tail = value; }
 
     Ref<LogicalCachedExtent> extent;
 
@@ -1918,19 +1931,40 @@ namespace crimson::os::seastore::onode {
                 << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
                 << std::endl;
 
-      search_position_t s_position;
+      search_iterator_t<NODE_TYPE> s_iterator;
       bool i_to_left = locate_split_position(
-          i_position, i_stage, i_estimated_size, s_position);
+          i_position, i_stage, i_estimated_size, s_iterator);
 
-      std::cout << "\n  split at: " << s_position << ", is_left=" << i_to_left
+      std::cout << "\n  split at: " << s_iterator.position << ", is_left=" << i_to_left
                 << "\n  insert at: " << i_position
                 << std::endl << std::endl;
 
-      return {};
-      // TODO
-      // split and insert
+      auto right_leaf_node = ConcreteType::allocate(this->is_level_tail());
+
+      search_iterator_t<NODE_TYPE> d_iterator;
+      d_iterator.position = search_position_t::begin();
+      if (!i_to_left) {
+        if (i_position != search_position_t::begin()) {
+          // append split part 1
+          // s_iter, i_pos, d_node, d_iter
+        }
+        // append insertion to right
+        // i_pos, key, value, d_extent, d_iter
+      }
+
+      // append split part 2
+      // s_iter, d_node, d_iter
+
+      // trim left
+      this->set_level_tail(false);
+
+      if (i_to_left) {
+        // insert to left
+      }
+
       // propagate index to parent
 
+      return {};
       // TODO (optimize)
       // try to acquire space from siblings ... see btrfs
       // try to insert value
@@ -2206,7 +2240,7 @@ namespace crimson::os::seastore::onode {
         search_position_t& i_position,
         match_stage_t i_stage,
         size_t i_estimated_size,
-        search_position_t& s_position) {
+        search_iterator_t<NODE_TYPE>& s_iterator) {
       // TODO: should be generalized
       if constexpr (FIELD_TYPE == field_type_t::N0) {
         size_t target_size = (FieldType::SIZE_USABLE + i_estimated_size) / 2;
@@ -2219,7 +2253,7 @@ namespace crimson::os::seastore::onode {
 
         // split position at STAGE_LEFT
         auto& i_pos_2 = i_position.position;
-        auto& s_pos_2 = s_position.position;
+        auto& s_pos_2 = s_iterator.position.position;
         if (i_stage == STAGE_LEFT) {
           auto f_get_used_size_stage_2 = [this, i_pos_2, i_estimated_size]
               (size_t position) {
@@ -2250,7 +2284,8 @@ namespace crimson::os::seastore::onode {
               // ...[s_pos-1] |!| (i_pos) [s_pos]...
               // offset i_position to right
               i_pos_2 = 0;
-              s_position.position_nxt = search_position_t::nxt_type_t::begin();
+              s_iterator.position.position_nxt = search_position_t::nxt_type_t::begin();
+              s_iterator.stage = STAGE_LEFT;
               std::cout << "  [2] size_to_left=" << current_size
                         << ", target_split_size=" << target_size
                         << ", original_size=" << this->kv_size_before(this->keys())
@@ -2311,9 +2346,10 @@ namespace crimson::os::seastore::onode {
         // split position at STAGE_STRING
         assert(current_size <= target_size);
         auto range_1 = this->get_nxt_container(s_pos_2);
-        item_iterator_t<NODE_TYPE> iter(range_1);
+        s_iterator.container_1 = item_iterator_t<NODE_TYPE>(range_1);
+        auto& iter = *s_iterator.container_1;
         auto& i_pos_1 = i_position.position_nxt.position;
-        auto& s_pos_1 = s_position.position_nxt.position;
+        auto& s_pos_1 = s_iterator.position.position_nxt.position;
         size_t extra_size = FieldType::estimate_insert_one();
         if (i_to_left.has_value()) {
           do {
@@ -2382,8 +2418,9 @@ namespace crimson::os::seastore::onode {
                   s_pos_2 = std::numeric_limits<size_t>::max();
                 }
               }
-              s_position.position_nxt.position_nxt =
+              s_iterator.position.position_nxt.position_nxt =
                 search_position_t::nxt_type_t::nxt_type_t::begin();
+              s_iterator.stage = STAGE_STRING;
               std::cout << "  [1] size_to_left=" << current_size
                         << ", target_split_size=" << target_size
                         << ", original_size=" << this->kv_size_before(this->keys())
@@ -2459,9 +2496,10 @@ namespace crimson::os::seastore::onode {
         // identify split at STAGE_RIGHT
         assert(current_size <= target_size);
         auto range_0 = iter.get_nxt_container();
-        leaf_sub_items_t sub_items(range_0);
+        s_iterator.container_0 = leaf_sub_items_t(range_0);
+        auto& sub_items = *s_iterator.container_0;
         auto& i_pos_0 = i_position.position_nxt.position_nxt.position;
-        auto& s_pos_0 = s_position.position_nxt.position_nxt.position;
+        auto& s_pos_0 = s_iterator.position.position_nxt.position_nxt.position;
         size_t r_pos_0;
         if (!i_to_left.has_value()) {
           assert(i_stage == STAGE_RIGHT);
@@ -2564,6 +2602,7 @@ namespace crimson::os::seastore::onode {
           }
         }
 
+        s_iterator.stage = STAGE_RIGHT;
         std::cout << "  [0] size_to_left=" << current_size
                   << ", target_split_size=" << target_size
                   << ", original_size=" << this->kv_size_before(this->keys())
