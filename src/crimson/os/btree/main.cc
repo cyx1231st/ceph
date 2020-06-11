@@ -90,39 +90,36 @@ int main(int argc, char* argv[])
 
   // sizes of a key-value insertion
   {
-    auto f_sum = [] (std::tuple<node_offset_t, node_offset_t> input) {
-      return std::get<0>(input) + std::get<1>(input);
-    };
     std::cout << "sizes of a key-value insertion (full-string):" << std::endl;
     std::cout << "s-p-c, 'n'-'o', s-g => onode_t{2}: typically internal 41B, leaf 35B" << std::endl;
     onode_key_t key = {0, 0, 0, "n", "o", 0, 0};
     onode_t value = {2};
     std::cout << "InternalNode0: "
-              << f_sum(InternalNode0::estimate_insert_one(&key)) << " "
-              << item_iterator_t<node_type_t::INTERNAL>::estimate_insert_one(&key) << " "
+              << InternalNode0::estimate_insert_one(&key, 0) << " "
+              << item_iterator_t<node_type_t::INTERNAL>::estimate_insert_one(&key, 0) << " "
               << internal_sub_items_t::estimate_insert_one() << std::endl;
     std::cout << "InternalNode1: "
-              << f_sum(InternalNode1::estimate_insert_one(&key)) << " "
-              << item_iterator_t<node_type_t::INTERNAL>::estimate_insert_one(&key) << " "
+              << InternalNode1::estimate_insert_one(&key, 0) << " "
+              << item_iterator_t<node_type_t::INTERNAL>::estimate_insert_one(&key, 0) << " "
               << internal_sub_items_t::estimate_insert_one() << std::endl;
     std::cout << "InternalNode2: "
-              << f_sum(InternalNode2::estimate_insert_one(&key)) << " "
+              << InternalNode2::estimate_insert_one(&key, 0) << " "
               << internal_sub_items_t::estimate_insert_one() << std::endl;
     std::cout << "InternalNode3: "
-              << f_sum(InternalNode3::estimate_insert_one(&key)) << std::endl;
+              << InternalNode3::estimate_insert_one(&key, 0) << std::endl;
     std::cout << "LeafNode0: "
-              << f_sum(LeafNode0::estimate_insert_one(&key, value)) << " "
+              << LeafNode0::estimate_insert_one(&key, value) << " "
               << item_iterator_t<node_type_t::LEAF>::estimate_insert_one(&key, value) << " "
               << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
     std::cout << "LeafNode1: "
-              << f_sum(LeafNode1::estimate_insert_one(&key, value)) << " "
+              << LeafNode1::estimate_insert_one(&key, value) << " "
               << item_iterator_t<node_type_t::LEAF>::estimate_insert_one(&key, value) << " "
               << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
     std::cout << "LeafNode2: "
-              << f_sum(LeafNode2::estimate_insert_one(&key, value)) << " "
+              << LeafNode2::estimate_insert_one(&key, value) << " "
               << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
     std::cout << "LeafNode3: "
-              << f_sum(LeafNode3::estimate_insert_one(&key, value)) << std::endl;
+              << LeafNode3::estimate_insert_one(&key, value) << std::endl;
     std::cout << std::endl;
   }
 
