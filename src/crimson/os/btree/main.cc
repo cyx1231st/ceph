@@ -376,4 +376,6 @@ int main(int argc, char* argv[])
   }
 
   transaction_manager.free_all();
+
+  node_to_stage_t<LeafNode0>::StagedIterator test_iter;
 }
