@@ -103,6 +103,9 @@ namespace crimson::os::seastore::onode {
       assert(valid);
       assert(from + len <= (const char*)ptr + length);
       assert(from + shift_offset >= (const char*)ptr);
+      if (len == 0) {
+        return;
+      }
       const char* to = from + shift_offset;
       assert(to + len <= (const char*)ptr + length);
       std::memmove(const_cast<char*>(to), from, len);
@@ -454,24 +457,24 @@ namespace crimson::os::seastore::onode {
     }
     bool operator!=(const string_key_view_t& x) const { return !(*this == x); }
 
-    static void do_insert_str(const std::string& str,
-                              node_offset_t& offset,
-                              LogicalCachedExtent& extent) {
-      offset -= sizeof(string_size_t);
+    static void insert_str(LogicalCachedExtent& dst,
+                           const std::string& str,
+                           char*& p_insert) {
+      p_insert -= sizeof(string_size_t);
       assert(str.length() < std::numeric_limits<string_size_t>::max());
-      extent.copy_in((string_size_t)str.length(), offset);
-      offset -= str.length();
-      extent.copy_in(str.data(), offset, str.length());
+      dst.copy_in_mem((string_size_t)str.length(), p_insert);
+      p_insert -= str.length();
+      dst.copy_in_mem(str.data(), p_insert, str.length());
     }
 
-    static void do_insert_dedup(const string_key_view_t::Type& dedup_type,
-                                node_offset_t& offset,
-                                LogicalCachedExtent& extent) {
-      offset -= sizeof(string_size_t);
+    static void insert_dedup(LogicalCachedExtent& dst,
+                             const string_key_view_t::Type& dedup_type,
+                             char*& p_insert) {
+      p_insert -= sizeof(string_size_t);
       if (dedup_type == string_key_view_t::Type::MIN) {
-        extent.copy_in((string_size_t)0u, offset);
+        dst.copy_in_mem((string_size_t)0u, p_insert);
       } else if (dedup_type == string_key_view_t::Type::MAX) {
-        extent.copy_in(std::numeric_limits<string_size_t>::max(), offset);
+        dst.copy_in_mem(std::numeric_limits<string_size_t>::max(), p_insert);
       } else {
         assert(false);
       }
@@ -535,18 +538,18 @@ namespace crimson::os::seastore::onode {
       }
     }
 
-    static void do_insert(const onode_key_t& key,
-                          const ns_oid_view_t::Type& dedup_type,
-                          node_offset_t& offset,
-                          LogicalCachedExtent& extent) {
+    static void insert(LogicalCachedExtent& dst,
+                       const onode_key_t& key,
+                       const ns_oid_view_t::Type& dedup_type,
+                       char*& p_insert) {
       if (dedup_type == ns_oid_view_t::Type::STR) {
-        string_key_view_t::do_insert_str(
-            key.nspace, offset, extent);
-        string_key_view_t::do_insert_str(
-            key.oid, offset, extent);
+        string_key_view_t::insert_str(
+            dst, key.nspace, p_insert);
+        string_key_view_t::insert_str(
+            dst, key.oid, p_insert);
       } else {
-        string_key_view_t::do_insert_dedup(
-            dedup_type, offset, extent);
+        string_key_view_t::insert_dedup(
+            dst, dedup_type, p_insert);
       }
     }
 
@@ -845,6 +848,34 @@ namespace crimson::os::seastore::onode {
 
     static node_offset_t estimate_insert_one() { return sizeof(SlotType); }
 
+    static void update_size_at(LogicalCachedExtent& dst,
+                               const my_type_t& node,
+                               size_t index, int change) {
+      assert(index <= node.num_keys);
+      for (const auto* p_slot = &node.slots[index];
+           p_slot < &node.slots[node.num_keys];
+           ++p_slot) {
+        node_offset_t offset = p_slot->right_offset;
+        dst.copy_in_mem(node_offset_t(offset - change), (void*)&(p_slot->right_offset));
+      }
+    }
+
+    static void insert_at(
+        LogicalCachedExtent& dst, const onode_key_t& key,
+        const my_type_t& node, size_t index, node_offset_t size) {
+      assert(index <= node.num_keys);
+      update_size_at(dst, node, index, size);
+      auto p_insert = const_cast<char*>(fields_start(node)) +
+                      node.get_key_start_offset(index);
+      auto p_shift_end = fields_start(node) + node.get_key_start_offset(node.num_keys);
+      dst.shift_mem(p_insert, p_shift_end - p_insert, estimate_insert_one());
+      dst.copy_in_mem(num_keys_t(node.num_keys + 1), (void*)&node.num_keys);
+      dst.copy_in_mem(key_t::from_key(key), p_insert);
+      p_insert += sizeof(key_t);
+      node_offset_t offset_to_right = node.get_item_end_offset(index) - size;
+      dst.copy_in_mem(offset_to_right, p_insert);
+    }
+
     node_header_t header;
     num_keys_t num_keys = 0u;
     SlotType slots[];
@@ -1096,7 +1127,7 @@ namespace crimson::os::seastore::onode {
       return sizeof(internal_sub_item_t);
     }
 
-    static node_offset_t estimate_insert_new() {
+    static node_offset_t estimate_insert_new(const laddr_t&) {
       return estimate_insert_one();
     }
 
@@ -1203,11 +1234,11 @@ namespace crimson::os::seastore::onode {
 
     static const onode_t* insert_at(
         LogicalCachedExtent&, const onode_key_t&, const onode_t&,
-        size_t, leaf_sub_items_t&, const char* left_bound, size_t);
+        size_t index, leaf_sub_items_t&, const char* left_bound, size_t size);
 
     static const onode_t* insert_new(
         LogicalCachedExtent&, const onode_key_t&, const onode_t&,
-        node_offset_t&);
+        char*&);
 
    private:
     // TODO: support unaligned access
@@ -1305,13 +1336,11 @@ namespace crimson::os::seastore::onode {
 
   const onode_t* leaf_sub_items_t::insert_new(
       LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
-      node_offset_t& offset) {
+      char*& p_insert) {
     Appender appender;
     appender.append(key, value);
-    auto dst_p_end = dst.get_laddr() + offset;
-    auto p_start = appender.apply(dst, reinterpret_cast<char*>(dst_p_end));
-    offset = p_start - (char*)dst.get_laddr();
-    return reinterpret_cast<const onode_t*>(p_start);
+    p_insert = appender.apply(dst, p_insert);
+    return reinterpret_cast<const onode_t*>(p_insert);
   }
 
   const onode_t* leaf_sub_items_t::insert_at(
@@ -1364,6 +1393,12 @@ namespace crimson::os::seastore::onode {
   template <node_type_t NODE_TYPE>
   using sub_items_t = typename _sub_items_t<NODE_TYPE>::type;
 
+  template <node_type_t> struct value_type;
+  template<> struct value_type<node_type_t::INTERNAL> { using type = laddr_t; };
+  template<> struct value_type<node_type_t::LEAF> { using type = onode_t; };
+  template <node_type_t NODE_TYPE>
+  using value_type_t = typename value_type<NODE_TYPE>::type;
+
   /*
    * internal/leaf node N0, N1
    *
@@ -1382,10 +1417,13 @@ namespace crimson::os::seastore::onode {
    */
   template <node_type_t NODE_TYPE>
   class item_iterator_t {
+    using value_t = value_type_t<NODE_TYPE>;
    public:
     item_iterator_t(const memory_range_t& range)
       : p_items_start(range.p_start) { next_item_range(range.p_end); }
 
+    const char* p_start() const { return item_range.p_start; }
+    const char* p_end() const { return item_range.p_end + sizeof(node_offset_t); }
     const memory_range_t& get_item_range() const { return item_range; }
     node_offset_t get_back_offset() const { return back_offset; }
     size_t size() const {
@@ -1421,44 +1459,49 @@ namespace crimson::os::seastore::onode {
       return *this;
     }
 
-    template <node_type_t NT = NODE_TYPE>
-    static std::enable_if_t<NT == node_type_t::INTERNAL, node_offset_t>
-    estimate_insert_one(const onode_key_t* p_key) {
-      return (internal_sub_items_t::estimate_insert_new() +
+    static node_offset_t estimate_insert_one(const onode_key_t* p_key, const value_t& value) {
+      return (sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
               ns_oid_view_t::estimate_size(p_key) + sizeof(node_offset_t));
     }
 
-    template <node_type_t NT = NODE_TYPE>
-    static std::enable_if_t<NT == node_type_t::INTERNAL, node_offset_t>
-    estimate_insert_new(const onode_key_t* p_key) { return estimate_insert_one<NT>(p_key); }
-
-    template <node_type_t NT = NODE_TYPE>
-    static std::enable_if_t<NT == node_type_t::LEAF, node_offset_t>
-    estimate_insert_one(const onode_key_t* p_key, const onode_t& value) {
-      return (leaf_sub_items_t::estimate_insert_new(value) +
-              ns_oid_view_t::estimate_size(p_key) + sizeof(node_offset_t));
+    static node_offset_t estimate_insert_new(const onode_key_t* p_key, const value_t& value) {
+      return estimate_insert_one(p_key, value);
     }
 
-    template <node_type_t NT = NODE_TYPE>
-    static std::enable_if_t<NT == node_type_t::LEAF, node_offset_t>
-    estimate_insert_new(const onode_key_t* p_key, const onode_t& value) {
-      return estimate_insert_one<NT>(p_key, value);
+    static void update_size(LogicalCachedExtent& dst,
+                            const item_iterator_t<NODE_TYPE>& iter,
+                            int change) {
+      node_offset_t offset = iter.get_back_offset();
+      assert(change + offset > 0);
+      assert(change + offset < NODE_BLOCK_SIZE);
+      dst.copy_in_mem(node_offset_t(offset + change),
+                      (void*)iter.get_item_range().p_end);
     }
 
     template <node_type_t NT = NODE_TYPE>
     static std::enable_if_t<NT == node_type_t::LEAF, const onode_t*>
-    do_insert(const node_range_t& range,
-              const onode_key_t& key,
-              const onode_t& value,
-              const ns_oid_view_t::Type& dedup_type,
-              LogicalCachedExtent& extent) {
-      auto offset = range.end;
-      offset -= sizeof(node_offset_t);
-      node_offset_t offset_next = (offset - range.start);
-      extent.copy_in(offset_next, offset);
-      ns_oid_view_t::do_insert(key, dedup_type, offset, extent);
-      auto p_value = leaf_sub_items_t::insert_new(extent, key, value, offset);
-      assert(offset == range.start);
+    insert(LogicalCachedExtent& dst,
+           const onode_key_t& key,
+           const onode_t& value,
+           const char* left_bound,
+           char* p_insert,
+           node_offset_t estimated_size,
+           const ns_oid_view_t::Type& dedup_type) {
+      const char* p_shift_start = left_bound;
+      const char* p_shift_end = p_insert;
+      dst.shift_mem(p_shift_start,
+                    p_shift_end - p_shift_start,
+                    -(int)estimated_size);
+
+      const char* p_insert_start = p_insert - estimated_size;
+      p_insert -= sizeof(node_offset_t);
+      node_offset_t back_offset = (p_insert - p_insert_start);
+      dst.copy_in_mem(back_offset, p_insert);
+
+      ns_oid_view_t::insert(dst, key, dedup_type, p_insert);
+
+      auto p_value = leaf_sub_items_t::insert_new(dst, key, value, p_insert);
+      assert(p_insert == p_insert_start);
       return p_value;
     }
 
@@ -1479,12 +1522,6 @@ namespace crimson::os::seastore::onode {
     mutable std::optional<ns_oid_view_t> key;
     mutable size_t _position = 0u;
   };
-
-  template <node_type_t> struct value_type;
-  template<> struct value_type<node_type_t::INTERNAL> { using type = laddr_t; };
-  template<> struct value_type<node_type_t::LEAF> { using type = onode_t; };
-  template <node_type_t NODE_TYPE>
-  using value_type_t = typename value_type<NODE_TYPE>::type;
 
   template <match_stage_t STAGE>
   struct staged_position_t {
@@ -1902,40 +1939,23 @@ namespace crimson::os::seastore::onode {
 
     std::ostream& dump(std::ostream&) override final;
 
-    template <node_type_t NT = NODE_TYPE>
-    static std::enable_if_t<NT == node_type_t::INTERNAL,
-                            std::tuple<node_offset_t, node_offset_t>>
-    estimate_insert_one(const onode_key_t* p_key) {
-      node_offset_t left_size = FieldType::estimate_insert_one();
-      node_offset_t right_size;
-      if constexpr (FIELD_TYPE == field_type_t::N0 ||
-                    FIELD_TYPE == field_type_t::N1) {
-        right_size = item_iterator_t<NODE_TYPE>::estimate_insert_new(p_key);
-      } else if (FIELD_TYPE == field_type_t::N2) {
-        right_size = internal_sub_items_t::estimate_insert_new() +
-                     ns_oid_view_t::estimate_size(p_key);
-      } else {
-        right_size = 0u;
-      }
-      return {left_size, right_size};
-    }
-
-    template <node_type_t NT = NODE_TYPE>
-    static std::enable_if_t<NT == node_type_t::LEAF,
-                            std::tuple<node_offset_t, node_offset_t>>
-    estimate_insert_one(const onode_key_t* p_key, const onode_t& value) {
+    static node_offset_t estimate_insert_one(const onode_key_t* p_key, const value_t& value) {
       node_offset_t left_size = FieldType::estimate_insert_one();
       node_offset_t right_size;
       if constexpr (FIELD_TYPE == field_type_t::N0 ||
                     FIELD_TYPE == field_type_t::N1) {
         right_size = item_iterator_t<NODE_TYPE>::estimate_insert_new(p_key, value);
       } else if (FIELD_TYPE == field_type_t::N2) {
-        right_size = leaf_sub_items_t::estimate_insert_new(value) +
+        right_size = sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
                      ns_oid_view_t::estimate_size(p_key);
       } else {
-        right_size = value.size;
+        if constexpr (NODE_TYPE == node_type_t::LEAF) {
+          right_size = value.size;
+        } else {
+          right_size = 0u;
+        }
       }
-      return {left_size, right_size};
+      return left_size + right_size;
     }
 
 #ifndef NDEBUG
@@ -2081,20 +2101,23 @@ namespace crimson::os::seastore::onode {
                                   const search_position_t& position,
                                   const match_stat_t& mstat,
                                   const MatchHistory& history) override final {
-      const onode_t* p_value;
       search_position_t i_position;
       match_stage_t i_stage;
       ns_oid_view_t::Type i_dedup_type;
-      node_offset_t i_estimated_size_left;
-      node_offset_t i_estimated_size_right;
-      try_insert_value(key, value, position, mstat, history,
-          p_value, i_position, i_stage, i_dedup_type,
-          i_estimated_size_left, i_estimated_size_right);
-      if (p_value != nullptr) {
+      node_offset_t i_estimated_size;
+      if (can_insert(key, value, position, history,
+                     i_position, i_stage, i_dedup_type, i_estimated_size)) {
+#ifndef NDEBUG
+        auto free_size_before = this->free_size();
+#endif
+        auto p_value = proceed_insert(
+            key, value, i_position, i_stage, i_dedup_type, i_estimated_size);
+#ifndef NDEBUG
+        this->validate_unused();
+        assert(this->free_size() == free_size_before - i_estimated_size);
+#endif
         return {this, i_position, p_value};
       }
-
-      node_offset_t i_estimated_size = i_estimated_size_left + i_estimated_size_right;
 
       std::cout << "should split:"
                 << "\n  insert at: " << i_position
@@ -2141,17 +2164,14 @@ namespace crimson::os::seastore::onode {
       // try to insert value
     }
 
-    void try_insert_value(const onode_key_t& key,
-                          const onode_t& value,
-                          const search_position_t& position,
-                          const match_stat_t& mstat,
-                          const MatchHistory& history,
-                          const onode_t*& p_value,
-                          search_position_t& i_position,
-                          match_stage_t& i_stage,
-                          ns_oid_view_t::Type& dedup_type,
-                          node_offset_t& estimated_size_left,
-                          node_offset_t& estimated_size_right) {
+    bool can_insert(const onode_key_t& key,
+                    const onode_t& value,
+                    const search_position_t& position,
+                    const MatchHistory& history,
+                    search_position_t& i_position,
+                    match_stage_t& i_stage,
+                    ns_oid_view_t::Type& dedup_type,
+                    node_offset_t& estimated_size) {
       // TODO: should be generalized
       if constexpr (FIELD_TYPE == field_type_t::N0) {
         // calculate the stage where insertion happens
@@ -2219,101 +2239,76 @@ namespace crimson::os::seastore::onode {
         }
 
         // estimated size for insertion
-        estimated_size_left = 0;
         switch (i_stage) {
          case STAGE_LEFT:
-          std::tie(estimated_size_left, estimated_size_right) = this->estimate_insert_one(p_key, value);
+          estimated_size = this->estimate_insert_one(p_key, value);
           break;
          case STAGE_STRING:
-          estimated_size_right = item_iterator_t<NODE_TYPE>::estimate_insert_one(p_key, value);
+          estimated_size = item_iterator_t<NODE_TYPE>::estimate_insert_one(p_key, value);
           break;
          case STAGE_RIGHT:
-          estimated_size_right = leaf_sub_items_t::estimate_insert_one(value);
+          estimated_size = leaf_sub_items_t::estimate_insert_one(value);
           break;
         }
 
-        auto free_size_before = this->free_size();
-        if (free_size_before < (estimated_size_left + estimated_size_right)) {
-          p_value = nullptr;
-          return;
+        if (this->free_size() < estimated_size) {
+          return false;
+        } else {
+          return true;
         }
+      } else {
+        // not implemented
+        assert(false);
+      }
+    }
 
+    const onode_t* proceed_insert(
+        const onode_key_t& key, const onode_t& value,
+        search_position_t& i_position, match_stage_t i_stage,
+        ns_oid_view_t::Type dedup_type, node_offset_t estimated_size) {
+      // TODO: should be generalized
+      if constexpr (FIELD_TYPE == field_type_t::N0) {
         // modify block at STAGE_LEFT
         assert(i_position.position < this->keys() ||
                i_position.position == std::numeric_limits<size_t>::max());
-        auto f_compensate_left_offsets = [this, estimated_size_right] (size_t from) {
-          for (const auto* p_slot = &this->fields().slots[from];
-               p_slot < &this->fields().slots[this->keys()]; ++p_slot) {
-            this->extent->copy_in(
-                node_offset_t(p_slot->right_offset - estimated_size_right),
-                (const char*)&p_slot->right_offset - fields_start(this->fields()));
-          }
-        };
-        size_t pos = i_position.position;
+        const char* left_bound = fields_start(this->fields()) +
+                                 this->fields().get_item_end_offset(this->keys());
+        size_t& pos_2 = i_position.position;
         if (i_stage == STAGE_LEFT) {
-          node_offset_t insert_offset_left;
-          node_offset_t insert_offset_right;
-          if (pos == std::numeric_limits<size_t>::max()) {
-            pos = i_position.position = this->keys();
-            insert_offset_left = this->fields().get_key_start_offset(pos);
-            insert_offset_right = this->fields().get_item_end_offset(pos);
-          } else {
-            insert_offset_left = this->fields().get_key_start_offset(pos);
-            insert_offset_right = this->fields().get_item_end_offset(pos);
-
-            // shift right part
-            auto block_shift_start = this->fields().get_item_end_offset(this->keys());
-            auto block_shift_end = insert_offset_right;
-            this->extent->shift(block_shift_start,
-                                block_shift_end - block_shift_start,
-                                -(int)estimated_size_right);
-
-            f_compensate_left_offsets(pos);
-
-            // shift left part
-            block_shift_start = insert_offset_left;
-            block_shift_end = this->fields().get_key_start_offset(this->keys());
-            this->extent->shift(block_shift_start,
-                                block_shift_end - block_shift_start,
-                                estimated_size_left);
+          if (pos_2 == std::numeric_limits<size_t>::max()) {
+            pos_2 = this->keys();
           }
           i_position.position_nxt = search_position_t::nxt_type_t::begin();
 
-          this->extent->copy_in(typename FieldType::num_keys_t(this->fields().num_keys + 1),
-                                offsetof(FieldType, num_keys));
-          this->extent->copy_in(shard_pool_crush_t::from_key(key),
-                                insert_offset_left);
-          node_offset_t offset_right_start = insert_offset_right - estimated_size_right;
-          this->extent->copy_in(offset_right_start,
-                                insert_offset_left + sizeof(shard_pool_crush_t));
+          auto estimated_size_right = estimated_size - FieldType::estimate_insert_one();
+          auto p_value = item_iterator_t<NODE_TYPE>::insert(
+              *this->extent, key, value,
+              left_bound,
+              const_cast<char*>(fields_start(this->fields())) +
+                this->fields().get_item_end_offset(pos_2),
+              estimated_size_right,
+              dedup_type);
 
-          p_value = item_iterator_t<NODE_TYPE>::do_insert(
-              node_range_t{node_offset_t(insert_offset_right - estimated_size_right), insert_offset_right},
-              key, value, dedup_type, *this->extent);
-
-          assert(this->free_size() == free_size_before - estimated_size_left - estimated_size_right);
-#ifndef NDEBUG
-          this->validate_unused();
-#endif
-          return;
+          FieldType::insert_at(*this->extent, key,
+                               this->fields(), pos_2, estimated_size_right);
+          return p_value;
         }
-        if (pos == std::numeric_limits<size_t>::max()) {
-          pos = i_position.position = this->keys() - 1;
+        if (pos_2 == std::numeric_limits<size_t>::max()) {
+          pos_2 = this->keys() - 1;
         }
-        auto left_index = pos;
 
         // modify block at STAGE_STRING
-        auto range = this->get_nxt_container(pos);
+        auto range = this->get_nxt_container(pos_2);
         item_iterator_t<NODE_TYPE> iter(range);
-        pos = i_position.position_nxt.position;
-        if (pos == std::numeric_limits<size_t>::max()) {
-          // staged::_iterator_t::last
+        size_t& pos_1 = i_position.position_nxt.position;
+        if (pos_1 == std::numeric_limits<size_t>::max()) {
+          // reuse staged::_iterator_t::last
           while (iter.has_next()) {
             ++iter;
           }
         } else {
-          // staged::_iterator_t::at
-          auto position = pos;
+          // reuse staged::_iterator_t::at
+          auto position = pos_1;
           while (position > 0) {
             assert(iter.has_next());
             ++iter;
@@ -2321,59 +2316,45 @@ namespace crimson::os::seastore::onode {
           }
         }
         if (i_stage == STAGE_STRING) {
-          node_offset_t block_shift_start = this->fields().get_item_end_offset(this->keys());
-          node_offset_t block_shift_end;
-          auto& item_range = iter.get_item_range();
-          if (pos == std::numeric_limits<size_t>::max()) {
-            block_shift_end = item_range.p_start - fields_start(this->fields());
-            pos = i_position.position_nxt.position = iter.position() + 1;
+          char* p_insert;
+          if (pos_1 == std::numeric_limits<size_t>::max()) {
+            p_insert = const_cast<char*>(iter.p_start());
+            pos_1 = iter.position() + 1;
           } else {
-            block_shift_end = item_range.p_end + sizeof(node_offset_t) - fields_start(this->fields());
+            p_insert = const_cast<char*>(iter.p_end());
           }
-          i_position.position_nxt.position_nxt = search_position_t::nxt_type_t::nxt_type_t::begin();
-          this->extent->shift(block_shift_start,
-                              block_shift_end - block_shift_start,
-                              -(int)estimated_size_right);
-          p_value = item_iterator_t<NODE_TYPE>::do_insert(
-              node_range_t{node_offset_t(block_shift_end - estimated_size_right), block_shift_end},
-              key, value, dedup_type, *this->extent);
-          f_compensate_left_offsets(left_index);
-          assert(this->free_size() == free_size_before - estimated_size_left - estimated_size_right);
-#ifndef NDEBUG
-          this->validate_unused();
-#endif
-          return;
+          i_position.position_nxt.position_nxt =
+            search_position_t::nxt_type_t::nxt_type_t::begin();
+
+          auto p_value = item_iterator_t<NODE_TYPE>::insert(
+              *this->extent, key, value,
+              left_bound, p_insert, estimated_size, dedup_type);
+
+          FieldType::update_size_at(*this->extent, this->fields(), pos_2, estimated_size);
+          return p_value;
         }
-        if (pos == std::numeric_limits<size_t>::max()) {
-          pos = i_position.position_nxt.position = iter.position();
+        if (pos_1 == std::numeric_limits<size_t>::max()) {
+          pos_1 = iter.position();
         }
-        this->extent->copy_in(node_offset_t(iter.get_back_offset() + estimated_size_right),
-                              iter.get_item_range().p_end - fields_start(this->fields()));
+        item_iterator_t<NODE_TYPE>::update_size(
+            *this->extent, iter, estimated_size);
 
         // modify block at STAGE_RIGHT
         assert(i_stage == STAGE_RIGHT);
         leaf_sub_items_t sub_items = iter.get_nxt_container();
-        if (i_position.position_nxt.position_nxt.position == std::numeric_limits<size_t>::max()) {
-          i_position.position_nxt.position_nxt.position = sub_items.keys();
+        size_t& pos_0 =  i_position.position_nxt.position_nxt.position;
+        if (pos_0 == std::numeric_limits<size_t>::max()) {
+          pos_0 = sub_items.keys();
         }
-        p_value = leaf_sub_items_t::insert_at(
+        auto p_value = leaf_sub_items_t::insert_at(
             *this->extent, key, value,
-            i_position.position_nxt.position_nxt.position,
-            sub_items,
-            fields_start(this->fields()) + this->fields().get_item_end_offset(this->keys()),
-            estimated_size_right);
+            pos_0, sub_items, left_bound, estimated_size);
 
-        //compensate left offsets
-        f_compensate_left_offsets(left_index);
-        assert(this->free_size() == free_size_before - estimated_size_left - estimated_size_right);
-#ifndef NDEBUG
-        this->validate_unused();
-#endif
-        return;
+        FieldType::update_size_at(*this->extent, this->fields(), pos_2, estimated_size);
+        return p_value;
       } else {
         // not implemented
         assert(false);
-        return;
       }
     }
 
