@@ -1866,7 +1866,6 @@ namespace crimson::os::seastore::onode {
         const onode_key_t&,
         const onode_t&,
         const search_position_t&,
-        const match_stat_t& mstat,
         const MatchHistory& histor) = 0;
   };
 
@@ -1999,7 +1998,7 @@ namespace crimson::os::seastore::onode {
       return {result.cursor, false};
     } else {
       auto cursor = result.cursor.leaf_node->insert_bottomup(
-          key, value, result.cursor.position, result.mstat, history);
+          key, value, result.cursor.position, history);
       return {cursor, true};
     }
   }
@@ -2097,74 +2096,9 @@ namespace crimson::os::seastore::onode {
 
     tree_cursor_t lookup_largest() override final;
 
-    tree_cursor_t insert_bottomup(const onode_key_t& key,
-                                  const onode_t& value,
-                                  const search_position_t& position,
-                                  const match_stat_t& mstat,
-                                  const MatchHistory& history) override final {
-      search_position_t i_position;
-      match_stage_t i_stage;
-      ns_oid_view_t::Type i_dedup_type;
-      node_offset_t i_estimated_size;
-      if (can_insert(key, value, position, history,
-                     i_position, i_stage, i_dedup_type, i_estimated_size)) {
-#ifndef NDEBUG
-        auto free_size_before = this->free_size();
-#endif
-        auto p_value = proceed_insert(
-            key, value, i_position, i_stage, i_dedup_type, i_estimated_size);
-#ifndef NDEBUG
-        this->validate_unused();
-        assert(this->free_size() == free_size_before - i_estimated_size);
-#endif
-        return {this, i_position, p_value};
-      }
-
-      std::cout << "should split:"
-                << "\n  insert at: " << i_position
-                << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
-                << std::endl;
-
-      search_iterator_t<NODE_TYPE> s_iterator;
-      bool i_to_left = locate_split_position(
-          i_position, i_stage, i_estimated_size, s_iterator);
-
-      std::cout << "\n  split at: " << s_iterator.position << ", is_left=" << i_to_left
-                << "\n  insert at: " << i_position
-                << std::endl << std::endl;
-
-      auto right_node = ConcreteType::allocate(this->is_level_tail());
-
-      //Appender d_appender(right_node);
-      search_iterator_t<NODE_TYPE> d_iterator;
-      d_iterator.position = search_position_t::begin();
-      if (!i_to_left) {
-        if (i_position != search_position_t::begin()) {
-          // append split part 1
-          split_until_insert(i_position, i_stage,
-                             s_iterator/*, d_appender*/);
-        }
-        // append insertion to right
-        // i_pos, key, value, d_node, d_iter
-      }
-
-      // append split part 2
-      // s_iter, d_node, d_iter
-
-      // trim left
-      this->set_level_tail(false);
-
-      if (i_to_left) {
-        // insert to left
-      }
-
-      // propagate index to parent
-
-      return {};
-      // TODO (optimize)
-      // try to acquire space from siblings ... see btrfs
-      // try to insert value
-    }
+    tree_cursor_t insert_bottomup(
+        const onode_key_t&, const onode_t&,
+        const search_position_t&, const MatchHistory&) override final;
 
     bool can_insert(const onode_key_t& key,
                     const onode_t& value,
@@ -2361,434 +2295,8 @@ namespace crimson::os::seastore::onode {
     }
 
     bool locate_split_position(
-        search_position_t& i_position,
-        match_stage_t i_stage,
-        size_t i_estimated_size,
-        search_iterator_t<NODE_TYPE>& s_iterator) {
-      // TODO: should be generalized
-      if constexpr (FIELD_TYPE == field_type_t::N0) {
-        size_t target_size = (FieldType::SIZE_USABLE + i_estimated_size) / 2;
-        // TODO adjust NODE_BLOCK_SIZE according to this requirement
-        assert(i_estimated_size < FieldType::SIZE_USABLE / 2);
-
-        size_t current_size;
-        std::optional<bool> i_to_left;
-        bool i_maybe_end_if_begin = false;
-
-        // split index at STAGE_LEFT
-        auto& i_index_2 = i_position.index;
-        auto& s_index_2 = s_iterator.position.index;
-        if (i_stage == STAGE_LEFT) {
-          auto f_get_used_size_stage_2 = [this, i_index_2, i_estimated_size]
-              (size_t index) {
-            size_t ret = 0;
-            if (index > i_index_2) {
-              ret += i_estimated_size;
-              --index;
-            }
-            ret += this->kv_size_before(index);
-            return ret;
-          };
-          auto r_index_2 = binary_search_r(
-              0, this->keys(), f_get_used_size_stage_2, target_size).index;
-          assert(r_index_2 <= this->keys());
-          current_size = f_get_used_size_stage_2(r_index_2);
-          assert(current_size <= target_size);
-          if (r_index_2 == this->keys() && r_index_2 <= i_index_2) {
-            // ...[s_index-1] |!| (i_index)
-            assert(i_index_2 == INDEX_END);
-            assert(current_size == this->kv_size_before(this->keys()));
-            r_index_2 = INDEX_END;
-          }
-
-          if (r_index_2 <= i_index_2) {
-            i_to_left = false;
-            s_index_2 = r_index_2;
-            if (s_index_2 == i_index_2) {
-              // ...[s_index-1] |!| (i_index) [s_index]...
-              // offset i_position to right
-              i_index_2 = 0;
-              s_iterator.position.nxt = search_position_t::nxt_t::begin();
-              s_iterator.stage = STAGE_LEFT;
-              std::cout << "  [2] size_to_left=" << current_size
-                        << ", target_split_size=" << target_size
-                        << ", original_size=" << this->kv_size_before(this->keys())
-                        << ", insert_size=" << i_estimated_size;
-              return *i_to_left;
-            } else {
-              // ...[s_index-1] |?[s_index]| ...(i_index)...
-              // offset i_position to right
-              if (i_index_2 != INDEX_END) {
-                i_index_2 -= s_index_2;
-              }
-            }
-          } else {
-            assert(r_index_2 != INDEX_END);
-            i_to_left = true;
-            s_index_2 = r_index_2 - 1;
-            if (s_index_2 == i_index_2) {
-              // ...[s_index-1] (i_index)) |?[s_index]| ...
-              i_maybe_end_if_begin = true;
-            } else {
-              // ...(i_index)...[s_index-1] |?[s_index]| ...
-            }
-          }
-        } else {
-          auto f_get_used_size_stage_2 = [this, i_index_2, i_estimated_size]
-              (size_t index) {
-            size_t ret = 0;
-            if (index > i_index_2) {
-              ret += i_estimated_size;
-            }
-            ret += this->kv_size_before(index);
-            return ret;
-          };
-          s_index_2 = binary_search_r(
-              0, this->keys() - 1, f_get_used_size_stage_2, target_size).index;
-          assert(s_index_2 < this->keys());
-          current_size = f_get_used_size_stage_2(s_index_2);
-          assert(current_size <= target_size);
-
-          if (s_index_2 < i_index_2) {
-            // ...[s_index-1] |?[s_index]| ...[(i_index)[s_index_k]...
-            i_to_left = false;
-
-            // offset i_position to right
-            if (i_index_2 != INDEX_END) {
-              i_index_2 -= s_index_2;
-            }
-          } else if (s_index_2 > i_index_2) {
-            // ...[(i_index)s_index-1] |?[s_index]| ...
-            // ...[(i_index)s_index_k]...[s_index-1] |?[s_index]| ...
-            i_to_left = true;
-          } else {
-            // ...[s_index-1] |?[(i_index)s_index]| ...
-            // i_to_left = std::nullopt;
-          }
-        }
-
-        // split index at STAGE_STRING
-        assert(current_size <= target_size);
-        auto range_1 = this->get_nxt_container(s_index_2);
-        s_iterator.container_1 = item_iterator_t<NODE_TYPE>(range_1);
-        auto& iter = *s_iterator.container_1;
-        auto& i_index_1 = i_position.nxt.index;
-        auto& s_index_1 = s_iterator.position.nxt.index;
-        size_t extra_size = FieldType::estimate_insert_one();
-        if (i_to_left.has_value()) {
-          do {
-            if (!iter.has_next()) {
-              assert(current_size + iter.size() + extra_size ==
-                       this->kv_size_before(s_index_2 + 1));
-              break;
-            }
-            size_t nxt_size = current_size + iter.size() + extra_size;
-            if (nxt_size > target_size) {
-              break;
-            }
-            current_size = nxt_size;
-            extra_size = 0;
-            ++iter;
-          } while (true);
-          s_index_1 = iter.index();
-          if (s_index_1 != 0) {
-            i_maybe_end_if_begin = false;
-          }
-        } else if (i_stage == STAGE_STRING) {
-          size_t r_index_1 = 0;
-          do {
-            size_t nxt_size = current_size + extra_size;
-            if (i_index_1 == r_index_1) {
-              nxt_size += i_estimated_size;
-              if (nxt_size > target_size) {
-                break;
-              }
-              current_size = nxt_size;
-              extra_size = 0;
-              ++r_index_1;
-            }
-            nxt_size += iter.size();
-            if (nxt_size > target_size) {
-              break;
-            }
-            current_size = nxt_size;
-            extra_size = 0;
-            if (iter.has_next()) {
-              ++iter;
-              ++r_index_1;
-            } else {
-              r_index_1 = INDEX_END;
-              assert(i_index_1 == INDEX_END);
-              assert(current_size == this->kv_size_before(s_index_2 + 1));
-              break;
-            }
-          } while (true);
-
-          assert(i_index_2 == s_index_2);
-          if (r_index_1 <= i_index_1) {
-            i_to_left = false;
-            s_index_1 = r_index_1;
-            if (s_index_1 == i_index_1) {
-              // ...[s_index-1] |!| (i_index) [s_index]...
-              // offset i_position to right
-              i_position = search_position_t::begin();
-              if (s_index_1 == INDEX_END) {
-                // ...[last] |!| (i_index)
-                // increment s_position
-                s_index_1 = 0;
-                assert(s_index_2 < this->keys());
-                ++s_index_2;
-                if (s_index_2 == this->keys()) {
-                  s_index_2 = INDEX_END;
-                }
-              }
-              s_iterator.position.nxt.nxt =
-                search_position_t::nxt_t::nxt_t::begin();
-              s_iterator.stage = STAGE_STRING;
-              std::cout << "  [1] size_to_left=" << current_size
-                        << ", target_split_size=" << target_size
-                        << ", original_size=" << this->kv_size_before(this->keys())
-                        << ", insert_size=" << i_estimated_size;
-              return *i_to_left;
-            } else {
-              // ...[s_index-1] |?[s_index]| ...(i_index)...
-              // offset i_position to right
-              i_index_2 = 0;
-              if (i_index_1 != INDEX_END) {
-                i_index_1 -= s_index_1;
-              }
-            }
-          } else {
-            assert(r_index_1 != INDEX_END);
-            i_to_left = true;
-            s_index_1 = r_index_1 - 1;
-            if (s_index_1 == i_index_1) {
-              // ...[s_index-1] (i_index)) |?[s_index]| ...
-              assert(!i_maybe_end_if_begin);
-              i_maybe_end_if_begin = true;
-            } else {
-              // ...(i_index)...[s_index-1] |?[s_index]| ...
-            }
-          }
-        } else {
-          assert(i_stage == STAGE_RIGHT);
-          do {
-            if (!iter.has_next()) {
-              if (i_index_1 == INDEX_END) {
-                // i_index_1 points to the end,
-                // but it really wants to point to the last one.
-                i_index_1 = iter.index();
-              }
-              assert(current_size + iter.size() + extra_size ==
-                     this->kv_size_before(s_index_2 + 1));
-              break;
-            }
-            size_t nxt_size = current_size + extra_size;
-            if (i_index_1 == iter.index()) {
-              nxt_size += i_estimated_size;
-            }
-            nxt_size += iter.size();
-            if (nxt_size > target_size) {
-              break;
-            }
-            current_size = nxt_size;
-            extra_size = 0;
-            ++iter;
-          } while (true);
-          s_index_1 = iter.index();
-
-          if (s_index_1 < i_index_1) {
-            // ...[s_index-1] |?[s_index]| ...[(i_index)[s_index_k]...
-            i_to_left = false;
-
-            // offset i_position to right
-            if (i_index_1 != INDEX_END) {
-              i_index_1 -= s_index_1;
-            }
-            assert(i_index_2 == s_index_2);
-            i_index_2 = 0;
-          } else if (s_index_1 > i_index_1) {
-            // ...[(i_index)s_index-1] |?[s_index]| ...
-            // ...[(i_index)s_index_k]...[s_index-1] |?[s_index]| ...
-            i_to_left = true;
-          } else {
-            // ...[s_index-1] |?[(i_index)s_index]| ...
-            // i_to_left = std::nullopt;
-          }
-        }
-
-        // identify split at STAGE_RIGHT
-        assert(current_size <= target_size);
-        auto range_0 = iter.get_nxt_container();
-        s_iterator.container_0 = leaf_sub_items_t(range_0);
-        auto& sub_items = *s_iterator.container_0;
-        auto& i_index_0 = i_position.nxt.nxt.index;
-        auto& s_index_0 = s_iterator.position.nxt.nxt.index;
-        size_t r_index_0;
-        if (!i_to_left.has_value()) {
-          assert(i_stage == STAGE_RIGHT);
-          auto current_size_1 = current_size + iter.size_nxt() + extra_size;
-          auto f_get_used_size_stage_0 =
-              [&sub_items, current_size, current_size_1,
-               i_index_0, i_estimated_size] (size_t index) {
-            if (index == 0) {
-              return current_size;
-            }
-            size_t ret = current_size_1;
-            if (index > i_index_0) {
-              ret += i_estimated_size;
-              --index;
-            }
-            ret += sub_items.kv_size_before(index);
-            return ret;
-          };
-          r_index_0 = binary_search_r(
-              0, sub_items.keys(), f_get_used_size_stage_0, target_size).index;
-          assert(r_index_0 <= sub_items.keys());
-#ifndef NDEBUG
-          auto pre_current_size = current_size;
-          current_size = f_get_used_size_stage_0(r_index_0);
-          assert(current_size <= target_size);
-#endif
-          if (r_index_0 == sub_items.keys() && r_index_0 < i_index_0) {
-            // ...[s_index-1] |!| (i_index)
-            assert(i_index_0 == INDEX_END);
-            assert(current_size == pre_current_size + iter.size());
-            r_index_0 = INDEX_END;
-          }
-
-          assert(i_index_2 == s_index_2);
-          assert(i_index_1 == s_index_1);
-          if (r_index_0 <= i_index_0) {
-            i_to_left = false;
-            s_index_0 = r_index_0;
-            if (s_index_0 == i_index_0) {
-              // ...[s_index-1] |!| (i_index) [s_index]...
-              // offset i_position to right
-              i_position = search_position_t::begin();
-              if (s_index_0 == INDEX_END) {
-                // ...[last] |!| (i_index)
-                // increment s_position
-                s_index_0 = 0;
-                if (iter.has_next()) {
-                  ++s_index_1;
-                } else {
-                  s_index_1 = 0;
-                  assert(s_index_2 < this->keys());
-                  ++s_index_2;
-                  if (s_index_2 == this->keys()) {
-                    s_index_2 = INDEX_END;
-                  }
-                }
-              }
-            } else {
-              // ...[s_index-1] |!| [s_index]...(i_index)...
-              // offset i_position to right
-              i_index_2 = 0;
-              i_index_1 = 0;
-              if (i_index_0 != INDEX_END) {
-                i_index_0 -= s_index_0;
-              }
-            }
-          } else {
-            assert(r_index_0 != INDEX_END);
-            i_to_left = true;
-            s_index_0 = r_index_0 - 1;
-            if (s_index_0 == i_index_0) {
-              // ...[s_index-1] (i_index)) |!| [s_index]...
-              i_position = search_position_t::end();
-            } else {
-              // ...(i_index)...[s_index-1] |!| [s_index]...
-            }
-          }
-        } else {
-          auto current_size_1 = current_size + iter.size_nxt() + extra_size;
-          auto f_get_used_size_stage_0 = [&sub_items, current_size, current_size_1] (size_t index) {
-            if (index == 0) {
-              return current_size;
-            } else {
-              return current_size_1 + sub_items.kv_size_before(index);
-            }
-          };
-          r_index_0 = binary_search_r(
-              0, sub_items.keys() - 1, f_get_used_size_stage_0, target_size).index;
-          assert(r_index_0 < sub_items.keys());
-#ifndef NDEBUG
-          current_size = f_get_used_size_stage_0(r_index_0);
-          assert(current_size <= target_size);
-#endif
-          s_index_0 = r_index_0;
-          if (s_index_0 == 0) {
-            if (i_maybe_end_if_begin) {
-              assert(*i_to_left == true);
-              i_position = search_position_t::end();
-            }
-          }
-        }
-
-        s_iterator.stage = STAGE_RIGHT;
-        std::cout << "  [0] size_to_left=" << current_size
-                  << ", target_split_size=" << target_size
-                  << ", original_size=" << this->kv_size_before(this->keys())
-                  << ", insert_size=" << i_estimated_size;
-        return *i_to_left;
-      } else {
-        // not implemented
-        assert(false);
-      }
-    }
-
-    void split_until_insert(search_position_t& i_position, match_stage_t i_stage,
-                            search_iterator_t<NODE_TYPE>& s_iterator/*, Appender& d_appender*/) {
-      /* append_0_until(i_position, i_stage, s_iterator, d_appender)
-       *
-      d_appender.append(i_position.index, s_iterator);
-       */
-
-      /* append_0(s_iterator, d_appender)
-       *
-      d_appender.append(index_end, s_iterator);
-       */
-
-      /* append_1_until(i_position, i_stage, s_iterator, d_appender)
-       *
-      // same to append_2_until
-       */
-
-      /* append_1(s_iterator, d_appender)
-       * 
-      append_0(s_iterator.nxt, d_appender.nxt(s_iterator.get_key());
-      ++s_iterator;
-      ++d_appender;
-      d_appender.append(index_end, s_iterator);
-       */
-
-      /* append_2_until(i_position, i_stage, s_iterator, d_appender)
-       *
-      size_t to_index = i_position.index;
-      if (d_appender.index == to_index) {
-        if (i_stage == STAGE_LEFT) {
-          return;
-        }
-        append_1_until(i_position.nxt, s_iterator.nxt,
-                       d_appender.nxt(s_iterator.get_key()));
-        return
-      }
-
-      append_1(s_iterator.nxt, d_appender.nxt(s_iterator.get_key()));
-      ++s_iterator;
-      ++d_appender;
-      // 2 cases!
-      d_appender.append(to_index, s_iterator);
-
-      if (i_stage == STAGE_LEFT) {
-        return;
-      }
-      append_1_until(i_position.nxt, s_iterator.nxt,
-                     d_appender.nxt(s_iterator.get_key());
-      return;
-       */
-    }
+        search_position_t&, match_stage_t, size_t,
+        search_iterator_t<NODE_TYPE>&);
 
     static Ref<ConcreteType> allocate(bool is_level_tail) {
       return ConcreteType::_allocate(0u, is_level_tail);
@@ -2978,6 +2486,9 @@ namespace crimson::os::seastore::onode {
         assert(index < container.keys());
         return me_t(container, index);
       }
+      static me_t end(const container_t& container) {
+        return me_t(container, container.keys());
+      }
 
      private:
       _iterator_t(const container_t& container, size_t index)
@@ -3072,9 +2583,13 @@ namespace crimson::os::seastore::onode {
         }
         return me_t(container);
       }
+      static me_t end(const container_t&) {
+        return me_t();
+      }
 
      private:
       _iterator_t(const container_t& container) : p_container{&container} {}
+      _iterator_t() : p_container{nullptr} {}
 
       const container_t* p_container;
     };
@@ -3328,6 +2843,88 @@ namespace crimson::os::seastore::onode {
       } while (true);
       return os;
     }
+
+    /*
+     * WIP: Modifier interfaces
+     */
+
+    class _BaseEmpty {};
+    class _BaseWithNxtIterator {
+      typename staged<typename Params::next_param_t>::StagedIterator _nxt;
+    };
+    class StagedIterator
+        : std::conditional_t<IS_BOTTOM, _BaseEmpty, _BaseWithNxtIterator> {
+     public:
+      StagedIterator() = default;
+      void set_at(const container_t& container, size_t index) {
+        assert(!iter.has_value);
+        iter = iterator_t::at(container, index);
+      }
+      void set_end(const container_t& container) {
+        assert(!iter.has_value);
+        iter = iterator_t::end(container);
+      }
+     private:
+      std::optional<iterator_t> iter;
+    };
+
+    class _BaseWithNxtAppender {
+      typename staged<typename Params::next_param_t>::StagedAppender _nxt;
+    };
+    class StagedAppender
+        : std::conditional_t<IS_BOTTOM, _BaseEmpty, _BaseWithNxtAppender> {
+     public:
+     private:
+      std::optional<iterator_t> iter;
+    };
+/*
+    static void _append_range(size_t to_index, match_stage_t stage,
+                              StagedIterator& src_iter, StagedAppender& appender) {
+      if constexpr (IS_BOTTOM) {
+        assert(stage == STAGE);
+        appender.append_until(to_index, stage, src_iter);
+      } else {
+        if (!src_iter.is_begin()) {
+          typename staged<typename Params::next_param_t>::_append_range(
+              INDEX_END, STAGE - 1,
+              src_iter.nxt(), appender.open_nxt(src_iter.get_key()));
+          ++src_iter;
+          appender.wrap_nxt();
+        }
+        appender.append_until(to_index, stage, src_iter);
+      }
+    }
+
+    static void _append_into(const position_t& position, match_stage_t stage,
+                             StagedIterator& src_iter, StagedAppender& appender) {
+      if (stage == STAGE) {
+        // reaches end
+        return;
+      }
+      typename staged<typename Params::next_param_t>::append_until(
+          position.nxt, stage, src_iter.nxt(),
+          appender.open_nxt(src_iter.get_key()));
+      return;
+    }
+
+    static void append_until(const position_t& position, match_stage_t stage,
+                             StagedIterator& src_iter, StagedAppender& appender) {
+      if constexpr (IS_BOTTOM) {
+        assert(stage == STAGE);
+        appender.append_until(position.index, stage, src_iter);
+      } else {
+        assert(stage <= STAGE);
+        size_t to_index = position.index;
+        if (appender.index() == to_index) {
+          _append_into(position, stage, src_iter, appender);
+          return;
+        }
+        _append_range(to_index, stage, src_iter, appender);
+        _append_into(position, stage, src_iter, appender);
+        return;
+      }
+    }
+    */
   };
 
   template <typename NodeType, typename Enable = void> struct _node_to_stage_t;
@@ -3447,6 +3044,451 @@ namespace crimson::os::seastore::onode {
     tree_cursor_t ret{this, {}, nullptr};
     node_to_stage_t<me_t>::lookup_largest_normalized(*this, ret.position, ret.p_value);
     return ret;
+  }
+
+  template <typename FieldType, typename ConcreteType>
+  tree_cursor_t LeafNodeT<FieldType, ConcreteType>::insert_bottomup(
+      const onode_key_t& key, const onode_t& value,
+      const search_position_t& position, const MatchHistory& history) {
+    search_position_t i_position;
+    match_stage_t i_stage;
+    ns_oid_view_t::Type i_dedup_type;
+    node_offset_t i_estimated_size;
+    if (can_insert(key, value, position, history,
+                   i_position, i_stage, i_dedup_type, i_estimated_size)) {
+#ifndef NDEBUG
+      auto free_size_before = this->free_size();
+#endif
+      auto p_value = proceed_insert(
+          key, value, i_position, i_stage, i_dedup_type, i_estimated_size);
+#ifndef NDEBUG
+      this->validate_unused();
+      assert(this->free_size() == free_size_before - i_estimated_size);
+#endif
+      return {this, i_position, p_value};
+    }
+
+    std::cout << "should split:"
+              << "\n  insert at: " << i_position
+              << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
+              << std::endl;
+
+    search_iterator_t<NODE_TYPE> s_iterator;
+    bool i_to_left = locate_split_position(
+        i_position, i_stage, i_estimated_size, s_iterator);
+
+    std::cout << "\n  split at: " << s_iterator.position << ", is_left=" << i_to_left
+              << "\n  insert at: " << i_position
+              << std::endl << std::endl;
+
+    auto right_node = ConcreteType::allocate(this->is_level_tail());
+
+    //Appender d_appender(right_node);
+    search_iterator_t<NODE_TYPE> d_iterator;
+    d_iterator.position = search_position_t::begin();
+    if (!i_to_left) {
+      if (i_position != search_position_t::begin()) {
+        // append split part 1
+        //split_until_insert(i_position, i_stage, s_iterator/*, d_appender*/);
+      }
+      // append insertion to right
+      // i_pos, key, value, d_node, d_iter
+    }
+
+    // append split part 2
+    // s_iter, d_node, d_iter
+
+    // trim left
+    this->set_level_tail(false);
+
+    if (i_to_left) {
+      // insert to left
+    }
+
+    // propagate index to parent
+
+    return {};
+    // TODO (optimize)
+    // try to acquire space from siblings ... see btrfs
+    // try to insert value
+  }
+
+  template <typename FieldType, typename ConcreteType>
+  bool LeafNodeT<FieldType, ConcreteType>::locate_split_position(
+      search_position_t& i_position, match_stage_t i_stage,
+      size_t i_estimated_size,
+      search_iterator_t<NODE_TYPE>& s_iterator) {
+    // TODO: should be generalized
+    if constexpr (FIELD_TYPE == field_type_t::N0) {
+      size_t target_size = (FieldType::SIZE_USABLE + i_estimated_size) / 2;
+      // TODO adjust NODE_BLOCK_SIZE according to this requirement
+      assert(i_estimated_size < FieldType::SIZE_USABLE / 2);
+
+      size_t current_size;
+      std::optional<bool> i_to_left;
+      bool i_maybe_end_if_begin = false;
+
+      // split index at STAGE_LEFT
+      auto& i_index_2 = i_position.index;
+      auto& s_index_2 = s_iterator.position.index;
+      if (i_stage == STAGE_LEFT) {
+        auto f_get_used_size_stage_2 = [this, i_index_2, i_estimated_size]
+            (size_t index) {
+          size_t ret = 0;
+          if (index > i_index_2) {
+            ret += i_estimated_size;
+            --index;
+          }
+          ret += this->kv_size_before(index);
+          return ret;
+        };
+        auto r_index_2 = binary_search_r(
+            0, this->keys(), f_get_used_size_stage_2, target_size).index;
+        assert(r_index_2 <= this->keys());
+        current_size = f_get_used_size_stage_2(r_index_2);
+        assert(current_size <= target_size);
+        if (r_index_2 == this->keys() && r_index_2 <= i_index_2) {
+          // ...[s_index-1] |!| (i_index)
+          assert(i_index_2 == INDEX_END);
+          assert(current_size == this->kv_size_before(this->keys()));
+          r_index_2 = INDEX_END;
+        }
+
+        if (r_index_2 <= i_index_2) {
+          i_to_left = false;
+          s_index_2 = r_index_2;
+          if (s_index_2 == i_index_2) {
+            // ...[s_index-1] |!| (i_index) [s_index]...
+            // offset i_position to right
+            i_index_2 = 0;
+            s_iterator.position.nxt = search_position_t::nxt_t::begin();
+            s_iterator.stage = STAGE_LEFT;
+            std::cout << "  [2] size_to_left=" << current_size
+                      << ", target_split_size=" << target_size
+                      << ", original_size=" << this->kv_size_before(this->keys())
+                      << ", insert_size=" << i_estimated_size;
+            return *i_to_left;
+          } else {
+            // ...[s_index-1] |?[s_index]| ...(i_index)...
+            // offset i_position to right
+            if (i_index_2 != INDEX_END) {
+              i_index_2 -= s_index_2;
+            }
+          }
+        } else {
+          assert(r_index_2 != INDEX_END);
+          i_to_left = true;
+          s_index_2 = r_index_2 - 1;
+          if (s_index_2 == i_index_2) {
+            // ...[s_index-1] (i_index)) |?[s_index]| ...
+            i_maybe_end_if_begin = true;
+          } else {
+            // ...(i_index)...[s_index-1] |?[s_index]| ...
+          }
+        }
+      } else {
+        auto f_get_used_size_stage_2 = [this, i_index_2, i_estimated_size]
+            (size_t index) {
+          size_t ret = 0;
+          if (index > i_index_2) {
+            ret += i_estimated_size;
+          }
+          ret += this->kv_size_before(index);
+          return ret;
+        };
+        s_index_2 = binary_search_r(
+            0, this->keys() - 1, f_get_used_size_stage_2, target_size).index;
+        assert(s_index_2 < this->keys());
+        current_size = f_get_used_size_stage_2(s_index_2);
+        assert(current_size <= target_size);
+
+        if (s_index_2 < i_index_2) {
+          // ...[s_index-1] |?[s_index]| ...[(i_index)[s_index_k]...
+          i_to_left = false;
+
+          // offset i_position to right
+          if (i_index_2 != INDEX_END) {
+            i_index_2 -= s_index_2;
+          }
+        } else if (s_index_2 > i_index_2) {
+          // ...[(i_index)s_index-1] |?[s_index]| ...
+          // ...[(i_index)s_index_k]...[s_index-1] |?[s_index]| ...
+          i_to_left = true;
+        } else {
+          // ...[s_index-1] |?[(i_index)s_index]| ...
+          // i_to_left = std::nullopt;
+        }
+      }
+
+      // split index at STAGE_STRING
+      assert(current_size <= target_size);
+      auto range_1 = this->get_nxt_container(s_index_2);
+      s_iterator.container_1 = item_iterator_t<NODE_TYPE>(range_1);
+      auto& iter = *s_iterator.container_1;
+      auto& i_index_1 = i_position.nxt.index;
+      auto& s_index_1 = s_iterator.position.nxt.index;
+      size_t extra_size = FieldType::estimate_insert_one();
+      if (i_to_left.has_value()) {
+        do {
+          if (!iter.has_next()) {
+            assert(current_size + iter.size() + extra_size ==
+                     this->kv_size_before(s_index_2 + 1));
+            break;
+          }
+          size_t nxt_size = current_size + iter.size() + extra_size;
+          if (nxt_size > target_size) {
+            break;
+          }
+          current_size = nxt_size;
+          extra_size = 0;
+          ++iter;
+        } while (true);
+        s_index_1 = iter.index();
+        if (s_index_1 != 0) {
+          i_maybe_end_if_begin = false;
+        }
+      } else if (i_stage == STAGE_STRING) {
+        size_t r_index_1 = 0;
+        do {
+          size_t nxt_size = current_size + extra_size;
+          if (i_index_1 == r_index_1) {
+            nxt_size += i_estimated_size;
+            if (nxt_size > target_size) {
+              break;
+            }
+            current_size = nxt_size;
+            extra_size = 0;
+            ++r_index_1;
+          }
+          nxt_size += iter.size();
+          if (nxt_size > target_size) {
+            break;
+          }
+          current_size = nxt_size;
+          extra_size = 0;
+          if (iter.has_next()) {
+            ++iter;
+            ++r_index_1;
+          } else {
+            r_index_1 = INDEX_END;
+            assert(i_index_1 == INDEX_END);
+            assert(current_size == this->kv_size_before(s_index_2 + 1));
+            break;
+          }
+        } while (true);
+
+        assert(i_index_2 == s_index_2);
+        if (r_index_1 <= i_index_1) {
+          i_to_left = false;
+          s_index_1 = r_index_1;
+          if (s_index_1 == i_index_1) {
+            // ...[s_index-1] |!| (i_index) [s_index]...
+            // offset i_position to right
+            i_position = search_position_t::begin();
+            if (s_index_1 == INDEX_END) {
+              // ...[last] |!| (i_index)
+              // increment s_position
+              s_index_1 = 0;
+              assert(s_index_2 < this->keys());
+              ++s_index_2;
+              if (s_index_2 == this->keys()) {
+                s_index_2 = INDEX_END;
+              }
+            }
+            s_iterator.position.nxt.nxt =
+              search_position_t::nxt_t::nxt_t::begin();
+            s_iterator.stage = STAGE_STRING;
+            std::cout << "  [1] size_to_left=" << current_size
+                      << ", target_split_size=" << target_size
+                      << ", original_size=" << this->kv_size_before(this->keys())
+                      << ", insert_size=" << i_estimated_size;
+            return *i_to_left;
+          } else {
+            // ...[s_index-1] |?[s_index]| ...(i_index)...
+            // offset i_position to right
+            i_index_2 = 0;
+            if (i_index_1 != INDEX_END) {
+              i_index_1 -= s_index_1;
+            }
+          }
+        } else {
+          assert(r_index_1 != INDEX_END);
+          i_to_left = true;
+          s_index_1 = r_index_1 - 1;
+          if (s_index_1 == i_index_1) {
+            // ...[s_index-1] (i_index)) |?[s_index]| ...
+            assert(!i_maybe_end_if_begin);
+            i_maybe_end_if_begin = true;
+          } else {
+            // ...(i_index)...[s_index-1] |?[s_index]| ...
+          }
+        }
+      } else {
+        assert(i_stage == STAGE_RIGHT);
+        do {
+          if (!iter.has_next()) {
+            if (i_index_1 == INDEX_END) {
+              // i_index_1 points to the end,
+              // but it really wants to point to the last one.
+              i_index_1 = iter.index();
+            }
+            assert(current_size + iter.size() + extra_size ==
+                   this->kv_size_before(s_index_2 + 1));
+            break;
+          }
+          size_t nxt_size = current_size + extra_size;
+          if (i_index_1 == iter.index()) {
+            nxt_size += i_estimated_size;
+          }
+          nxt_size += iter.size();
+          if (nxt_size > target_size) {
+            break;
+          }
+          current_size = nxt_size;
+          extra_size = 0;
+          ++iter;
+        } while (true);
+        s_index_1 = iter.index();
+
+        if (s_index_1 < i_index_1) {
+          // ...[s_index-1] |?[s_index]| ...[(i_index)[s_index_k]...
+          i_to_left = false;
+
+          // offset i_position to right
+          if (i_index_1 != INDEX_END) {
+            i_index_1 -= s_index_1;
+          }
+          assert(i_index_2 == s_index_2);
+          i_index_2 = 0;
+        } else if (s_index_1 > i_index_1) {
+          // ...[(i_index)s_index-1] |?[s_index]| ...
+          // ...[(i_index)s_index_k]...[s_index-1] |?[s_index]| ...
+          i_to_left = true;
+        } else {
+          // ...[s_index-1] |?[(i_index)s_index]| ...
+          // i_to_left = std::nullopt;
+        }
+      }
+
+      // identify split at STAGE_RIGHT
+      assert(current_size <= target_size);
+      auto range_0 = iter.get_nxt_container();
+      s_iterator.container_0 = leaf_sub_items_t(range_0);
+      auto& sub_items = *s_iterator.container_0;
+      auto& i_index_0 = i_position.nxt.nxt.index;
+      auto& s_index_0 = s_iterator.position.nxt.nxt.index;
+      size_t r_index_0;
+      if (!i_to_left.has_value()) {
+        assert(i_stage == STAGE_RIGHT);
+        auto current_size_1 = current_size + iter.size_nxt() + extra_size;
+        auto f_get_used_size_stage_0 =
+            [&sub_items, current_size, current_size_1,
+             i_index_0, i_estimated_size] (size_t index) {
+          if (index == 0) {
+            return current_size;
+          }
+          size_t ret = current_size_1;
+          if (index > i_index_0) {
+            ret += i_estimated_size;
+            --index;
+          }
+          ret += sub_items.kv_size_before(index);
+          return ret;
+        };
+        r_index_0 = binary_search_r(
+            0, sub_items.keys(), f_get_used_size_stage_0, target_size).index;
+        assert(r_index_0 <= sub_items.keys());
+#ifndef NDEBUG
+        auto pre_current_size = current_size;
+        current_size = f_get_used_size_stage_0(r_index_0);
+        assert(current_size <= target_size);
+#endif
+        if (r_index_0 == sub_items.keys() && r_index_0 < i_index_0) {
+          // ...[s_index-1] |!| (i_index)
+          assert(i_index_0 == INDEX_END);
+          assert(current_size == pre_current_size + iter.size());
+          r_index_0 = INDEX_END;
+        }
+
+        assert(i_index_2 == s_index_2);
+        assert(i_index_1 == s_index_1);
+        if (r_index_0 <= i_index_0) {
+          i_to_left = false;
+          s_index_0 = r_index_0;
+          if (s_index_0 == i_index_0) {
+            // ...[s_index-1] |!| (i_index) [s_index]...
+            // offset i_position to right
+            i_position = search_position_t::begin();
+            if (s_index_0 == INDEX_END) {
+              // ...[last] |!| (i_index)
+              // increment s_position
+              s_index_0 = 0;
+              if (iter.has_next()) {
+                ++s_index_1;
+              } else {
+                s_index_1 = 0;
+                assert(s_index_2 < this->keys());
+                ++s_index_2;
+                if (s_index_2 == this->keys()) {
+                  s_index_2 = INDEX_END;
+                }
+              }
+            }
+          } else {
+            // ...[s_index-1] |!| [s_index]...(i_index)...
+            // offset i_position to right
+            i_index_2 = 0;
+            i_index_1 = 0;
+            if (i_index_0 != INDEX_END) {
+              i_index_0 -= s_index_0;
+            }
+          }
+        } else {
+          assert(r_index_0 != INDEX_END);
+          i_to_left = true;
+          s_index_0 = r_index_0 - 1;
+          if (s_index_0 == i_index_0) {
+            // ...[s_index-1] (i_index)) |!| [s_index]...
+            i_position = search_position_t::end();
+          } else {
+            // ...(i_index)...[s_index-1] |!| [s_index]...
+          }
+        }
+      } else {
+        auto current_size_1 = current_size + iter.size_nxt() + extra_size;
+        auto f_get_used_size_stage_0 = [&sub_items, current_size, current_size_1] (size_t index) {
+          if (index == 0) {
+            return current_size;
+          } else {
+            return current_size_1 + sub_items.kv_size_before(index);
+          }
+        };
+        r_index_0 = binary_search_r(
+            0, sub_items.keys() - 1, f_get_used_size_stage_0, target_size).index;
+        assert(r_index_0 < sub_items.keys());
+#ifndef NDEBUG
+        current_size = f_get_used_size_stage_0(r_index_0);
+        assert(current_size <= target_size);
+#endif
+        s_index_0 = r_index_0;
+        if (s_index_0 == 0) {
+          if (i_maybe_end_if_begin) {
+            assert(*i_to_left == true);
+            i_position = search_position_t::end();
+          }
+        }
+      }
+
+      s_iterator.stage = STAGE_RIGHT;
+      std::cout << "  [0] size_to_left=" << current_size
+                << ", target_split_size=" << target_size
+                << ", original_size=" << this->kv_size_before(this->keys())
+                << ", insert_size=" << i_estimated_size;
+      return *i_to_left;
+    } else {
+      // not implemented
+      assert(false);
+    }
   }
 
   /*
