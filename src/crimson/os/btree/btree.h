@@ -800,7 +800,6 @@ namespace crimson::os::seastore::onode {
     using me_t = _node_fields_013_t<SlotType>;
     static constexpr field_type_t FIELD_TYPE = SlotType::FIELD_TYPE;
     static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
-    static constexpr node_offset_t SIZE_USABLE = SIZE - offsetof(me_t, slots);
 
     key_get_type get_key(size_t index) const {
       assert(index < num_keys);
@@ -892,8 +891,6 @@ namespace crimson::os::seastore::onode {
     using key_get_type = key_t;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
     static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
-    static constexpr node_offset_t SIZE_USABLE =
-      SIZE - sizeof(node_header_t) - sizeof(num_keys_t);
 
     key_get_type get_key(size_t index) const {
       assert(index < num_keys);
@@ -961,7 +958,6 @@ namespace crimson::os::seastore::onode {
     using num_keys_t = uint8_t;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
     static constexpr node_offset_t SIZE = sizeof(me_t);
-    static constexpr node_offset_t SIZE_USABLE = SIZE - offsetof(me_t, keys);
 
     key_get_type get_key(size_t index) const {
       assert(index < num_keys);
@@ -1883,9 +1879,8 @@ namespace crimson::os::seastore::onode {
     using value_t = value_type_t<_NODE_TYPE>;
     static constexpr node_type_t NODE_TYPE = _NODE_TYPE;
     static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
-    static constexpr node_offset_t TOTAL_SIZE = FieldType::SIZE;
     static constexpr node_offset_t EXTENT_SIZE =
-      (TOTAL_SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
+      (FieldType::SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
 
     virtual ~NodeT() = default;
 
@@ -1894,7 +1889,14 @@ namespace crimson::os::seastore::onode {
     size_t free_size() const override final {
       return fields().template free_size_before<NODE_TYPE>(is_level_tail(), keys());
     }
-    size_t total_size() const override final { return TOTAL_SIZE; }
+    size_t total_size() const override final {
+      if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+        if (is_level_tail()) {
+          return FieldType::SIZE - sizeof(snap_gen_t);
+        }
+      }
+      return FieldType::SIZE;
+    }
     index_view_t get_index_view(const search_position_t&) const override final;
 
     const value_t* get_value_ptr(const search_position_t&);
@@ -1907,22 +1909,15 @@ namespace crimson::os::seastore::onode {
     size_t size_before(size_t index) const {
       auto free_size = this->fields().template free_size_before<NODE_TYPE>(
           is_level_tail(), index);
-      size_t usable_size;
-      if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-        if (is_level_tail()) {
-          usable_size = FieldType::SIZE_USABLE - sizeof(snap_gen_t);
-        } else {
-          usable_size = FieldType::SIZE_USABLE;
-        }
-      } else {
-        usable_size = FieldType::SIZE_USABLE;
-      }
-      assert(usable_size >= free_size);
-      return usable_size - free_size;
+      assert(total_size() >= free_size);
+      return total_size() - free_size;
     }
     size_t size_to_nxt_at(size_t index) const {
       assert(index < keys());
       auto ret = FieldType::estimate_insert_one();
+      if (index == 0) {
+        ret += size_before(0);
+      }
       if constexpr (FIELD_TYPE == field_type_t::N0 ||
                     FIELD_TYPE == field_type_t::N1) {
         return ret;
@@ -3505,9 +3500,11 @@ namespace crimson::os::seastore::onode {
               << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
               << std::endl;
 
-    size_t target_split_size = (FieldType::SIZE_USABLE + i_estimated_size) / 2;
+    size_t empty_size = this->size_before(0);
+    size_t available_size = this->total_size() - empty_size;
+    size_t target_split_size = empty_size + (available_size + i_estimated_size) / 2;
     // TODO adjust NODE_BLOCK_SIZE according to this requirement
-    assert(i_estimated_size < FieldType::SIZE_USABLE / 2);
+    assert(i_estimated_size < available_size / 2);
     typename node_to_stage_t<me_t>::StagedIterator split_at;
     bool i_to_left = node_to_stage_t<me_t>::locate_split(
         *this, target_split_size, i_position, i_stage, i_estimated_size, split_at);
