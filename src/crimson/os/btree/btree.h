@@ -1628,15 +1628,6 @@ namespace crimson::os::seastore::onode {
     }
   }
 
-  // TODO: should be generalized
-  template <node_type_t NODE_TYPE>
-  struct search_iterator_t {
-    search_position_t position;
-    match_stage_t stage;
-    std::optional<item_iterator_t<NODE_TYPE>> container_1;
-    std::optional<sub_items_t<NODE_TYPE>> container_0;
-  };
-
   using match_stat_t = int8_t;
   constexpr match_stat_t MSTAT_PO = -2; // index is search_position_t::end()
   constexpr match_stat_t MSTAT_EQ = -1; // key == index
@@ -2318,10 +2309,6 @@ namespace crimson::os::seastore::onode {
         assert(false);
       }
     }
-
-    bool locate_split_position(
-        search_position_t&, match_stage_t, size_t,
-        search_iterator_t<NODE_TYPE>&);
 
     static Ref<ConcreteType> allocate(bool is_level_tail) {
       return ConcreteType::_allocate(0u, is_level_tail);
@@ -3516,8 +3503,6 @@ namespace crimson::os::seastore::onode {
     auto right_node = ConcreteType::allocate(this->is_level_tail());
 
     //Appender d_appender(right_node);
-    search_iterator_t<NODE_TYPE> d_iterator;
-    d_iterator.position = search_position_t::begin();
     if (!i_to_left) {
       if (i_position != search_position_t::begin()) {
         // append split part 1
