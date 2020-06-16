@@ -457,27 +457,40 @@ namespace crimson::os::seastore::onode {
     }
     bool operator!=(const string_key_view_t& x) const { return !(*this == x); }
 
-    static void insert_str(LogicalCachedExtent& dst,
-                           const std::string& str,
-                           char*& p_insert) {
-      p_insert -= sizeof(string_size_t);
-      assert(str.length() < std::numeric_limits<string_size_t>::max());
-      dst.copy_in_mem((string_size_t)str.length(), p_insert);
-      p_insert -= str.length();
-      dst.copy_in_mem(str.data(), p_insert, str.length());
+    static void append_str(LogicalCachedExtent& dst,
+                           const char* data, size_t len,
+                           char*& p_append) {
+      p_append -= sizeof(string_size_t);
+      assert(len < std::numeric_limits<string_size_t>::max());
+      dst.copy_in_mem((string_size_t)len, p_append);
+      p_append -= len;
+      dst.copy_in_mem(data, p_append, len);
     }
 
-    static void insert_dedup(LogicalCachedExtent& dst,
+    static void append_str(LogicalCachedExtent& dst,
+                           const std::string& str,
+                           char*& p_append) {
+      append_str(dst, str.data(), str.length(), p_append);
+    }
+
+    static void append_dedup(LogicalCachedExtent& dst,
                              const string_key_view_t::Type& dedup_type,
-                             char*& p_insert) {
-      p_insert -= sizeof(string_size_t);
-      if (dedup_type == string_key_view_t::Type::MIN) {
-        dst.copy_in_mem((string_size_t)0u, p_insert);
-      } else if (dedup_type == string_key_view_t::Type::MAX) {
-        dst.copy_in_mem(std::numeric_limits<string_size_t>::max(), p_insert);
+                             char*& p_append) {
+      p_append -= sizeof(string_size_t);
+      if (dedup_type == Type::MIN) {
+        dst.copy_in_mem((string_size_t)0u, p_append);
+      } else if (dedup_type == Type::MAX) {
+        dst.copy_in_mem(std::numeric_limits<string_size_t>::max(), p_append);
       } else {
         assert(false);
       }
+    }
+
+    static void append(LogicalCachedExtent& dst,
+                       const string_key_view_t& view,
+                       char*& p_append) {
+      assert(view.type() == Type::STR);
+      append_str(dst, view.p_key, view.length, p_append);
     }
 
     const char* p_key;
@@ -538,18 +551,26 @@ namespace crimson::os::seastore::onode {
       }
     }
 
-    static void insert(LogicalCachedExtent& dst,
+    static void append(LogicalCachedExtent& dst,
                        const onode_key_t& key,
                        const ns_oid_view_t::Type& dedup_type,
-                       char*& p_insert) {
-      if (dedup_type == ns_oid_view_t::Type::STR) {
-        string_key_view_t::insert_str(
-            dst, key.nspace, p_insert);
-        string_key_view_t::insert_str(
-            dst, key.oid, p_insert);
+                       char*& p_append) {
+      if (dedup_type == Type::STR) {
+        string_key_view_t::append_str(dst, key.nspace, p_append);
+        string_key_view_t::append_str(dst, key.oid, p_append);
       } else {
-        string_key_view_t::insert_dedup(
-            dst, dedup_type, p_insert);
+        string_key_view_t::append_dedup(dst, dedup_type, p_append);
+      }
+    }
+
+    static void append(LogicalCachedExtent& dst,
+                       const ns_oid_view_t& view,
+                       char*& p_append) {
+      if (view.type() == Type::STR) {
+        string_key_view_t::append(dst, view.nspace, p_append);
+        string_key_view_t::append(dst, view.oid, p_append);
+      } else {
+        string_key_view_t::append_dedup(dst, view.type(), p_append);
       }
     }
 
@@ -800,6 +821,8 @@ namespace crimson::os::seastore::onode {
     using me_t = _node_fields_013_t<SlotType>;
     static constexpr field_type_t FIELD_TYPE = SlotType::FIELD_TYPE;
     static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
+    static constexpr node_offset_t HEADER_SIZE =
+      sizeof(node_header_t) + sizeof(num_keys_t);
 
     key_get_type get_key(size_t index) const {
       assert(index < num_keys);
@@ -807,7 +830,7 @@ namespace crimson::os::seastore::onode {
     }
     node_offset_t get_key_start_offset(size_t index) const {
       assert(index <= num_keys);
-      auto offset = offsetof(me_t, slots) + sizeof(SlotType) * index;
+      auto offset = HEADER_SIZE + sizeof(SlotType) * index;
       assert(offset < SIZE);
       return offset;
     }
@@ -859,6 +882,18 @@ namespace crimson::os::seastore::onode {
       }
     }
 
+    static void append_key(
+        LogicalCachedExtent& dst, const key_t& key, char*& p_append) {
+      dst.copy_in_mem(key, p_append);
+      p_append += sizeof(key_t);
+    }
+
+    static void append_offset(
+        LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append) {
+      dst.copy_in_mem(offset_to_right, p_append);
+      p_append += sizeof(node_offset_t);
+    }
+
     static void insert_at(
         LogicalCachedExtent& dst, const onode_key_t& key,
         const me_t& node, size_t index, node_offset_t size) {
@@ -869,10 +904,8 @@ namespace crimson::os::seastore::onode {
       auto p_shift_end = fields_start(node) + node.get_key_start_offset(node.num_keys);
       dst.shift_mem(p_insert, p_shift_end - p_insert, estimate_insert_one());
       dst.copy_in_mem(num_keys_t(node.num_keys + 1), (void*)&node.num_keys);
-      dst.copy_in_mem(key_t::from_key(key), p_insert);
-      p_insert += sizeof(key_t);
-      node_offset_t offset_to_right = node.get_item_end_offset(index) - size;
-      dst.copy_in_mem(offset_to_right, p_insert);
+      append_key(dst, key_t::from_key(key), p_insert);
+      append_offset(dst, node.get_item_end_offset(index) - size, p_insert);
     }
 
     node_header_t header;
@@ -891,6 +924,8 @@ namespace crimson::os::seastore::onode {
     using key_get_type = key_t;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N2;
     static constexpr node_offset_t SIZE = NODE_BLOCK_SIZE;
+    static constexpr node_offset_t HEADER_SIZE =
+      sizeof(node_header_t) + sizeof(num_keys_t);
 
     key_get_type get_key(size_t index) const {
       assert(index < num_keys);
@@ -902,8 +937,7 @@ namespace crimson::os::seastore::onode {
     }
     node_offset_t get_key_start_offset(size_t index) const {
       assert(index <= num_keys);
-      auto offset = offsetof(node_fields_2_t, offsets) +
-                    sizeof(node_offset_t) * num_keys;
+      auto offset = HEADER_SIZE + sizeof(node_offset_t) * num_keys;
       assert(offset <= SIZE);
       return offset;
     }
@@ -943,6 +977,17 @@ namespace crimson::os::seastore::onode {
 
     static node_offset_t estimate_insert_one() { return sizeof(node_offset_t); }
 
+    static void append_key(
+        LogicalCachedExtent& dst, const key_t& key, char*& p_append) {
+      ns_oid_view_t::append(dst, key, p_append);
+    }
+
+    static void append_offset(
+        LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append) {
+      dst.copy_in_mem(offset_to_right, p_append);
+      p_append += sizeof(node_offset_t);
+    }
+
     node_header_t header;
     num_keys_t num_keys = 0u;
     node_offset_t offsets[];
@@ -958,6 +1003,8 @@ namespace crimson::os::seastore::onode {
     using num_keys_t = uint8_t;
     static constexpr field_type_t FIELD_TYPE = field_type_t::N3;
     static constexpr node_offset_t SIZE = sizeof(me_t);
+    static constexpr node_offset_t HEADER_SIZE =
+      sizeof(node_header_t) + sizeof(num_keys_t);
 
     key_get_type get_key(size_t index) const {
       assert(index < num_keys);
@@ -1225,8 +1272,6 @@ namespace crimson::os::seastore::onode {
       return estimate_insert_one(value) + sizeof(num_keys_t);
     }
 
-    class Appender;
-
     static const onode_t* insert_at(
         LogicalCachedExtent&, const onode_key_t&, const onode_t&,
         size_t index, leaf_sub_items_t&, const char* left_bound, size_t size);
@@ -1234,6 +1279,8 @@ namespace crimson::os::seastore::onode {
     static const onode_t* insert_new(
         LogicalCachedExtent&, const onode_key_t&, const onode_t&,
         char*&);
+
+    class Appender;
 
    private:
     // TODO: support unaligned access
@@ -1244,6 +1291,10 @@ namespace crimson::os::seastore::onode {
 
   class leaf_sub_items_t::Appender {
    public:
+    Appender(LogicalCachedExtent* p_dst, char* p_append)
+      : p_dst{p_dst}, p_append{p_append} {
+    }
+
     struct range_items_t {
       leaf_sub_items_t src;
       size_t from;
@@ -1255,7 +1306,7 @@ namespace crimson::os::seastore::onode {
     };
     using var_t = std::variant<range_items_t, kv_item_t>;
 
-    void append(const leaf_sub_items_t src, size_t from, size_t items) {
+    void append(const leaf_sub_items_t& src, size_t from, size_t items) {
       assert(cnt <= APPENDER_LIMIT);
       assert(from < src.keys());
       assert(items > 0);
@@ -1269,8 +1320,8 @@ namespace crimson::os::seastore::onode {
       ++cnt;
     }
 
-    char* apply(LogicalCachedExtent& dst, char* dst_p_end) {
-      auto p_cur = dst_p_end;
+    char* wrap() {
+      auto p_cur = p_append;
       num_keys_t num_keys = 0;
       for (auto i = 0u; i < cnt; ++i) {
         auto& a = appends[i];
@@ -1280,7 +1331,7 @@ namespace crimson::os::seastore::onode {
         }, a);
       }
       p_cur -= sizeof(num_keys_t);
-      dst.copy_in_mem(num_keys, p_cur);
+      p_dst->copy_in_mem(num_keys, p_cur);
 
       node_offset_t last_offset = 0;
       for (auto i = 0u; i < cnt; ++i) {
@@ -1292,14 +1343,14 @@ namespace crimson::os::seastore::onode {
             for (auto i = arg.from; i < arg.items; ++i) {
               offset = arg.src.get_offset(i) + compensate;
               p_cur -= sizeof(node_offset_t);
-              dst.copy_in_mem(offset, p_cur);
+              p_dst->copy_in_mem(offset, p_cur);
             }
             last_offset = offset;
           },
           [&] (const kv_item_t& arg) {
             last_offset += sizeof(snap_gen_t) + arg.p_value->size;
             p_cur -= sizeof(node_offset_t);
-            dst.copy_in_mem(last_offset, p_cur);
+            p_dst->copy_in_mem(last_offset, p_cur);
           }
         }, a);
       }
@@ -1311,13 +1362,13 @@ namespace crimson::os::seastore::onode {
             auto _p_start = arg.src.get_item_start(arg.from + arg.items);
             size_t _len = arg.src.get_item_end(arg.from) - _p_start;
             p_cur -= _len;
-            dst.copy_in_mem(_p_start, p_cur, _len);
+            p_dst->copy_in_mem(_p_start, p_cur, _len);
           },
           [&] (const kv_item_t& arg) {
             p_cur -= sizeof(snap_gen_t);
-            dst.copy_in_mem(snap_gen_t::from_key(*arg.p_key), p_cur);
+            p_dst->copy_in_mem(snap_gen_t::from_key(*arg.p_key), p_cur);
             p_cur -= arg.p_value->size;
-            dst.copy_in_mem(arg.p_value, p_cur, arg.p_value->size);
+            p_dst->copy_in_mem(arg.p_value, p_cur, arg.p_value->size);
           }
         }, a);
       }
@@ -1325,6 +1376,8 @@ namespace crimson::os::seastore::onode {
     }
 
    private:
+    LogicalCachedExtent* p_dst;
+    char* p_append;
     var_t appends[APPENDER_LIMIT];
     size_t cnt = 0;
   };
@@ -1332,9 +1385,9 @@ namespace crimson::os::seastore::onode {
   const onode_t* leaf_sub_items_t::insert_new(
       LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
       char*& p_insert) {
-    Appender appender;
+    Appender appender(&dst, p_insert);
     appender.append(key, value);
-    p_insert = appender.apply(dst, p_insert);
+    p_insert = appender.wrap();
     return reinterpret_cast<const onode_t*>(p_insert);
   }
 
@@ -1494,12 +1547,14 @@ namespace crimson::os::seastore::onode {
       node_offset_t back_offset = (p_insert - p_insert_start);
       dst.copy_in_mem(back_offset, p_insert);
 
-      ns_oid_view_t::insert(dst, key, dedup_type, p_insert);
+      ns_oid_view_t::append(dst, key, dedup_type, p_insert);
 
       auto p_value = leaf_sub_items_t::insert_new(dst, key, value, p_insert);
       assert(p_insert == p_insert_start);
       return p_value;
     }
+
+    class Appender;
 
    private:
     void next_item_range(const char* p_end) const {
@@ -1517,6 +1572,32 @@ namespace crimson::os::seastore::onode {
     mutable node_offset_t back_offset;
     mutable std::optional<ns_oid_view_t> key;
     mutable size_t _index = 0u;
+  };
+
+  template <node_type_t NODE_TYPE>
+  class item_iterator_t<NODE_TYPE>::Appender {
+   public:
+    Appender(LogicalCachedExtent* p_dst, char* p_append)
+      : p_dst{p_dst}, p_append{p_append} {}
+    char* wrap() {
+      return p_append;
+    }
+    std::tuple<LogicalCachedExtent*, char*>
+    open_nxt(const key_get_type& partial_key) {
+      p_append -= sizeof(node_offset_t);
+      p_offset = p_append;
+      ns_oid_view_t::append(*p_dst, partial_key, p_append);
+      return {p_dst, p_append};
+    }
+    void wrap_nxt(char* _p_append) {
+      assert(_p_append < p_append);
+      p_dst->copy_in_mem(node_offset_t(p_append - _p_append), p_offset);
+      p_append = _p_append;
+    }
+   private:
+    LogicalCachedExtent* p_dst;
+    char* p_append;
+    char* p_offset;
   };
 
   constexpr auto INDEX_END = std::numeric_limits<size_t>::max();
@@ -1974,6 +2055,8 @@ namespace crimson::os::seastore::onode {
       return left_size + right_size;
     }
 
+    class Appender;
+
 #ifndef NDEBUG
     void validate_unused() const {
       /*
@@ -2005,6 +2088,53 @@ namespace crimson::os::seastore::onode {
 #endif
       return ret;
     }
+  };
+
+  template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
+  class NodeT<FieldType, NODE_TYPE, ConcreteType>::Appender {
+   public:
+    Appender(LogicalCachedExtent* p_dst, char* p_append)
+      : p_dst{p_dst}, p_start{p_append} {
+#ifndef NDEBUG
+      auto p_fields = reinterpret_cast<const FieldType*>(p_append);
+      assert(*(p_fields->header.get_field_type()) == FIELD_TYPE);
+      assert(p_fields->header.get_node_type() == NODE_TYPE);
+      assert(p_fields->num_keys == 0);
+#endif
+      p_append_left = p_start + FieldType::HEADER_SIZE;
+      p_append_right = p_start + FieldType::SIZE;
+    }
+    char* wrap() {
+      assert(p_append_left <= p_append_right);
+      return p_append_left;
+    }
+    std::tuple<LogicalCachedExtent*, char*>
+    open_nxt(const key_get_type& partial_key) {
+      if constexpr (FIELD_TYPE == field_type_t::N0 ||
+                    FIELD_TYPE == field_type_t::N1) {
+        FieldType::append_key(*p_dst, partial_key, p_append_left);
+      } else if (FIELD_TYPE == field_type_t::N2) {
+        FieldType::append_key(*p_dst, partial_key, p_append_right);
+      } else {
+        assert(false);
+      }
+      return {p_dst, p_append_right};
+    }
+    void wrap_nxt(char* p_append) {
+      if constexpr (FIELD_TYPE != field_type_t::N3) {
+        assert(p_append < p_append_right);
+        assert(p_append_left < p_append);
+        p_append_right = p_append;
+        FieldType::append_offset(*p_dst, p_append - p_start, p_append_left);
+      } else {
+        assert(false);
+      }
+    }
+   private:
+    LogicalCachedExtent* p_dst;
+    char* p_start;
+    char* p_append_left;
+    char* p_append_right;
   };
 
   std::pair<tree_cursor_t, bool> Node::insert(
@@ -2768,7 +2898,7 @@ namespace crimson::os::seastore::onode {
 
         _left_or_right<is_exclusive>(s_index, i_index, i_to_left);
 
-#ifdef NDEBUG
+#ifndef NDEBUG
         if (!is_end()) {
           assert(s_index == index());
         }
@@ -3103,6 +3233,9 @@ namespace crimson::os::seastore::onode {
      public:
       StagedIterator() = default;
       bool valid() const { return iter.has_value(); }
+      size_t index() const { return iter->index(); }
+      key_get_type get_key() const { return iter->get_key(); }
+
       iterator_t& get() { return *iter; }
       void set(const container_t& container) {
         assert(!valid());
@@ -3130,9 +3263,11 @@ namespace crimson::os::seastore::onode {
         return *this;
       }
       void reset() {
-        iter.reset();
-        if constexpr (!IS_BOTTOM) {
-          this->_nxt.reset();
+        if (valid()) {
+          iter.reset();
+          if constexpr (!IS_BOTTOM) {
+            this->_nxt.reset();
+          }
         }
       }
       std::ostream& print(std::ostream& os, bool is_top) const {
@@ -3140,7 +3275,7 @@ namespace crimson::os::seastore::onode {
           if (iter->is_end()) {
             return os << "END";
           } else {
-            os << iter->index();
+            os << index();
           }
         } else {
           if (is_top) {
@@ -3255,7 +3390,7 @@ namespace crimson::os::seastore::onode {
       return false;
     }
 
-    static bool locate_split(
+    static bool locate_split_normalized(
         const container_t& container, size_t target_size,
         search_position_t& i_position, match_stage_t i_stage, size_t i_size,
         StagedIterator& split_at) {
@@ -3282,63 +3417,135 @@ namespace crimson::os::seastore::onode {
       return *i_to_left;
     }
 
+    /*
+     * container appender type system
+     *   container_t::Appender(LogicalCachedExtent& dst, char* p_append)
+     *   append(const container_t& src, size_t from, size_t items)
+     *   append(const onode_key_t& key, const value_t& value)
+     *   wrap() -> char*
+     * IF !IS_BOTTOM:
+     *   open_nxt(const key_get_type& partial_key)
+     *       -> std::tuple<LogicalCachedExtent&, char*>
+     *   wrap_nxt(char* p_append)
+     *   require_wrap_nxt() -> bool
+     */
     struct _BaseWithNxtAppender {
       typename staged<typename Params::next_param_t>::StagedAppender _nxt;
     };
     class StagedAppender
         : std::conditional_t<IS_BOTTOM, _BaseEmpty, _BaseWithNxtAppender> {
      public:
+      StagedAppender() = default;
+      ~StagedAppender() {
+        assert(!require_wrap_nxt);
+        assert(!valid());
+      }
+      bool valid() const { return appender.has_value(); }
+      size_t index() const {
+        assert(valid());
+        return _index;
+      }
+      void init(LogicalCachedExtent* p_dst, char* p_start) {
+        assert(!valid());
+        appender = typename container_t::Appender(p_dst, p_start);
+        _index = 0;
+      }
+      void append_until(
+          StagedIterator& src_iter, size_t to_index, match_stage_t to_stage) {
+        assert(!require_wrap_nxt);
+        assert(to_stage <= STAGE);
+        auto from_index = src_iter.index();
+        
+      }
+      char* wrap() {
+        assert(valid());
+        if constexpr (!IS_BOTTOM) {
+          if(require_wrap_nxt) {
+            wrap_nxt();
+          }
+        }
+        auto ret = appender->wrap();
+        appender.reset();
+        return ret;
+      }
+      typename staged<typename Params::next_param_t>::StagedAppender&
+      open_nxt(key_get_type paritial_key) {
+        if constexpr (!IS_BOTTOM) {
+          assert(!require_wrap_nxt);
+          require_wrap_nxt = true;
+          auto [p_dst, p_append] = appender->open_nxt(paritial_key);
+          this->_nxt.init(p_dst, p_append);
+          return this->_nxt;
+        } else {
+          assert(false);
+        }
+      }
+      void wrap_nxt() {
+        if constexpr (!IS_BOTTOM) {
+          assert(require_wrap_nxt);
+          require_wrap_nxt = false;
+          auto p_append = this->_nxt.wrap();
+          appender->wrap_nxt(p_append);
+          ++_index;
+        } else {
+          assert(false);
+        }
+      }
      private:
-      std::optional<iterator_t> iter;
+      std::optional<typename container_t::Appender> appender;
+      size_t _index;
+      bool require_wrap_nxt = false;
     };
-/*
-    static void _append_range(size_t to_index, match_stage_t stage,
-                              StagedIterator& src_iter, StagedAppender& appender) {
-      if constexpr (IS_BOTTOM) {
-        assert(stage == STAGE);
-        appender.append_until(to_index, stage, src_iter);
-      } else {
-        if (!src_iter.is_begin()) {
-          typename staged<typename Params::next_param_t>::_append_range(
-              INDEX_END, STAGE - 1,
-              src_iter.nxt(), appender.open_nxt(src_iter.get_key()));
+
+    static void _append_range(StagedIterator& src_iter, StagedAppender& appender,
+                              size_t to_index, match_stage_t stage) {
+      if constexpr (!IS_BOTTOM) {
+        if (src_iter.index() != 0) {
+          staged<typename Params::next_param_t>::_append_range(
+              src_iter.nxt(), appender.open_nxt(src_iter.get_key()),
+              INDEX_END, STAGE - 1);
           ++src_iter;
           appender.wrap_nxt();
         }
-        appender.append_until(to_index, stage, src_iter);
       }
+      appender.append_until(src_iter, to_index, stage);
     }
 
-    static void _append_into(const position_t& position, match_stage_t stage,
-                             StagedIterator& src_iter, StagedAppender& appender) {
+    static void _append_into(StagedIterator& src_iter, StagedAppender& appender,
+                             position_t& position, match_stage_t stage) {
       if (stage == STAGE) {
         // reaches end
         return;
       }
-      typename staged<typename Params::next_param_t>::append_until(
-          position.nxt, stage, src_iter.nxt(),
-          appender.open_nxt(src_iter.get_key()));
+      staged<typename Params::next_param_t>::append_until(
+          src_iter.nxt(), appender.open_nxt(src_iter.get_key()),
+          position.nxt, stage);
       return;
     }
 
-    static void append_until(const position_t& position, match_stage_t stage,
-                             StagedIterator& src_iter, StagedAppender& appender) {
+    static void append_until(StagedIterator& src_iter, StagedAppender& appender,
+                             position_t& position, match_stage_t stage) {
       if constexpr (IS_BOTTOM) {
         assert(stage == STAGE);
-        appender.append_until(position.index, stage, src_iter);
+        appender.append_until(src_iter, position.index, stage);
       } else {
         assert(stage <= STAGE);
         size_t to_index = position.index;
         if (appender.index() == to_index) {
-          _append_into(position, stage, src_iter, appender);
+          _append_into(src_iter, appender, position, stage);
           return;
         }
-        _append_range(to_index, stage, src_iter, appender);
-        _append_into(position, stage, src_iter, appender);
+        _append_range(src_iter, appender, to_index, stage);
+        _append_into(src_iter, appender, position, stage);
         return;
       }
     }
-    */
+
+    static void append_until_normalized(
+        StagedIterator& src_iter, StagedAppender& appender,
+        search_position_t& position, match_stage_t stage) {
+      append_until(src_iter, appender, cast_down<STAGE>(position), stage);
+    }
   };
 
   template <typename NodeType, typename Enable = void> struct _node_to_stage_t;
@@ -3493,7 +3700,7 @@ namespace crimson::os::seastore::onode {
     // TODO adjust NODE_BLOCK_SIZE according to this requirement
     assert(i_estimated_size < available_size / 2);
     typename node_to_stage_t<me_t>::StagedIterator split_at;
-    bool i_to_left = node_to_stage_t<me_t>::locate_split(
+    bool i_to_left = node_to_stage_t<me_t>::locate_split_normalized(
         *this, target_split_size, i_position, i_stage, i_estimated_size, split_at);
 
     std::cout << "\n  split at: " << split_at << ", is_left=" << i_to_left
@@ -3501,19 +3708,22 @@ namespace crimson::os::seastore::onode {
               << std::endl << std::endl;
 
     auto right_node = ConcreteType::allocate(this->is_level_tail());
-
-    //Appender d_appender(right_node);
+    typename node_to_stage_t<me_t>::StagedAppender appender;
+    appender.init(right_node->extent.get(),
+                  const_cast<char*>(fields_start(right_node->fields())));
     if (!i_to_left) {
       if (i_position != search_position_t::begin()) {
-        // append split part 1
-        //split_until_insert(i_position, i_stage, s_iterator/*, d_appender*/);
+        // append split [start(split_at), i_position)
+        node_to_stage_t<me_t>::append_until_normalized(
+            split_at, appender, i_position, i_stage);
       }
-      // append insertion to right
+      // append split [i_position]
       // i_pos, key, value, d_node, d_iter
     }
 
-    // append split part 2
+    // append split (i_position, end)
     // s_iter, d_node, d_iter
+    appender.wrap();
 
     // trim left
     this->set_level_tail(false);
