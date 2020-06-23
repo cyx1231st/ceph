@@ -362,12 +362,14 @@ int main(int argc, char* argv[])
     f_split(onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3}, onode);
     std::cout << std::endl;
 
+    /*
     f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onode);
     f_split(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onode);
     f_split(onode_key_t{3, 4, 4, "ns3", "oid3", 3, 3}, onode);
     f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode);
     f_split(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onode);
     std::cout << std::endl;
+    */
 
     f_split(onode_key_t{4, 4, 4, "ns4", "oid4", 5, 5}, onode);
     f_split(onode_key_t{4, 4, 4, "ns5", "oid5", 3, 3}, onode);
@@ -388,6 +390,7 @@ int main(int argc, char* argv[])
     f_split(onode_key_t{3, 3, 4, "ns3", "oid3", 3, 3}, onode2);
     f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode2);
     f_split(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onode2);
+    std::cout << std::endl;
   }
 
   transaction_manager.free_all();
