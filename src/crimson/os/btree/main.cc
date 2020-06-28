@@ -95,31 +95,31 @@ int main(int argc, char* argv[])
     onode_key_t key = {0, 0, 0, "n", "o", 0, 0};
     onode_t value = {2};
     std::cout << "InternalNode0: "
-              << InternalNode0::estimate_insert_one(&key, 0) << " "
+              << InternalNode0::node_t::estimate_insert_one(&key, 0) << " "
               << item_iterator_t<node_type_t::INTERNAL>::estimate_insert_one(&key, 0) << " "
               << internal_sub_items_t::estimate_insert_one() << std::endl;
     std::cout << "InternalNode1: "
-              << InternalNode1::estimate_insert_one(&key, 0) << " "
+              << InternalNode1::node_t::estimate_insert_one(&key, 0) << " "
               << item_iterator_t<node_type_t::INTERNAL>::estimate_insert_one(&key, 0) << " "
               << internal_sub_items_t::estimate_insert_one() << std::endl;
     std::cout << "InternalNode2: "
-              << InternalNode2::estimate_insert_one(&key, 0) << " "
+              << InternalNode2::node_t::estimate_insert_one(&key, 0) << " "
               << internal_sub_items_t::estimate_insert_one() << std::endl;
     std::cout << "InternalNode3: "
-              << InternalNode3::estimate_insert_one(&key, 0) << std::endl;
+              << InternalNode3::node_t::estimate_insert_one(&key, 0) << std::endl;
     std::cout << "LeafNode0: "
-              << LeafNode0::estimate_insert_one(&key, value) << " "
+              << LeafNode0::node_t::estimate_insert_one(&key, value) << " "
               << item_iterator_t<node_type_t::LEAF>::estimate_insert_one(&key, value) << " "
               << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
     std::cout << "LeafNode1: "
-              << LeafNode1::estimate_insert_one(&key, value) << " "
+              << LeafNode1::node_t::estimate_insert_one(&key, value) << " "
               << item_iterator_t<node_type_t::LEAF>::estimate_insert_one(&key, value) << " "
               << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
     std::cout << "LeafNode2: "
-              << LeafNode2::estimate_insert_one(&key, value) << " "
+              << LeafNode2::node_t::estimate_insert_one(&key, value) << " "
               << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
     std::cout << "LeafNode3: "
-              << LeafNode3::estimate_insert_one(&key, value) << std::endl;
+              << LeafNode3::node_t::estimate_insert_one(&key, value) << std::endl;
     std::cout << std::endl;
   }
 

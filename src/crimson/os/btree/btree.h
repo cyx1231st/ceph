@@ -1681,6 +1681,267 @@ namespace crimson::os::seastore::onode {
     char* p_offset_while_open;
   };
 
+  template <typename FieldType, node_type_t _NODE_TYPE>
+  class node_extent_t {
+   public:
+    using value_t = value_type_t<_NODE_TYPE>;
+    using num_keys_t = typename FieldType::num_keys_t;
+    static constexpr node_type_t NODE_TYPE = _NODE_TYPE;
+    static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
+
+    // TODO: hide
+    const char* p_start() const { return fields_start(*p_fields); }
+    const FieldType& fields() const { return *p_fields; }
+
+    bool is_level_tail() const { return _is_level_tail; }
+    void set_level_tail(bool value) { _is_level_tail = value; }
+    level_t level() const { return p_fields->header.level; }
+    void init(const FieldType* _p_fields, bool level_tail) {
+      assert(!p_fields);
+      p_fields = _p_fields;
+      set_level_tail(level_tail);
+
+      assert(p_fields->header.get_node_type() == NODE_TYPE);
+      assert(p_fields->header.get_field_type() == FieldType::FIELD_TYPE);
+#ifndef NDEBUG
+      if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+        assert(level() > 0u);
+      } else {
+        assert(level() == 0u);
+      }
+#endif
+    }
+
+    size_t free_size() const {
+      return p_fields->template free_size_before<NODE_TYPE>(
+          is_level_tail(), keys());
+    }
+    size_t total_size() const {
+      if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+        if (is_level_tail()) {
+          return FieldType::SIZE - sizeof(snap_gen_t);
+        }
+      }
+      return FieldType::SIZE;
+    }
+
+    // container type system
+    using key_get_type = typename FieldType::key_get_type;
+    static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
+    size_t keys() const { return p_fields->num_keys; }
+    key_get_type operator[] (size_t index) const { return p_fields->get_key(index); }
+    size_t size_before(size_t index) const {
+      auto free_size = p_fields->template free_size_before<NODE_TYPE>(
+          is_level_tail(), index);
+      assert(total_size() >= free_size);
+      return total_size() - free_size;
+    }
+    size_t size_to_nxt_at(size_t index) const {
+      assert(index < keys());
+      auto ret = FieldType::estimate_insert_one();
+      if (index == 0) {
+        ret += size_before(0);
+      }
+      if constexpr (FIELD_TYPE == field_type_t::N0 ||
+                    FIELD_TYPE == field_type_t::N1) {
+        return ret;
+      } else if (FIELD_TYPE == field_type_t::N2) {
+        auto p_end = p_start() + p_fields->get_item_end_offset(index);
+        return ret + ns_oid_view_t(p_end).size();
+      } else {
+        // N3 node is not nested
+        assert(false);
+      }
+    }
+    memory_range_t get_nxt_container(size_t index) const {
+      if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+        // N3 internal node doesn't have left and right parts
+        assert(false);
+      } else {
+        node_offset_t item_start_offset = p_fields->get_item_start_offset(index);
+        node_offset_t item_end_offset = p_fields->get_item_end_offset(index);
+        assert(item_start_offset < item_end_offset);
+        auto item_p_start = p_start() + item_start_offset;
+        auto item_p_end = p_start() + item_end_offset;
+        if constexpr (FIELD_TYPE == field_type_t::N2) {
+          // range for sub_items_t<NODE_TYPE>
+          item_p_end = ns_oid_view_t(item_p_end).p_start();
+          assert(item_p_start < item_p_end);
+        } else {
+          // range for item_iterator_t<NODE_TYPE>
+        }
+        return {item_p_start, item_p_end};
+      }
+    }
+
+    template <typename T = FieldType>
+    std::enable_if_t<T::FIELD_TYPE == field_type_t::N3, const value_t*>
+    get_p_value(size_t index) const {
+      assert(index < keys());
+      if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+        return &p_fields->child_addrs[index];
+      } else {
+        auto range = get_nxt_container(index);
+        auto ret = reinterpret_cast<const onode_t*>(range.p_start);
+        assert(range.p_start + ret->size == range.p_end);
+        return ret;
+      }
+    }
+
+    static node_offset_t estimate_insert_one(const onode_key_t* p_key, const value_t& value) {
+      node_offset_t left_size = FieldType::estimate_insert_one();
+      node_offset_t right_size;
+      if constexpr (FIELD_TYPE == field_type_t::N0 ||
+                    FIELD_TYPE == field_type_t::N1) {
+        right_size = item_iterator_t<NODE_TYPE>::estimate_insert_new(p_key, value);
+      } else if (FIELD_TYPE == field_type_t::N2) {
+        right_size = sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
+                     ns_oid_view_t::estimate_size(p_key);
+      } else {
+        if constexpr (NODE_TYPE == node_type_t::LEAF) {
+          right_size = value.size;
+        } else {
+          right_size = 0u;
+        }
+      }
+      return left_size + right_size;
+    }
+
+    class Appender;
+
+   private:
+    const FieldType* p_fields = nullptr;
+    bool _is_level_tail;
+  };
+
+  template <typename FieldType, node_type_t NODE_TYPE>
+  class node_extent_t<FieldType, NODE_TYPE>::Appender {
+   public:
+    Appender(LogicalCachedExtent* p_dst, char* p_append)
+      : p_dst{p_dst}, p_start{p_append} {
+#ifndef NDEBUG
+      auto p_fields = reinterpret_cast<const FieldType*>(p_append);
+      assert(*(p_fields->header.get_field_type()) == FIELD_TYPE);
+      assert(p_fields->header.get_node_type() == NODE_TYPE);
+      assert(p_fields->num_keys == 0);
+#endif
+      p_append_left = p_start + FieldType::HEADER_SIZE;
+      p_append_right = p_start + FieldType::SIZE;
+    }
+    void append(const node_extent_t& src, size_t from, size_t items) {
+      assert(from <= src.keys());
+      if (items == 0) {
+        return;
+      }
+      assert(from < src.keys());
+      assert(from + items <= src.keys());
+      num_keys += items;
+      if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+        assert(false);
+      } else {
+        if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+          assert(false);
+        }
+
+        // append left part forwards
+        node_offset_t offset_left_start = src.fields().get_key_start_offset(from);
+        node_offset_t offset_left_end = src.fields().get_key_start_offset(from + items);
+        node_offset_t left_size = offset_left_end - offset_left_start;
+        if (num_keys == 0) {
+          // no need to adjust offset
+          assert(from == 0);
+          assert(p_start + offset_left_start == p_append_left);
+          p_dst->copy_in_mem(src.p_start() + offset_left_start,
+                             p_append_left, left_size);
+        } else {
+          node_offset_t step_size = FieldType::estimate_insert_one();
+          node_offset_t offset_base = src.fields().get_item_end_offset(from);
+          int offset_change = p_append_right - p_start - offset_base;
+          auto p_offset_dst = p_append_left;
+          if constexpr (FIELD_TYPE != field_type_t::N2) {
+            // copy keys
+            p_dst->copy_in_mem(src.p_start() + offset_left_start,
+                               p_append_left, left_size);
+            // point to offset for update
+            p_offset_dst += sizeof(typename FieldType::key_t);
+          }
+          for (auto i = from; i < from + items; ++i) {
+            p_dst->copy_in_mem(node_offset_t(src.fields().get_item_start_offset(i) + offset_change),
+                               p_offset_dst);
+            p_offset_dst += step_size;
+          }
+          assert(p_append_left + left_size + sizeof(typename FieldType::key_t) ==
+                 p_offset_dst);
+        }
+        p_append_left += left_size;
+
+        // append right part backwards
+        node_offset_t offset_right_start = src.fields().get_item_end_offset(from + items);
+        node_offset_t offset_right_end = src.fields().get_item_end_offset(from);
+        node_offset_t right_size = offset_right_end - offset_right_start;
+        p_append_right -= right_size;
+        p_dst->copy_in_mem(src.p_start() + offset_right_start,
+                           p_append_right, right_size);
+      }
+    }
+    void append(const onode_key_t& key, const onode_t& value) {
+      if constexpr (FIELD_TYPE == field_type_t::N3) {
+        // TODO: not implemented
+        assert(false);
+      } else {
+        assert(false);
+      }
+    }
+    char* wrap() {
+      assert(p_append_left <= p_append_right);
+      p_dst->copy_in_mem(num_keys, p_start + offsetof(FieldType, num_keys));
+      return p_append_left;
+    }
+    std::tuple<LogicalCachedExtent*, char*>
+    open_nxt(const key_get_type& partial_key) {
+      if constexpr (FIELD_TYPE == field_type_t::N0 ||
+                    FIELD_TYPE == field_type_t::N1) {
+        FieldType::append_key(*p_dst, partial_key, p_append_left);
+      } else if (FIELD_TYPE == field_type_t::N2) {
+        FieldType::append_key(*p_dst, partial_key, p_append_right);
+      } else {
+        assert(false);
+      }
+      return {p_dst, p_append_right};
+    }
+    std::tuple<LogicalCachedExtent*, char*>
+    open_nxt(const onode_key_t& key) {
+      if constexpr (FIELD_TYPE == field_type_t::N0 ||
+                    FIELD_TYPE == field_type_t::N1) {
+        FieldType::append_key(
+            *p_dst, key, p_append_left);
+      } else if (FIELD_TYPE == field_type_t::N2) {
+        FieldType::append_key(
+            *p_dst, key, p_append_right);
+      } else {
+        assert(false);
+      }
+      return {p_dst, p_append_right};
+    }
+    void wrap_nxt(char* p_append) {
+      if constexpr (FIELD_TYPE != field_type_t::N3) {
+        assert(p_append < p_append_right);
+        assert(p_append_left < p_append);
+        p_append_right = p_append;
+        FieldType::append_offset(*p_dst, p_append - p_start, p_append_left);
+        ++num_keys;
+      } else {
+        assert(false);
+      }
+    }
+   private:
+    LogicalCachedExtent* p_dst;
+    char* p_start;
+    char* p_append_left;
+    char* p_append_right;
+    num_keys_t num_keys = 0;
+  };
+
   template <match_stage_t STAGE>
   struct staged_position_t {
     static_assert(STAGE > STAGE_BOTTOM && STAGE <= STAGE_TOP);
@@ -1945,59 +2206,35 @@ namespace crimson::os::seastore::onode {
 
     virtual ~Node() = default;
 
-    bool is_root() const { return !_parent_info.has_value(); }
-    bool is_level_tail() const { return _is_level_tail; }
-    const parent_info_t& parent_info() const { return *_parent_info; }
+    virtual bool is_root() const = 0;
+    virtual const parent_info_t& parent_info() const = 0;
+    virtual bool is_level_tail() const = 0;
     virtual node_type_t node_type() const = 0;
     virtual field_type_t field_type() const = 0;
+    virtual laddr_t laddr() const = 0;
+    virtual level_t level() const = 0;
+
     virtual size_t free_size() const = 0;
     virtual size_t total_size() const = 0;
     size_t filled_size() const { return total_size() - free_size(); }
-    size_t extent_size() const { return extent->get_length(); }
-    virtual search_result_t lower_bound(const onode_key_t&, MatchHistory&) = 0;
+    virtual size_t extent_size() const = 0;
+
+    virtual index_view_t get_index_view(const search_position_t&) const = 0;
     virtual tree_cursor_t lookup_smallest() = 0;
     virtual tree_cursor_t lookup_largest() = 0;
-    virtual index_view_t get_index_view(const search_position_t&) const = 0;
+    virtual search_result_t lower_bound(const onode_key_t&, MatchHistory&) = 0;
     std::pair<tree_cursor_t, bool> insert(const onode_key_t&, const onode_t&, MatchHistory&);
-
-    laddr_t laddr() const { return extent->get_laddr(); }
-    level_t level() const { return extent->get_ptr<node_header_t>(0u)->level; }
 
     virtual std::ostream& dump(std::ostream&) = 0;
 
     static Ref<Node> load(laddr_t, bool is_level_tail, const parent_info_t&);
 
+    virtual void init(Ref<LogicalCachedExtent>,
+                      bool is_level_tail,
+                      const parent_info_t* p_info) = 0;
+
    protected:
     Node() {}
-
-    void init(Ref<LogicalCachedExtent> _extent, bool _is_level_tail_) {
-      assert(!extent);
-      extent = _extent;
-      assert(extent->get_ptr<node_header_t>(0u)->get_node_type() == node_type());
-      assert(*extent->get_ptr<node_header_t>(0u)->get_field_type() == field_type());
-#ifndef NDEBUG
-      if (node_type() == node_type_t::INTERNAL) {
-        assert(extent->get_ptr<node_header_t>(0u)->level > 0u);
-      } else {
-        assert(extent->get_ptr<node_header_t>(0u)->level == 0u);
-      }
-#endif
-      _is_level_tail = _is_level_tail_;
-    }
-
-    void init(Ref<LogicalCachedExtent> _extent, bool _is_level_tail_, const parent_info_t& info) {
-      assert(!_parent_info.has_value());
-      _parent_info = info;
-      init(_extent, _is_level_tail_);
-    }
-
-    void set_level_tail(bool value) { _is_level_tail = value; }
-
-    Ref<LogicalCachedExtent> extent;
-
-   private:
-    std::optional<parent_info_t> _parent_info;
-    bool _is_level_tail;
 
     friend std::ostream& operator<<(std::ostream&, const Node&);
   };
@@ -2023,280 +2260,78 @@ namespace crimson::os::seastore::onode {
         const MatchHistory& histor) = 0;
   };
 
-  template <typename FieldType, node_type_t _NODE_TYPE, typename ConcreteType>
+  template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
   class NodeT : virtual public Node {
    public:
-    using me_t = NodeT<FieldType, _NODE_TYPE, ConcreteType>;
-    using num_keys_t = typename FieldType::num_keys_t;
-    using value_t = value_type_t<_NODE_TYPE>;
-    static constexpr node_type_t NODE_TYPE = _NODE_TYPE;
+    using node_t = node_extent_t<FieldType, NODE_TYPE>;
+    using value_t = value_type_t<NODE_TYPE>;
     static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
     static constexpr node_offset_t EXTENT_SIZE =
       (FieldType::SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
 
     virtual ~NodeT() = default;
 
+    bool is_root() const override final { return !_parent_info.has_value(); }
+    const parent_info_t& parent_info() const override final{ return *_parent_info; }
+    bool is_level_tail() const override final { return node.is_level_tail(); }
     node_type_t node_type() const override final { return NODE_TYPE; }
     field_type_t field_type() const override final { return FIELD_TYPE; }
-    size_t free_size() const override final {
-      return fields().template free_size_before<NODE_TYPE>(is_level_tail(), keys());
-    }
-    size_t total_size() const override final {
-      if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-        if (is_level_tail()) {
-          return FieldType::SIZE - sizeof(snap_gen_t);
-        }
-      }
-      return FieldType::SIZE;
-    }
+    laddr_t laddr() const override final { return extent->get_laddr(); }
+    level_t level() const override final { return node.level(); }
+    size_t free_size() const override final { return node.free_size(); }
+    size_t total_size() const override final { return node.total_size(); }
+    size_t extent_size() const override final { return EXTENT_SIZE; }
     index_view_t get_index_view(const search_position_t&) const override final;
+    std::ostream& dump(std::ostream&) override final;
 
     const value_t* get_value_ptr(const search_position_t&);
 
-    // container type system
-    using key_get_type = typename FieldType::key_get_type;
-    static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
-    size_t keys() const { return fields().num_keys; }
-    key_get_type operator[] (size_t index) const { return fields().get_key(index); }
-    size_t size_before(size_t index) const {
-      auto free_size = this->fields().template free_size_before<NODE_TYPE>(
-          is_level_tail(), index);
-      assert(total_size() >= free_size);
-      return total_size() - free_size;
-    }
-    size_t size_to_nxt_at(size_t index) const {
-      assert(index < keys());
-      auto ret = FieldType::estimate_insert_one();
-      if (index == 0) {
-        ret += size_before(0);
-      }
-      if constexpr (FIELD_TYPE == field_type_t::N0 ||
-                    FIELD_TYPE == field_type_t::N1) {
-        return ret;
-      } else if (FIELD_TYPE == field_type_t::N2) {
-        auto p_end = fields_start(fields()) + fields().get_item_end_offset(index);
-        return ret + ns_oid_view_t(p_end).size();
-      } else {
-        // N3 is not nested
-        assert(false);
-      }
-    }
-
-    template <typename T = memory_range_t>
-    std::enable_if_t<!std::is_same_v<FieldType, internal_fields_3_t>, T>
-    get_nxt_container(size_t index) const {
-      node_offset_t item_start_offset = fields().get_item_start_offset(index);
-      node_offset_t item_end_offset = fields().get_item_end_offset(index);
-      assert(item_start_offset < item_end_offset);
-      auto item_p_start = fields_start(fields()) + item_start_offset;
-      auto item_p_end = fields_start(fields()) + item_end_offset;
-      if constexpr (FIELD_TYPE == field_type_t::N2) {
-        // range for sub_items_t<NODE_TYPE>
-        item_p_end = ns_oid_view_t(item_p_end).p_start();
-        assert(item_p_start < item_p_end);
-      } else {
-        // range for item_iterator_t<NODE_TYPE>
-      }
-      return {item_p_start, item_p_end};
-    }
-
-    template <typename T = FieldType>
-    std::enable_if_t<T::FIELD_TYPE == field_type_t::N3, const value_t*>
-    get_p_value(size_t index) const {
-      assert(index < keys());
-      if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-        return &fields().child_addrs[index];
-      } else {
-        auto range = get_nxt_container(index);
-        auto ret = reinterpret_cast<const onode_t*>(range.p_start);
-        assert(range.p_start + ret->size == range.p_end);
-        return ret;
-      }
-    }
-
-    std::ostream& dump(std::ostream&) override final;
-
-    static node_offset_t estimate_insert_one(const onode_key_t* p_key, const value_t& value) {
-      node_offset_t left_size = FieldType::estimate_insert_one();
-      node_offset_t right_size;
-      if constexpr (FIELD_TYPE == field_type_t::N0 ||
-                    FIELD_TYPE == field_type_t::N1) {
-        right_size = item_iterator_t<NODE_TYPE>::estimate_insert_new(p_key, value);
-      } else if (FIELD_TYPE == field_type_t::N2) {
-        right_size = sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
-                     ns_oid_view_t::estimate_size(p_key);
-      } else {
-        if constexpr (NODE_TYPE == node_type_t::LEAF) {
-          right_size = value.size;
-        } else {
-          right_size = 0u;
-        }
-      }
-      return left_size + right_size;
-    }
-
-    class Appender;
-
 #ifndef NDEBUG
     void validate_unused() const {
-      /*
-      fields().template validate_unused<NODE_TYPE>(is_level_tail());
-      */
+      // node.fields().template validate_unused<NODE_TYPE>(is_level_tail());
     }
 
     Ref<Node> test_clone() const {
-      auto ret = ConcreteType::_allocate(0u, is_level_tail());
+      auto ret = ConcreteType::_allocate(level(), is_level_tail());
       ret->extent->copy_in(extent->get_ptr<void>(0u), 0u, EXTENT_SIZE);
       return ret;
     }
 #endif
 
    protected:
-    const FieldType& fields() const {
-      return *extent->get_ptr<FieldType>(0u);
-    }
-
-    static Ref<ConcreteType> _allocate(level_t level, bool is_level_tail) {
+    static Ref<ConcreteType> _allocate(level_t level, bool level_tail) {
       // might be asynchronous
       auto extent = transaction_manager.alloc_extent(EXTENT_SIZE);
       extent->copy_in(node_header_t{FIELD_TYPE, NODE_TYPE, level}, 0u);
-      extent->copy_in(num_keys_t(0u), sizeof(node_header_t));
+      extent->copy_in(typename FieldType::num_keys_t(0u), sizeof(node_header_t));
       auto ret = Ref<ConcreteType>(new ConcreteType());
-      ret->init(extent, is_level_tail);
+      ret->init(extent, level_tail, nullptr);
 #ifndef NDEBUG
-      // ret->fields().template fill_unused<NODE_TYPE>(is_level_tail, *extent);
+      // ret->node.fields().template fill_unused<NODE_TYPE>(is_level_tail, *extent);
 #endif
       return ret;
     }
-  };
 
-  template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-  class NodeT<FieldType, NODE_TYPE, ConcreteType>::Appender {
-   public:
-    Appender(LogicalCachedExtent* p_dst, char* p_append)
-      : p_dst{p_dst}, p_start{p_append} {
-#ifndef NDEBUG
-      auto p_fields = reinterpret_cast<const FieldType*>(p_append);
-      assert(*(p_fields->header.get_field_type()) == FIELD_TYPE);
-      assert(p_fields->header.get_node_type() == NODE_TYPE);
-      assert(p_fields->num_keys == 0);
-#endif
-      p_append_left = p_start + FieldType::HEADER_SIZE;
-      p_append_right = p_start + FieldType::SIZE;
-    }
-    void append(const NodeT<FieldType, NODE_TYPE, ConcreteType>& src,
-                size_t from, size_t items) {
-      assert(from <= src.keys());
-      if (items == 0) {
-        return;
-      }
-      assert(from < src.keys());
-      assert(from + items <= src.keys());
-      num_keys += items;
-      if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-        assert(false);
-      } else {
-        if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-          assert(false);
-        }
-
-        // append left part forwards
-        node_offset_t offset_left_start = src.fields().get_key_start_offset(from);
-        node_offset_t offset_left_end = src.fields().get_key_start_offset(from + items);
-        node_offset_t left_size = offset_left_end - offset_left_start;
-        if (num_keys == 0) {
-          // no need to adjust offset
-          assert(from == 0);
-          assert(p_start + offset_left_start == p_append_left);
-          p_dst->copy_in_mem(fields_start(src.fields()) + offset_left_start,
-                             p_append_left, left_size);
-        } else {
-          node_offset_t step_size = FieldType::estimate_insert_one();
-          node_offset_t offset_base = src.fields().get_item_end_offset(from);
-          int offset_change = p_append_right - p_start - offset_base;
-          auto p_offset_dst = p_append_left;
-          if constexpr (FIELD_TYPE != field_type_t::N2) {
-            // copy keys
-            p_dst->copy_in_mem(fields_start(src.fields()) + offset_left_start,
-                               p_append_left, left_size);
-            // point to offset for update
-            p_offset_dst += sizeof(typename FieldType::key_t);
-          }
-          for (auto i = from; i < from + items; ++i) {
-            p_dst->copy_in_mem(node_offset_t(src.fields().get_item_start_offset(i) + offset_change),
-                               p_offset_dst);
-            p_offset_dst += step_size;
-          }
-          assert(p_append_left + left_size + sizeof(typename FieldType::key_t) ==
-                 p_offset_dst);
-        }
-        p_append_left += left_size;
-
-        // append right part backwards
-        node_offset_t offset_right_start = src.fields().get_item_end_offset(from + items);
-        node_offset_t offset_right_end = src.fields().get_item_end_offset(from);
-        node_offset_t right_size = offset_right_end - offset_right_start;
-        p_append_right -= right_size;
-        p_dst->copy_in_mem(fields_start(src.fields()) + offset_right_start,
-                           p_append_right, right_size);
-      }
-    }
-    void append(const onode_key_t& key, const onode_t& value) {
-      if constexpr (FIELD_TYPE == field_type_t::N3) {
-        // TODO: not implemented
-        assert(false);
-      } else {
-        assert(false);
-      }
-    }
-    char* wrap() {
-      assert(p_append_left <= p_append_right);
-      p_dst->copy_in_mem(num_keys, p_start + offsetof(FieldType, num_keys));
-      return p_append_left;
-    }
-    std::tuple<LogicalCachedExtent*, char*>
-    open_nxt(const key_get_type& partial_key) {
-      if constexpr (FIELD_TYPE == field_type_t::N0 ||
-                    FIELD_TYPE == field_type_t::N1) {
-        FieldType::append_key(*p_dst, partial_key, p_append_left);
-      } else if (FIELD_TYPE == field_type_t::N2) {
-        FieldType::append_key(*p_dst, partial_key, p_append_right);
-      } else {
-        assert(false);
-      }
-      return {p_dst, p_append_right};
-    }
-    std::tuple<LogicalCachedExtent*, char*>
-    open_nxt(const onode_key_t& key) {
-      if constexpr (FIELD_TYPE == field_type_t::N0 ||
-                    FIELD_TYPE == field_type_t::N1) {
-        FieldType::append_key(
-            *p_dst, key, p_append_left);
-      } else if (FIELD_TYPE == field_type_t::N2) {
-        FieldType::append_key(
-            *p_dst, key, p_append_right);
-      } else {
-        assert(false);
-      }
-      return {p_dst, p_append_right};
-    }
-    void wrap_nxt(char* p_append) {
-      if constexpr (FIELD_TYPE != field_type_t::N3) {
-        assert(p_append < p_append_right);
-        assert(p_append_left < p_append);
-        p_append_right = p_append;
-        FieldType::append_offset(*p_dst, p_append - p_start, p_append_left);
-        ++num_keys;
-      } else {
-        assert(false);
-      }
-    }
    private:
-    LogicalCachedExtent* p_dst;
-    char* p_start;
-    char* p_append_left;
-    char* p_append_right;
-    typename FieldType::num_keys_t num_keys = 0;
+    void init(Ref<LogicalCachedExtent> _extent,
+              bool _is_level_tail,
+              const parent_info_t* p_info) override final {
+      assert(!_parent_info.has_value());
+      if (p_info) {
+       _parent_info = *p_info;
+      }
+      assert(!extent);
+      assert(EXTENT_SIZE == _extent->get_length());
+      extent = _extent;
+      node.init(extent->get_ptr<FieldType>(0u), _is_level_tail);
+    }
+
+   protected:
+    Ref<LogicalCachedExtent> extent;
+    node_t node;
+
+   private:
+    std::optional<parent_info_t> _parent_info;
   };
 
   std::pair<tree_cursor_t, bool> Node::insert(
@@ -2314,7 +2349,7 @@ namespace crimson::os::seastore::onode {
   template <typename FieldType, typename ConcreteType>
   class InternalNodeT : public NodeT<FieldType, node_type_t::INTERNAL, ConcreteType> {
    public:
-    using me_t = InternalNodeT<FieldType, ConcreteType>;
+    using node_t = node_extent_t<FieldType, node_type_t::INTERNAL>;
     using value_t = laddr_t;
     static constexpr node_type_t NODE_TYPE = node_type_t::INTERNAL;
     static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
@@ -2337,9 +2372,9 @@ namespace crimson::os::seastore::onode {
       return child->lookup_largest();
     }
 
-    static Ref<ConcreteType> allocate(level_t level, bool is_level_tail) {
+    static Ref<ConcreteType> allocate(level_t level, bool level_tail) {
       assert(level != 0u);
-      return ConcreteType::_allocate(level, is_level_tail);
+      return ConcreteType::_allocate(level, level_tail);
     }
 
    private:
@@ -2382,7 +2417,7 @@ namespace crimson::os::seastore::onode {
   template <typename FieldType, typename ConcreteType>
   class LeafNodeT: public LeafNode, public NodeT<FieldType, node_type_t::LEAF, ConcreteType> {
    public:
-    using me_t = LeafNodeT<FieldType, ConcreteType>;
+    using node_t = node_extent_t<FieldType, node_type_t::LEAF>;
     using value_t = onode_t;
     static constexpr node_type_t NODE_TYPE = node_type_t::LEAF;
     static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
@@ -2392,7 +2427,7 @@ namespace crimson::os::seastore::onode {
     search_result_t lower_bound(const onode_key_t&, MatchHistory&) override final;
 
     tree_cursor_t lookup_smallest() override final {
-      if (unlikely(this->keys() == 0)) {
+      if (unlikely(this->node.keys() == 0)) {
         // only happens when root is empty
         return tree_cursor_t::make_end();
       }
@@ -2485,7 +2520,7 @@ namespace crimson::os::seastore::onode {
         // estimated size for insertion
         switch (i_stage) {
          case STAGE_LEFT:
-          estimated_size = this->estimate_insert_one(p_key, value);
+          estimated_size = this->node.estimate_insert_one(p_key, value);
           break;
          case STAGE_STRING:
           estimated_size = item_iterator_t<NODE_TYPE>::estimate_insert_one(p_key, value);
@@ -2513,14 +2548,14 @@ namespace crimson::os::seastore::onode {
       // TODO: should be generalized
       if constexpr (FIELD_TYPE == field_type_t::N0) {
         // modify block at STAGE_LEFT
-        assert(i_position.index < this->keys() ||
+        assert(i_position.index < this->node.keys() ||
                i_position.index == INDEX_END);
-        const char* left_bound = fields_start(this->fields()) +
-                                 this->fields().get_item_end_offset(this->keys());
+        const char* left_bound = this->node.p_start() +
+                                 this->node.fields().get_item_end_offset(this->node.keys());
         size_t& index_2 = i_position.index;
         if (i_stage == STAGE_LEFT) {
           if (index_2 == INDEX_END) {
-            index_2 = this->keys();
+            index_2 = this->node.keys();
           }
           i_position.nxt = search_position_t::nxt_t::begin();
 
@@ -2528,21 +2563,21 @@ namespace crimson::os::seastore::onode {
           auto p_value = item_iterator_t<NODE_TYPE>::insert(
               *this->extent, key, value,
               left_bound,
-              const_cast<char*>(fields_start(this->fields())) +
-                this->fields().get_item_end_offset(index_2),
+              const_cast<char*>(this->node.p_start()) +
+                this->node.fields().get_item_end_offset(index_2),
               estimated_size_right,
               dedup_type);
 
           FieldType::insert_at(*this->extent, key,
-                               this->fields(), index_2, estimated_size_right);
+                               this->node.fields(), index_2, estimated_size_right);
           return p_value;
         }
         if (index_2 == INDEX_END) {
-          index_2 = this->keys() - 1;
+          index_2 = this->node.keys() - 1;
         }
 
         // modify block at STAGE_STRING
-        auto range = this->get_nxt_container(index_2);
+        auto range = this->node.get_nxt_container(index_2);
         item_iterator_t<NODE_TYPE> iter(range);
         size_t& index_1 = i_position.nxt.index;
         if (index_1 == INDEX_END) {
@@ -2574,7 +2609,7 @@ namespace crimson::os::seastore::onode {
               *this->extent, key, value,
               left_bound, p_insert, estimated_size, dedup_type);
 
-          FieldType::update_size_at(*this->extent, this->fields(), index_2, estimated_size);
+          FieldType::update_size_at(*this->extent, this->node.fields(), index_2, estimated_size);
           return p_value;
         }
         if (index_1 == INDEX_END) {
@@ -2594,7 +2629,7 @@ namespace crimson::os::seastore::onode {
             *this->extent, key, value,
             index_0, sub_items, left_bound, estimated_size);
 
-        FieldType::update_size_at(*this->extent, this->fields(), index_2, estimated_size);
+        FieldType::update_size_at(*this->extent, this->node.fields(), index_2, estimated_size);
         return p_value;
       } else {
         // not implemented
@@ -2648,7 +2683,7 @@ namespace crimson::os::seastore::onode {
     } else {
       assert(false);
     }
-    ret->init(extent, is_level_tail, parent_info);
+    ret->init(extent, is_level_tail, &parent_info);
     return ret;
   }
 
@@ -3466,6 +3501,7 @@ namespace crimson::os::seastore::onode {
     struct _BaseEmpty {};
     class _BaseWithNxtIterator {
      protected:
+      // TODO: consolidate container_t and iterator_t to make copy easier.
       typename staged<typename Params::next_param_t>::container_t _nxt_container;
       typename staged<typename Params::next_param_t>::StagedIterator _nxt;
     };
@@ -3892,7 +3928,7 @@ namespace crimson::os::seastore::onode {
   index_view_t NodeT<FieldType, NODE_TYPE, ConcreteType>::get_index_view(
       const search_position_t& position) const {
     index_view_t ret;
-    node_to_stage_t<me_t>::get_index_view_normalized(*this, position, ret);
+    node_to_stage_t<node_t>::get_index_view_normalized(this->node, position, ret);
     return ret;
   }
 
@@ -3908,28 +3944,28 @@ namespace crimson::os::seastore::onode {
       if (position.is_end()) {
         assert(is_level_tail());
         if constexpr (FIELD_TYPE == field_type_t::N3) {
-          return &fields().child_addrs[keys()];
+          return &node.fields().child_addrs[node.keys()];
         } else {
-          auto offset_start = fields().get_item_end_offset(keys());
+          auto offset_start = node.fields().get_item_end_offset(node.keys());
           assert(offset_start <= FieldType::SIZE);
           offset_start -= sizeof(laddr_t);
-          auto p_addr = fields_start(fields()) + offset_start;
+          auto p_addr = node.p_start() + offset_start;
           return reinterpret_cast<const laddr_t*>(p_addr);
         }
       }
     } else {
       assert(!position.is_end());
     }
-    return node_to_stage_t<me_t>::get_p_value_normalized(*this, position);
+    return node_to_stage_t<node_t>::get_p_value_normalized(this->node, position);
   }
 
   template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
   std::ostream& NodeT<FieldType, NODE_TYPE, ConcreteType>::dump(std::ostream& os) {
     os << *this << ":";
-    if (this->keys()) {
-      os << "\nheader: " << this->size_before(0u) << "B";
+    if (this->node.keys()) {
+      os << "\nheader: " << this->node.size_before(0u) << "B";
       size_t size = 0u;
-      return node_to_stage_t<me_t>::dump(*this, os, "", size);
+      return node_to_stage_t<node_t>::dump(this->node, os, "", size);
     } else {
       return os << " empty!";
     }
@@ -3938,7 +3974,7 @@ namespace crimson::os::seastore::onode {
   template <typename FieldType, typename ConcreteType>
   search_result_t InternalNodeT<FieldType, ConcreteType>::lower_bound(
       const onode_key_t& key, MatchHistory& history) {
-    auto ret = node_to_stage_t<me_t>::lower_bound_normalized(*this, key, history);
+    auto ret = node_to_stage_t<node_t>::lower_bound_normalized(this->node, key, history);
 
     auto& position = ret.position;
     laddr_t child_addr;
@@ -3964,13 +4000,13 @@ namespace crimson::os::seastore::onode {
   template <typename FieldType, typename ConcreteType>
   search_result_t LeafNodeT<FieldType, ConcreteType>::lower_bound(
       const onode_key_t& key, MatchHistory& history) {
-    if (unlikely(this->keys() == 0)) {
+    if (unlikely(this->node.keys() == 0)) {
       // only happens when root is empty
       history.set<STAGE_LEFT>(MatchKindCMP::NE);
       return search_result_t::from(this, staged_result_t<node_type_t::LEAF, STAGE_TOP>::end());
     }
 
-    auto result = node_to_stage_t<me_t>::lower_bound_normalized(*this, key, history);
+    auto result = node_to_stage_t<node_t>::lower_bound_normalized(this->node, key, history);
     if (result.is_end()) {
       assert(this->is_level_tail());
       // return an end cursor with leaf node
@@ -3980,12 +4016,12 @@ namespace crimson::os::seastore::onode {
 
   template <typename FieldType, typename ConcreteType>
   tree_cursor_t LeafNodeT<FieldType, ConcreteType>::lookup_largest() {
-    if (unlikely(this->keys() == 0)) {
+    if (unlikely(this->node.keys() == 0)) {
       // only happens when root is empty
       return tree_cursor_t::make_end();
     }
     tree_cursor_t ret{this, {}, nullptr};
-    node_to_stage_t<me_t>::lookup_largest_normalized(*this, ret.position, ret.p_value);
+    node_to_stage_t<node_t>::lookup_largest_normalized(this->node, ret.position, ret.p_value);
     return ret;
   }
 
@@ -4012,21 +4048,21 @@ namespace crimson::os::seastore::onode {
     }
 
     // TODO: no need to cast after insert is generalized
-    auto& _i_position = cast_down<node_to_stage_t<me_t>::STAGE>(i_position);
+    auto& _i_position = cast_down<node_to_stage_t<node_t>::STAGE>(i_position);
 
     std::cout << "should split:"
               << "\n  insert at: " << _i_position
               << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
               << std::endl;
 
-    size_t empty_size = this->size_before(0);
+    size_t empty_size = this->node.size_before(0);
     size_t available_size = this->total_size() - empty_size;
     size_t target_split_size = empty_size + (available_size + i_estimated_size) / 2;
     // TODO adjust NODE_BLOCK_SIZE according to this requirement
     assert(i_estimated_size < available_size / 2);
-    typename node_to_stage_t<me_t>::StagedIterator split_at;
-    bool i_to_left = node_to_stage_t<me_t>::locate_split(
-        *this, target_split_size, _i_position, i_stage, i_estimated_size, split_at);
+    typename node_to_stage_t<node_t>::StagedIterator split_at;
+    bool i_to_left = node_to_stage_t<node_t>::locate_split(
+        this->node, target_split_size, _i_position, i_stage, i_estimated_size, split_at);
 
     std::cout << "\n  split at: " << split_at << ", is_left=" << i_to_left
               << "\n  insert at: " << _i_position
@@ -4034,32 +4070,32 @@ namespace crimson::os::seastore::onode {
 
     auto right_node = ConcreteType::allocate(this->is_level_tail());
     // TODO: identify conditions for cross-node string deduplication
-    typename node_to_stage_t<me_t>::StagedAppender appender;
+    typename node_to_stage_t<node_t>::StagedAppender appender;
     appender.init(right_node->extent.get(),
-                  const_cast<char*>(fields_start(right_node->fields())));
+                  const_cast<char*>(right_node->node.p_start()));
     if (!i_to_left) {
       // append split [start(split_at), i_position)
-      node_to_stage_t<me_t>::append_until(
+      node_to_stage_t<node_t>::append_until(
           split_at, appender, _i_position, i_stage);
       std::cout << "  insert right at: " << _i_position << std::endl;
       // append split [i_position]
-      bool is_end = node_to_stage_t<me_t>::append_insert(
+      bool is_end = node_to_stage_t<node_t>::append_insert(
           key, value, split_at, appender, i_stage);
       assert(split_at.is_end() == is_end);
     }
 
     // append split (i_position, end)
-    auto pos_end = node_to_stage_t<me_t>::position_t::end();
-    node_to_stage_t<me_t>::append_until(
-        split_at, appender, pos_end, node_to_stage_t<me_t>::STAGE);
+    auto pos_end = node_to_stage_t<node_t>::position_t::end();
+    node_to_stage_t<node_t>::append_until(
+        split_at, appender, pos_end, node_to_stage_t<node_t>::STAGE);
     assert(split_at.is_end());
     appender.wrap();
 
     right_node->dump(std::cout) << std::endl << std::endl;
 
     // trim left
-    this->set_level_tail(false);
-    // node_to_stage_t<me_t>::trim(*this, split_at);
+    this->node.set_level_tail(false);
+    // node_to_stage_t<node_t>::trim(*this, split_at);
 
     if (i_to_left) {
       // insert to left
