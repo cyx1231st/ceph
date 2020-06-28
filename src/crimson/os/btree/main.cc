@@ -10,6 +10,7 @@
 
 #include "global/signal_handler.h"
 
+#include "tree.h"
 #include "btree.h"
 
 using namespace crimson::os::seastore::onode;
@@ -333,11 +334,11 @@ int main(int argc, char* argv[])
           key.gen = k;
 
           MatchHistory history;
-          auto [cursor, success] = leaf_node->insert(key, onodes.pick_largest(), history);
+          auto [p_cursor, success] = leaf_node->insert(key, onodes.pick_largest(), history);
           assert(success == true);
-          assert(cursor.leaf_node == leaf_node);
-          assert(cursor.p_value);
-          Onodes::validate(*cursor.p_value);
+          assert(p_cursor->get_leaf_node() == leaf_node);
+          assert(p_cursor->get_p_value());
+          Onodes::validate(*p_cursor->get_p_value());
         }
       }
     }
@@ -391,5 +392,5 @@ int main(int argc, char* argv[])
     std::cout << std::endl;
   }
 
-  transaction_manager.free_all();
+  get_transaction_manager().free_all();
 }
