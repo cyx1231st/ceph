@@ -107,7 +107,6 @@ class leaf_sub_items_t {
   //       and the minimal size of onode_t
   using num_keys_t = uint8_t;
 
-  leaf_sub_items_t() = default;
   leaf_sub_items_t(const memory_range_t& range) {
     assert(range.p_start < range.p_end);
     auto _p_num_keys = range.p_end - sizeof(num_keys_t);
@@ -120,6 +119,12 @@ class leaf_sub_items_t {
     p_items_end = reinterpret_cast<const char*>(&get_offset(keys() - 1));
     assert(range.p_start < p_items_end);
     assert(range.p_start == get_item_start(keys() - 1));
+  }
+
+  bool operator==(const leaf_sub_items_t& x) {
+    return (p_num_keys == x.p_num_keys &&
+            p_offsets == x.p_offsets &&
+            p_items_end == x.p_items_end);
   }
 
   const node_offset_t& get_offset(size_t index) const {
@@ -200,7 +205,6 @@ auto constexpr APPENDER_LIMIT = 3u;
 
 class leaf_sub_items_t::Appender {
   struct range_items_t {
-    leaf_sub_items_t src;
     size_t from;
     size_t items;
   };
@@ -221,9 +225,14 @@ class leaf_sub_items_t::Appender {
     if (items == 0) {
       return;
     }
+    if (op_src) {
+      assert(*op_src == src);
+    } else {
+      op_src = src;
+    }
     assert(from < src.keys());
     assert(from + items <= src.keys());
-    appends[cnt] = range_items_t{src, from, items};
+    appends[cnt] = range_items_t{from, items};
     ++cnt;
   }
   void append(const onode_key_t& key, const onode_t& value) {
@@ -234,6 +243,7 @@ class leaf_sub_items_t::Appender {
   char* wrap();
 
  private:
+  std::optional<leaf_sub_items_t> op_src;
   LogicalCachedExtent* p_dst;
   char* p_append;
   var_t appends[APPENDER_LIMIT];

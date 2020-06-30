@@ -290,11 +290,8 @@ struct staged {
    public:
     using me_t = _iterator_t<CTYPE>;
 
-    _iterator_t(_iterator_t&& other) { *this = std::move(other); }
-    _iterator_t& operator=(_iterator_t&& other) {
-      p_container = other.p_container;
-      _index = other._index;
-      return *this;
+    _iterator_t(const container_t& container) : container{container} {
+      assert(container.keys());
     }
 
     size_t index() const {
@@ -302,31 +299,30 @@ struct staged {
     }
     key_get_type get_key() const {
       assert(!is_end());
-      return (*p_container)[_index];
+      return container[_index];
     }
     size_t size_to_nxt() const {
       assert(!is_end());
-      return p_container->size_to_nxt_at(_index);
+      return container.size_to_nxt_at(_index);
     }
     template <typename T = typename staged<typename Params::next_param_t>::container_t>
     std::enable_if_t<!IS_BOTTOM, T> get_nxt_container() const {
       assert(!is_end());
-      return p_container->get_nxt_container(_index);
+      return container.get_nxt_container(_index);
     }
     template <typename T = value_t>
     std::enable_if_t<IS_BOTTOM, const T*> get_p_value() const {
       assert(!is_end());
-      return p_container->get_p_value(_index);
+      return container.get_p_value(_index);
     }
     bool is_last() const {
-      assert(p_container->keys());
-      return _index + 1 == p_container->keys();
+      return _index + 1 == container.keys();
     }
-    bool is_end() const { return _index == p_container->keys(); }
+    bool is_end() const { return _index == container.keys(); }
     size_t size() const {
       assert(!is_end());
-      return p_container->size_before(_index + 1) -
-             p_container->size_before(_index);
+      return container.size_before(_index + 1) -
+             container.size_before(_index);
     }
     me_t& operator++() {
       assert(!is_end());
@@ -343,16 +339,29 @@ struct staged {
     MatchKindBS seek(const onode_key_t& key, bool exclude_last) {
       assert(!is_end());
       assert(index() == 0);
-      size_t end_index = p_container->keys();
+      size_t end_index = container.keys();
       if (exclude_last) {
         assert(end_index);
         --end_index;
-        assert(compare_to(key, (*p_container)[end_index]) == MatchKindCMP::NE);
+        assert(compare_to(key, container[end_index]) == MatchKindCMP::NE);
       }
       auto ret = binary_search(key, _index, end_index,
-          [this] (size_t index) { return (*p_container)[index]; });
+          [this] (size_t index) { return container[index]; });
       _index = ret.index;
       return ret.match;
+    }
+
+    void seek_at(size_t index) {
+      assert(!is_end());
+      assert(this->index() == 0);
+      assert(index < container.keys());
+      _index = index;
+    }
+
+    void seek_last() {
+      assert(!is_end());
+      assert(index() == 0);
+      _index = container.keys() - 1;
     }
 
     // Note: possible to return an end iterator when is_exclusive is true
@@ -362,10 +371,10 @@ struct staged {
                                std::optional<bool>& i_to_left) {
       assert(!is_end());
       assert(index() == 0);
-      assert(i_index < p_container->keys() || i_index == INDEX_END);
+      assert(i_index < container.keys() || i_index == INDEX_END);
       if constexpr (!is_exclusive) {
         if (i_index == INDEX_END) {
-          i_index = p_container->keys() - 1;
+          i_index = container.keys() - 1;
         }
       }
       auto start_size_1 = start_size + extra_size;
@@ -382,15 +391,15 @@ struct staged {
               --index;
             }
           }
-          current_size += p_container->size_before(index);
+          current_size += container.size_before(index);
         }
         return current_size;
       };
       size_t s_end;
       if constexpr (is_exclusive) {
-        s_end = p_container->keys();
+        s_end = container.keys();
       } else {
-        s_end = p_container->keys() - 1;
+        s_end = container.keys() - 1;
       }
       _index = binary_search_r(0, s_end, f_get_used_size, target_size).index;
       size_t current_size = f_get_used_size(_index);
@@ -409,12 +418,12 @@ struct staged {
         if (unlikely(index == 0)) {
           current_size = start_size;
         } else {
-          current_size = start_size_1 + p_container->size_before(index);
+          current_size = start_size_1 + container.size_before(index);
         }
         return current_size;
       };
       _index = binary_search_r(
-          0, p_container->keys() - 1, f_get_used_size, target_size).index;
+          0, container.keys() - 1, f_get_used_size, target_size).index;
       size_t current_size = f_get_used_size(_index);
       assert(current_size <= target_size);
       return current_size;
@@ -426,47 +435,31 @@ struct staged {
                         size_t& to_index,
                         match_stage_t to_stage) {
       assert(to_stage <= STAGE);
-      auto num_keys = p_container->keys();
+      auto num_keys = container.keys();
       size_t items;
       if (to_index == INDEX_END) {
         if (to_stage == STAGE) {
           items = num_keys - _index;
-          appender.append(*p_container, _index, items);
+          appender.append(container, _index, items);
           _index = num_keys;
         } else {
           assert(!is_end());
           items = num_keys - 1 - _index;
-          appender.append(*p_container, _index, items);
+          appender.append(container, _index, items);
           _index = num_keys - 1;
         }
         to_index = _index;
       } else {
         assert(_index <= to_index);
         items = to_index - _index;
-        appender.append(*p_container, _index, items);
+        appender.append(container, _index, items);
         _index = to_index;
       }
     }
 
-    static me_t begin(const container_t& container) {
-      assert(container.keys() != 0);
-      return me_t(container, 0u);
-    }
-    static me_t last(const container_t& container) {
-      assert(container.keys() != 0);
-      return me_t(container, container.keys() - 1);
-    }
-    static me_t at(const container_t& container, size_t index) {
-      assert(index < container.keys());
-      return me_t(container, index);
-    }
-
    private:
-    _iterator_t(const container_t& container, size_t index)
-      : p_container{&container}, _index{index} {}
-
-    const container_t* p_container;
-    size_t _index;
+    container_t container;
+    size_t _index = 0;
   };
 
   template <ContainerType CTYPE>
@@ -488,54 +481,50 @@ struct staged {
    public:
     using me_t = _iterator_t<CTYPE>;
 
-    _iterator_t(_iterator_t&& other) { *this = std::move(other); }
-    _iterator_t& operator=(_iterator_t&& other) {
-      p_container = other.p_container;
-      _is_end = other._is_end;
-      end_index = other.end_index;
-      return *this;
+    _iterator_t(const container_t& container) : container{container} {
+      assert(index() == 0);
     }
 
     size_t index() const {
       if (is_end()) {
         return end_index;
       } else {
-        return p_container->index();
+        return container.index();
       }
     }
     key_get_type get_key() const {
       assert(!is_end());
-      return p_container->get_key();
+      return container.get_key();
     }
     size_t size_to_nxt() const {
       assert(!is_end());
-      return p_container->size_to_nxt();
+      return container.size_to_nxt();
     }
     const typename staged<typename Params::next_param_t>::container_t
     get_nxt_container() const {
       assert(!is_end());
-      return p_container->get_nxt_container();
+      return container.get_nxt_container();
     }
     bool is_last() const {
       assert(!is_end());
-      return !p_container->has_next();
+      return !container.has_next();
     }
     bool is_end() const { return _is_end; }
     me_t& operator++() {
       assert(!is_end());
       assert(!is_last());
-      ++(*p_container);
+      ++container;
       return *this;
     }
     void set_end() {
       assert(!is_end());
       assert(is_last());
       _is_end = true;
-      end_index = p_container->index() + 1;
+      end_index = container.index() + 1;
     }
     size_t size() const {
       assert(!is_end());
-      return p_container->size();
+      return container.size();
     }
     // Note: possible to return an end iterator
     MatchKindBS seek(const onode_key_t& key, bool exclude_last) {
@@ -552,8 +541,8 @@ struct staged {
         } else if (match == MatchKindCMP::EQ) {
           return MatchKindBS::EQ;
         } else {
-          if (p_container->has_next()) {
-            ++(*p_container);
+          if (container.has_next()) {
+            ++container;
           } else {
             // end
             break;
@@ -563,6 +552,24 @@ struct staged {
       assert(!exclude_last);
       set_end();
       return MatchKindBS::NE;
+    }
+
+    void seek_at(size_t index) {
+      assert(!is_end());
+      assert(this->index() == 0);
+      while (index > 0) {
+        assert(container.has_next());
+        ++container;
+        --index;
+      }
+    }
+
+    void seek_last() {
+      assert(!is_end());
+      assert(index() == 0);
+      while (container.has_next()) {
+        ++container;
+      }
     }
 
     // Note: possible to return an end iterator when is_exclusive is true
@@ -662,7 +669,7 @@ struct staged {
                         match_stage_t to_stage) {
       assert(to_stage <= STAGE);
       if (is_end()) {
-        assert(!p_container->has_next());
+        assert(!container.has_next());
         assert(to_stage == STAGE);
         assert(to_index == index() || to_index == INDEX_END);
         to_index = index();
@@ -682,35 +689,14 @@ struct staged {
         type = container_t::Appender::index_t::none;
         items = to_index - index();
       }
-      if (appender.append(*p_container, items, type)) {
+      if (appender.append(container, items, type)) {
         set_end();
       }
       to_index = index();
     }
 
-    static me_t begin(const container_t& container) {
-      assert(container.index() == 0u);
-      return me_t(container);
-    }
-    static me_t last(const container_t& container) {
-      while (container.has_next()) {
-        ++container;
-      }
-      return me_t(container);
-    }
-    static me_t at(const container_t& container, size_t index) {
-      while (index > 0) {
-        assert(container.has_next());
-        ++container;
-        --index;
-      }
-      return me_t(container);
-    }
-
    private:
-    _iterator_t(const container_t& container) : p_container{&container} {}
-
-    const container_t* p_container;
+    container_t container;
     bool _is_end = false;
     size_t end_index;
   };
@@ -718,6 +704,7 @@ struct staged {
   /*
    * iterator_t encapsulates both indexable and iterative implementations
    * from a *non-empty* container.
+   * cstr(const container_t&)
    * access:
    *   index() -> size_t
    *   get_key() -> key_get_type (const reference or value type)
@@ -732,6 +719,8 @@ struct staged {
    * modifiers:
    *   operator++() -> iterator_t&
    *   set_end()
+   *   seek_at(index)
+   *   seek_last()
    *   seek(key, exclude_last) -> MatchKindBS
    *   seek_split_inserted<bool is_exclusive>(
    *       start_size, extra_size, target_size, i_index, i_size,
@@ -741,12 +730,6 @@ struct staged {
    *     -> split_size
    *   seek_split(start_size, extra_size, target_size) -> split_size
    *   copy_out_until(appender, to_index, to_stage) (can be end)
-   * factory:
-   *   static begin(container) -> iterator_t
-   *   static last(container) -> iterator_t
-   *   static at(container, index) -> iterator_t
-   *   static end(container) -> iterator_t
-   *
    */
   using iterator_t = _iterator_t<CONTAINER_TYPE>;
 
@@ -785,7 +768,8 @@ struct staged {
 
   static void
   lookup_largest(const container_t& container, position_t& position, const onode_t*& p_value) {
-    auto iter = iterator_t::last(container);
+    auto iter = iterator_t(container);
+    iter.seek_last();
     position.index = iter.index();
     if constexpr (IS_BOTTOM) {
       p_value = iter.get_p_value();
@@ -797,7 +781,8 @@ struct staged {
   }
 
   static const value_t* get_p_value(const container_t& container, const position_t& position) {
-    auto iter = iterator_t::at(container, position.index);
+    auto iter = iterator_t(container);
+    iter.seek_at(position.index);
     if constexpr (!IS_BOTTOM) {
       auto nxt_container = iter.get_nxt_container();
       return staged<typename Params::next_param_t>::get_p_value(
@@ -809,7 +794,8 @@ struct staged {
 
   static void get_index_view(
       const container_t& container, const position_t& position, index_view_t& output) {
-    auto iter = iterator_t::at(container, position.index);
+    auto iter = iterator_t(container);
+    iter.seek_at(position.index);
     output.set(iter.get_key());
     if constexpr (!IS_BOTTOM) {
       auto nxt_container = iter.get_nxt_container();
@@ -827,7 +813,7 @@ struct staged {
         if constexpr (!IS_BOTTOM) {
           assert(history.get<STAGE - 1>().has_value());
           if (history.is_PO<STAGE - 1>()) {
-            auto iter = iterator_t::begin(container);
+            auto iter = iterator_t(container);
             bool test_key_equal;
             if constexpr (STAGE == STAGE_STRING) {
               test_key_equal = (iter.get_key().type() == ns_oid_view_t::Type::MIN);
@@ -844,7 +830,8 @@ struct staged {
           }
         }
         // IS_BOTTOM || !history.is_PO<STAGE - 1>()
-        auto iter = iterator_t::last(container);
+        auto iter = iterator_t(container);
+        iter.seek_last();
         if constexpr (STAGE == STAGE_STRING) {
           assert(iter.get_key().type() == ns_oid_view_t::Type::MAX);
         } else {
@@ -864,7 +851,7 @@ struct staged {
         exclude_last = true;
       }
     }
-    auto iter = iterator_t::begin(container);
+    auto iter = iterator_t(container);
     auto bs_match = iter.seek(key, exclude_last);
     if (iter.is_end()) {
       assert(!exclude_last);
@@ -953,7 +940,7 @@ struct staged {
                             std::ostream& os,
                             const std::string& prefix,
                             size_t& size) {
-    auto iter = iterator_t::begin(container);
+    auto iter = iterator_t(container);
     assert(!iter.is_end());
     std::string prefix_blank(prefix.size(), ' ');
     const std::string* p_prefix = &prefix;
@@ -988,8 +975,6 @@ struct staged {
   struct _BaseEmpty {};
   class _BaseWithNxtIterator {
    protected:
-    // TODO: consolidate container_t and iterator_t to make copy easier.
-    typename staged<typename Params::next_param_t>::container_t _nxt_container;
     typename staged<typename Params::next_param_t>::StagedIterator _nxt;
   };
   class StagedIterator
@@ -1022,14 +1007,14 @@ struct staged {
     iterator_t& get() { return *iter; }
     void set(const container_t& container) {
       assert(!valid());
-      iter = iterator_t::begin(container);
+      iter = iterator_t(container);
     }
     void set_end() { iter->set_end(); }
     typename staged<typename Params::next_param_t>::StagedIterator& nxt() {
       if constexpr (!IS_BOTTOM) {
         if (!this->_nxt.valid()) {
-          this->_nxt_container = iter->get_nxt_container();
-          this->_nxt.set(this->_nxt_container);
+          auto nxt_container = iter->get_nxt_container();
+          this->_nxt.set(nxt_container);
         }
         return this->_nxt;
       } else {

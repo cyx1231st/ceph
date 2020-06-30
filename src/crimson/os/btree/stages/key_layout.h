@@ -110,9 +110,6 @@ struct string_key_view_t {
       p_key = nullptr;
     }
   }
-  string_key_view_t(const string_key_view_t& other) = default;
-  string_key_view_t& operator=(const string_key_view_t& other) = default;
-
   Type type() const {
     if (length == 0u) {
       return Type::MIN;
@@ -200,8 +197,6 @@ struct ns_oid_view_t {
   using Type = string_key_view_t::Type;
 
   ns_oid_view_t(const char* p_end) : nspace(p_end), oid(nspace.p_next_end()) {}
-  ns_oid_view_t(const ns_oid_view_t& other) = default;
-  ns_oid_view_t& operator=(const ns_oid_view_t& other) = default;
   Type type() const { return oid.type(); }
   const char* p_start() const { return oid.p_start(); }
   size_t size() const {

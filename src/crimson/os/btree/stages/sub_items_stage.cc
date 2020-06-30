@@ -31,10 +31,10 @@ char* leaf_sub_items_t::Appender::wrap() {
     auto& a = appends[i];
     std::visit(overloaded {
       [&] (const range_items_t& arg) {
-        int compensate = (last_offset - arg.src.get_offset_to_end(arg.from));
+        int compensate = (last_offset - op_src->get_offset_to_end(arg.from));
         node_offset_t offset;
         for (auto i = arg.from; i < arg.from + arg.items; ++i) {
-          offset = arg.src.get_offset(i) + compensate;
+          offset = op_src->get_offset(i) + compensate;
           p_cur -= sizeof(node_offset_t);
           p_dst->copy_in_mem(offset, p_cur);
         }
@@ -52,8 +52,8 @@ char* leaf_sub_items_t::Appender::wrap() {
     auto& a = appends[i];
     std::visit(overloaded {
       [&] (const range_items_t& arg) {
-        auto _p_start = arg.src.get_item_end(arg.from + arg.items);
-        size_t _len = arg.src.get_item_end(arg.from) - _p_start;
+        auto _p_start = op_src->get_item_end(arg.from + arg.items);
+        size_t _len = op_src->get_item_end(arg.from) - _p_start;
         p_cur -= _len;
         p_dst->copy_in_mem(_p_start, p_cur, _len);
       },

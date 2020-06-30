@@ -29,7 +29,6 @@ template <node_type_t NODE_TYPE>
 class item_iterator_t {
   using value_t = value_type_t<NODE_TYPE>;
  public:
-  item_iterator_t() = default;
   item_iterator_t(const memory_range_t& range)
     : p_items_start(range.p_start) { next_item_range(range.p_end); }
 

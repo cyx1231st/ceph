@@ -290,24 +290,25 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
             << "\n  insert at: " << _i_position
             << std::endl;
 
+  auto append_at = split_at;
   auto right_node = ConcreteType::allocate(this->is_level_tail());
   // TODO: identify conditions for cross-node string deduplication
   typename STAGE_T::StagedAppender appender;
   appender.init(&right_node->extent(),
                 const_cast<char*>(right_node->stage().p_start()));
   if (!i_to_left) {
-    // append split [start(split_at), i_position)
-    STAGE_T::append_until(split_at, appender, _i_position, i_stage);
+    // append split [start(append_at), i_position)
+    STAGE_T::append_until(append_at, appender, _i_position, i_stage);
     std::cout << "  insert right at: " << _i_position << std::endl;
     // append split [i_position]
-    bool is_end = STAGE_T::append_insert(key, value, split_at, appender, i_stage);
-    assert(split_at.is_end() == is_end);
+    bool is_end = STAGE_T::append_insert(key, value, append_at, appender, i_stage);
+    assert(append_at.is_end() == is_end);
   }
 
   // append split (i_position, end)
   auto pos_end = STAGE_T::position_t::end();
-  STAGE_T::append_until(split_at, appender, pos_end, STAGE_T::STAGE);
-  assert(split_at.is_end());
+  STAGE_T::append_until(append_at, appender, pos_end, STAGE_T::STAGE);
+  assert(append_at.is_end());
   appender.wrap();
 
   right_node->dump(std::cout) << std::endl << std::endl;
