@@ -3,15 +3,21 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <vector>
 
 #include "global/signal_handler.h"
 
+#include "dummy_transaction_manager.h"
+#include "node_impl.h"
+#include "stages/item_iterator_stage.h"
+#include "stages/node_stage.h"
+#include "stages/sub_items_stage.h"
 #include "tree.h"
-#include "btree.h"
 
 using namespace crimson::os::seastore::onode;
 

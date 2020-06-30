@@ -5,6 +5,8 @@
 
 #include <ostream>
 
+#include "fwd.h"
+
 namespace crimson::os::seastore::onode {
 
 // might be managed by an Onode class
@@ -32,17 +34,6 @@ struct onode_key_t {
   snap_t snap;
   gen_t gen;
 };
-
-enum class MatchKindCMP : int8_t { NE = -1, EQ = 0, PO };
-inline MatchKindCMP toMatchKindCMP(int value) {
-  if (value > 0) {
-    return MatchKindCMP::PO;
-  } else if (value < 0) {
-    return MatchKindCMP::NE;
-  } else {
-    return MatchKindCMP::EQ;
-  }
-}
 
 template <typename T>
 inline MatchKindCMP _compare_shard_pool(const onode_key_t& key, const T& target) {

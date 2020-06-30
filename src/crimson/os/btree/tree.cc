@@ -3,9 +3,10 @@
 
 #include "tree.h"
 
+#include <memory>
 #include <optional>
 
-#include "btree.h"
+#include "node.h"
 
 namespace crimson::os::seastore::onode {
 
@@ -118,7 +119,7 @@ std::ostream& Btree::dump(std::ostream& os) {
 Btree& Btree::get() {
   static std::unique_ptr<Btree> singleton;
   if (!singleton) {
-    singleton.reset(new Btree(LeafNode0::allocate(true)));
+    singleton.reset(new Btree(Node::allocate_root()));
   }
   return *singleton;
 }
