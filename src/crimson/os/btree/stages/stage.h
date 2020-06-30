@@ -1411,6 +1411,4 @@ struct _node_to_stage_t<NodeType,
 template <typename NodeType>
 using node_to_stage_t = typename _node_to_stage_t<NodeType>::type;
 
-#define STAGE_T node_to_stage_t<node_t>
-
 }

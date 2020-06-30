@@ -6,6 +6,8 @@
 #include <cassert>
 #include <ostream>
 
+#include "fwd.h"
+
 namespace crimson::os::seastore::onode {
 
 constexpr uint8_t FIELD_TYPE_MAGIC = 0x3e;

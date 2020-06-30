@@ -8,31 +8,29 @@
 
 #include "node.h"
 #include "stages/node_layout.h"
-// TODO remove
-#include "stages/node_stage.h"
 
 namespace crimson::os::seastore::onode {
 
+template <typename FieldType, node_type_t NODE_TYPE>
+class node_extent_t;
 class LogicalCachedExtent;
 
 template <typename FieldType, node_type_t _NODE_TYPE, typename ConcreteType>
 class NodeT : virtual public Node {
  public:
-  // TODO: move out
-  using node_t = node_extent_t<FieldType, _NODE_TYPE>;
+  using node_stage_t = node_extent_t<FieldType, _NODE_TYPE>;
   using value_t = value_type_t<_NODE_TYPE>;
   static constexpr auto FIELD_TYPE = FieldType::FIELD_TYPE;
   static constexpr auto NODE_TYPE = _NODE_TYPE;
-  static constexpr auto EXTENT_SIZE = node_t::EXTENT_SIZE;
 
   virtual ~NodeT() = default;
 
   bool is_root() const override final { return !_parent_info.has_value(); }
   const parent_info_t& parent_info() const override final{ return *_parent_info; }
-  bool is_level_tail() const override final { return node.is_level_tail(); }
+  bool is_level_tail() const override final { return _is_level_tail; }
   field_type_t field_type() const override final { return FIELD_TYPE; }
   laddr_t laddr() const override final;
-  level_t level() const override final { return node.level(); }
+  level_t level() const override final;
   index_view_t get_index_view(const search_position_t&) const override final;
   std::ostream& dump(std::ostream&) const override final;
   std::ostream& dump_brief(std::ostream& os) const override final;
@@ -46,28 +44,27 @@ class NodeT : virtual public Node {
 #endif
 
  protected:
-  static Ref<ConcreteType> _allocate(level_t level, bool level_tail);
+  node_stage_t stage() const;
+  LogicalCachedExtent& extent();
+  void set_level_tail(bool value) { _is_level_tail = value; }
   const value_t* get_value_ptr(const search_position_t&);
+  static Ref<ConcreteType> _allocate(level_t level, bool level_tail);
 
  private:
   void init(Ref<LogicalCachedExtent> _extent,
-            bool _is_level_tail,
+            bool is_level_tail,
             const parent_info_t* p_info) override final;
 
- protected:
-  Ref<LogicalCachedExtent> extent;
-  node_t node;
-
- private:
   std::optional<parent_info_t> _parent_info;
+  bool _is_level_tail;
+  Ref<LogicalCachedExtent> _extent;
 };
 
 template <typename FieldType, typename ConcreteType>
 class InternalNodeT : public NodeT<FieldType, node_type_t::INTERNAL, ConcreteType> {
  public:
   using parent_t = NodeT<FieldType, node_type_t::INTERNAL, ConcreteType>;
-  // TODO: move out
-  using node_t = typename parent_t::node_t;
+  using node_stage_t = typename parent_t::node_stage_t;
 
   virtual ~InternalNodeT() = default;
 
@@ -109,8 +106,7 @@ template <typename FieldType, typename ConcreteType>
 class LeafNodeT: public LeafNode, public NodeT<FieldType, node_type_t::LEAF, ConcreteType> {
  public:
   using parent_t = NodeT<FieldType, node_type_t::LEAF, ConcreteType>;
-  // TODO: move out
-  using node_t = typename parent_t::node_t;
+  using node_stage_t = typename parent_t::node_stage_t;
 
   virtual ~LeafNodeT() = default;
 

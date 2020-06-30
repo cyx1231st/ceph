@@ -19,18 +19,8 @@ class node_extent_t {
   static constexpr node_offset_t EXTENT_SIZE =
     (FieldType::SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
 
-  // TODO: hide
-  const char* p_start() const { return fields_start(*p_fields); }
-  const FieldType& fields() const { return *p_fields; }
-
-  bool is_level_tail() const { return _is_level_tail; }
-  void set_level_tail(bool value) { _is_level_tail = value; }
-  level_t level() const { return p_fields->header.level; }
-  void init(const FieldType* _p_fields, bool level_tail) {
-    assert(!p_fields);
-    p_fields = _p_fields;
-    set_level_tail(level_tail);
-
+  node_extent_t(const FieldType* p_fields, const bool* p_is_level_tail)
+      : p_fields{p_fields}, p_is_level_tail{p_is_level_tail} {
     assert(p_fields->header.get_node_type() == NODE_TYPE);
     assert(p_fields->header.get_field_type() == FieldType::FIELD_TYPE);
 #ifndef NDEBUG
@@ -42,11 +32,32 @@ class node_extent_t {
 #endif
   }
 
+  // TODO: hide
+  const char* p_start() const { return fields_start(*p_fields); }
+  const FieldType& fields() const { return *p_fields; }
+
+  level_t level() const { return p_fields->header.level; }
   size_t free_size() const {
     return p_fields->template free_size_before<NODE_TYPE>(
         is_level_tail(), keys());
   }
   size_t total_size() const;
+
+  template <node_type_t T = NODE_TYPE>
+  std::enable_if_t<T == node_type_t::INTERNAL, const laddr_t*>
+  get_end_p_laddr() {
+    assert(is_level_tail());
+    if constexpr (FIELD_TYPE == field_type_t::N3) {
+      #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+      return &p_fields->child_addrs[keys()];
+    } else {
+      auto offset_start = p_fields->get_item_end_offset(keys());
+      assert(offset_start <= FieldType::SIZE);
+      offset_start -= sizeof(laddr_t);
+      auto p_addr = p_start() + offset_start;
+      return reinterpret_cast<const laddr_t*>(p_addr);
+    }
+  }
 
   // container type system
   using key_get_type = typename FieldType::key_get_type;
@@ -82,8 +93,10 @@ class node_extent_t {
   class Appender;
 
  private:
-  const FieldType* p_fields = nullptr;
-  bool _is_level_tail;
+  bool is_level_tail() const { return *p_is_level_tail; }
+
+  const FieldType* p_fields;
+  const bool* p_is_level_tail;
 };
 
 template <typename FieldType, node_type_t NODE_TYPE>
