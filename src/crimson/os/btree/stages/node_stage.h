@@ -89,6 +89,9 @@ class node_extent_t {
   }
 
   static node_offset_t estimate_insert_one(const onode_key_t* p_key, const value_t& value);
+  static size_t trim_until(LogicalCachedExtent&, const node_extent_t&, size_t index);
+  static size_t trim_at(LogicalCachedExtent&, const node_extent_t&,
+                        size_t index, size_t trimmed);
 
   class Appender;
 

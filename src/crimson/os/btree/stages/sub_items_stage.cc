@@ -7,6 +7,78 @@
 
 namespace crimson::os::seastore::onode {
 
+const onode_t* leaf_sub_items_t::insert_at(
+    LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
+    size_t index, leaf_sub_items_t& sub_items, const char* p_left_bound, size_t estimated_size) {
+  assert(estimated_size == estimate_insert_one(value));
+
+  // a. [... item(index)] << estimated_size
+  const char* p_shift_start = p_left_bound;
+  const char* p_shift_end = sub_items.get_item_end(index);
+  dst.shift_mem(p_shift_start, p_shift_end - p_shift_start, -(int)estimated_size);
+
+  // b. insert item
+  auto p_insert = const_cast<char*>(p_shift_end - estimated_size);
+  auto p_value = reinterpret_cast<const onode_t*>(p_insert);
+  dst.copy_in_mem(&value, p_insert, value.size);
+  p_insert += value.size;
+  dst.copy_in_mem(snap_gen_t::from_key(key), p_insert);
+  assert(p_insert + sizeof(snap_gen_t) + sizeof(node_offset_t) == p_shift_end);
+
+  // c. compensate affected offsets
+  auto item_size = value.size + sizeof(snap_gen_t);
+  for (auto i = index; i < sub_items.keys(); ++i) {
+    const node_offset_t& offset_i = sub_items.get_offset(i);
+    dst.copy_in_mem(node_offset_t(offset_i + item_size), (void*)&offset_i);
+  }
+
+  // d. [item(index-1) ... item(0) ... offset(index)] <<< sizeof(node_offset_t)
+  const char* p_offset = (index == 0 ?
+                          (const char*)&sub_items.get_offset(0) + sizeof(node_offset_t) :
+                          (const char*)&sub_items.get_offset(index - 1));
+  p_shift_start = p_shift_end;
+  p_shift_end = p_offset;
+  dst.shift_mem(p_shift_start, p_shift_end - p_shift_start, -(int)sizeof(node_offset_t));
+
+  // e. insert offset
+  node_offset_t offset_to_item_start = item_size + sub_items.get_offset_to_end(index);
+  dst.copy_in_mem(offset_to_item_start,
+                  const_cast<char*>(p_shift_end) - sizeof(node_offset_t));
+
+  // f. update num_sub_keys
+  dst.copy_in_mem(num_keys_t(sub_items.keys() + 1), (void*)sub_items.p_num_keys);
+
+  return p_value;
+}
+
+const onode_t* leaf_sub_items_t::insert_new(
+    LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
+    char*& p_insert) {
+  Appender appender(&dst, p_insert);
+  appender.append(key, value);
+  p_insert = appender.wrap();
+  return reinterpret_cast<const onode_t*>(p_insert);
+}
+
+size_t leaf_sub_items_t::trim_until(
+    LogicalCachedExtent& extent, leaf_sub_items_t& items, size_t index) {
+  assert(index != 0);
+  auto keys = items.keys();
+  assert(index <= keys);
+  if (index == keys) {
+    return 0;
+  }
+  size_t trim_items = keys - index;
+  const char* p_items_start = items.p_start();
+  const char* p_shift_start = items.get_item_end(index);
+  const char* p_shift_end = items.get_item_end(0);
+  size_t size_trim_offsets = sizeof(node_offset_t) * trim_items;
+  extent.shift_mem(p_shift_start, p_shift_end - p_shift_start,
+                   size_trim_offsets);
+  extent.copy_in_mem(num_keys_t(index), (void*)items.p_num_keys);
+  return size_trim_offsets + (p_shift_start - p_items_start);
+}
+
 // helper type for the visitor
 template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 // explicit deduction guide
@@ -66,59 +138,6 @@ char* leaf_sub_items_t::Appender::wrap() {
     }, a);
   }
   return p_cur;
-}
-
-const onode_t* leaf_sub_items_t::insert_new(
-    LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
-    char*& p_insert) {
-  Appender appender(&dst, p_insert);
-  appender.append(key, value);
-  p_insert = appender.wrap();
-  return reinterpret_cast<const onode_t*>(p_insert);
-}
-
-const onode_t* leaf_sub_items_t::insert_at(
-    LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
-    size_t index, leaf_sub_items_t& sub_items, const char* p_left_bound, size_t estimated_size) {
-  assert(estimated_size == estimate_insert_one(value));
-
-  // a. [... item(index)] << estimated_size
-  const char* p_shift_start = p_left_bound;
-  const char* p_shift_end = sub_items.get_item_end(index);
-  dst.shift_mem(p_shift_start, p_shift_end - p_shift_start, -(int)estimated_size);
-
-  // b. insert item
-  auto p_insert = const_cast<char*>(p_shift_end - estimated_size);
-  auto p_value = reinterpret_cast<const onode_t*>(p_insert);
-  dst.copy_in_mem(&value, p_insert, value.size);
-  p_insert += value.size;
-  dst.copy_in_mem(snap_gen_t::from_key(key), p_insert);
-  assert(p_insert + sizeof(snap_gen_t) + sizeof(node_offset_t) == p_shift_end);
-
-  // c. compensate affected offsets
-  auto item_size = value.size + sizeof(snap_gen_t);
-  for (auto i = index; i < sub_items.keys(); ++i) {
-    const node_offset_t& offset_i = sub_items.get_offset(i);
-    dst.copy_in_mem(node_offset_t(offset_i + item_size), (void*)&offset_i);
-  }
-
-  // d. [item(index-1) ... item(0) ... offset(index)] <<< sizeof(node_offset_t)
-  const char* p_offset = (index == 0 ?
-                          (const char*)&sub_items.get_offset(0) + sizeof(node_offset_t) :
-                          (const char*)&sub_items.get_offset(index - 1));
-  p_shift_start = p_shift_end;
-  p_shift_end = p_offset;
-  dst.shift_mem(p_shift_start, p_shift_end - p_shift_start, -(int)sizeof(node_offset_t));
-
-  // e. insert offset
-  node_offset_t offset_to_item_start = item_size + sub_items.get_offset_to_end(index);
-  dst.copy_in_mem(offset_to_item_start,
-                  const_cast<char*>(p_shift_end) - sizeof(node_offset_t));
-
-  // f. update num_sub_keys
-  dst.copy_in_mem(num_keys_t(sub_items.keys() + 1), (void*)&sub_items.keys());
-
-  return p_value;
 }
 
 }

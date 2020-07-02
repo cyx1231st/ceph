@@ -79,6 +79,9 @@ class item_iterator_t {
       LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
       const char* left_bound, char* p_insert,
       node_offset_t estimated_size, const ns_oid_view_t::Type& dedup_type);
+  static size_t trim_until(LogicalCachedExtent&, const item_iterator_t<NODE_TYPE>&);
+  static size_t trim_at(
+      LogicalCachedExtent&, const item_iterator_t<NODE_TYPE>&, size_t trimmed);
 
   class Appender;
 

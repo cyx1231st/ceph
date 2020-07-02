@@ -92,6 +92,51 @@ node_offset_t NODE_T::estimate_insert_one(
   return left_size + right_size;
 }
 
+template <typename FieldType, node_type_t NODE_TYPE>
+size_t NODE_T::trim_until(
+    LogicalCachedExtent& extent, const node_extent_t& node, size_t index) {
+  auto keys = node.keys();
+  assert(index <= keys);
+  if (index == keys) {
+    return 0;
+  }
+  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+    assert(false && "not implemented");
+  } else {
+    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+      if (node.is_level_tail()) {
+        assert(false && "not implemented");
+      }
+    }
+    extent.copy_in_mem(num_keys_t(index), (void*)&node.p_fields->num_keys);
+  }
+  // no need to calculate trim size for node
+  return 0;
+}
+
+template <typename FieldType, node_type_t NODE_TYPE>
+size_t NODE_T::trim_at(
+    LogicalCachedExtent& extent, const node_extent_t& node, size_t index, size_t trimmed) {
+  auto keys = node.keys();
+  assert(index < keys);
+  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+    assert(false && "not implemented");
+  } else {
+    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+      if (node.is_level_tail()) {
+        assert(false && "not implemented");
+      }
+    }
+    auto offset = node.p_fields->get_item_start_offset(index);
+    assert(offset + trimmed < node.p_fields->get_item_end_offset(index));
+    extent.copy_in_mem(node_offset_t(offset + trimmed),
+                       const_cast<void*>(node.p_fields->p_offset(index)));
+    extent.copy_in_mem(num_keys_t(index + 1), (void*)&node.p_fields->num_keys);
+  }
+  // no need to calculate trim size for node
+  return 0;
+}
+
 #define APPEND_T node_extent_t<FieldType, NODE_TYPE>::Appender
 
 template <typename FieldType, node_type_t NODE_TYPE>

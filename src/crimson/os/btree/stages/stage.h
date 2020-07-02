@@ -222,6 +222,10 @@ struct staged_params_node_3 {
   using next_param_t = staged_params_node_3<NodeType>;
 };
 
+#define NXT_STAGE_T staged<typename Params::next_param_t>
+
+enum class TrimType { BEFORE, AFTER, AT };
+
 template <typename Params>
 struct staged {
   static_assert(Params::STAGE >= STAGE_BOTTOM);
@@ -300,7 +304,7 @@ struct staged {
       assert(!is_end());
       return container.size_to_nxt_at(_index);
     }
-    template <typename T = typename staged<typename Params::next_param_t>::container_t>
+    template <typename T = typename NXT_STAGE_T::container_t>
     std::enable_if_t<!IS_BOTTOM, T> get_nxt_container() const {
       assert(!is_end());
       return container.get_nxt_container(_index);
@@ -452,6 +456,16 @@ struct staged {
       }
     }
 
+    size_t trim_until(LogicalCachedExtent& extent) {
+      return container_t::trim_until(extent, container, _index);
+    }
+
+    template <typename T = size_t>
+    std::enable_if_t<!IS_BOTTOM, T>
+    trim_at(LogicalCachedExtent& extent, size_t trimmed) {
+      return container_t::trim_at(extent, container, _index, trimmed);
+    }
+
    private:
     container_t container;
     size_t _index = 0;
@@ -495,8 +509,7 @@ struct staged {
       assert(!is_end());
       return container.size_to_nxt();
     }
-    const typename staged<typename Params::next_param_t>::container_t
-    get_nxt_container() const {
+    const typename NXT_STAGE_T::container_t get_nxt_container() const {
       assert(!is_end());
       return container.get_nxt_container();
     }
@@ -690,6 +703,18 @@ struct staged {
       to_index = index();
     }
 
+    size_t trim_until(LogicalCachedExtent& extent) {
+      if (is_end()) {
+        return 0;
+      }
+      return container_t::trim_until(extent, container);
+    }
+
+    size_t trim_at(LogicalCachedExtent& extent, size_t trimmed) {
+      assert(!is_end());
+      return container_t::trim_at(extent, container, trimmed);
+    }
+
    private:
     container_t container;
     bool _is_end = false;
@@ -725,6 +750,8 @@ struct staged {
    *     -> split_size
    *   seek_split(start_size, extra_size, target_size) -> split_size
    *   copy_out_until(appender, to_index, to_stage) (can be end)
+   *   trim_until(extent) -> trim_size
+   *   (!IS_BOTTOM) trim_at(extent, trimmed) -> trim_size
    */
   using iterator_t = _iterator_t<CONTAINER_TYPE>;
 
@@ -736,10 +763,9 @@ struct staged {
   smallest_result(const iterator_t& iter) {
     static_assert(!IS_BOTTOM);
     assert(!iter.is_end());
-    auto pos_smallest = staged<typename Params::next_param_t>::position_t::begin();
+    auto pos_smallest = NXT_STAGE_T::position_t::begin();
     auto nxt_container = iter.get_nxt_container();
-    auto value_ptr = staged<typename Params::next_param_t>::get_p_value(
-        nxt_container, pos_smallest);
+    auto value_ptr = NXT_STAGE_T::get_p_value(nxt_container, pos_smallest);
     return {{iter.index(), pos_smallest}, MatchKindBS::NE, value_ptr, STAGE};
   }
 
@@ -748,8 +774,7 @@ struct staged {
     static_assert(!IS_BOTTOM);
     assert(!iter.is_end());
     auto nxt_container = iter.get_nxt_container();
-    auto nxt_result = staged<typename Params::next_param_t>::lower_bound(
-        nxt_container, key, history);
+    auto nxt_result = NXT_STAGE_T::lower_bound(nxt_container, key, history);
     if (nxt_result.is_end()) {
       if (iter.is_last()) {
         return result_t::end();
@@ -770,8 +795,7 @@ struct staged {
       p_value = iter.get_p_value();
     } else {
       auto nxt_container = iter.get_nxt_container();
-      staged<typename Params::next_param_t>::lookup_largest(
-          nxt_container, position.nxt, p_value);
+      NXT_STAGE_T::lookup_largest(nxt_container, position.nxt, p_value);
     }
   }
 
@@ -780,8 +804,7 @@ struct staged {
     iter.seek_at(position.index);
     if constexpr (!IS_BOTTOM) {
       auto nxt_container = iter.get_nxt_container();
-      return staged<typename Params::next_param_t>::get_p_value(
-          nxt_container, position.nxt);
+      return NXT_STAGE_T::get_p_value(nxt_container, position.nxt);
     } else {
       return iter.get_p_value();
     }
@@ -794,8 +817,7 @@ struct staged {
     output.set(iter.get_key());
     if constexpr (!IS_BOTTOM) {
       auto nxt_container = iter.get_nxt_container();
-      return staged<typename Params::next_param_t>::get_index_view(
-          nxt_container, position.nxt, output);
+      return NXT_STAGE_T::get_index_view(nxt_container, position.nxt, output);
     }
   }
 
@@ -837,8 +859,7 @@ struct staged {
           return {{iter.index()}, MatchKindBS::EQ, value_ptr, MSTAT_EQ};
         } else {
           auto nxt_container = iter.get_nxt_container();
-          auto nxt_result = staged<typename Params::next_param_t>::lower_bound(
-              nxt_container, key, history);
+          auto nxt_result = NXT_STAGE_T::lower_bound(nxt_container, key, history);
           assert(!nxt_result.is_end());
           return result_t::from_nxt(iter.index(), nxt_result);
         }
@@ -946,8 +967,7 @@ struct staged {
       if constexpr (!IS_BOTTOM) {
         auto nxt_container = iter.get_nxt_container();
         size += iter.size_to_nxt();
-        staged<typename Params::next_param_t>::dump(
-            nxt_container, os, i_prefix, size);
+        NXT_STAGE_T::dump(nxt_container, os, i_prefix, size);
       } else {
         auto value_ptr = iter.get_p_value();
         size += iter.size();
@@ -970,7 +990,7 @@ struct staged {
   struct _BaseEmpty {};
   class _BaseWithNxtIterator {
    protected:
-    typename staged<typename Params::next_param_t>::StagedIterator _nxt;
+    typename NXT_STAGE_T::StagedIterator _nxt;
   };
   class StagedIterator
       : std::conditional_t<IS_BOTTOM, _BaseEmpty, _BaseWithNxtIterator> {
@@ -1005,7 +1025,7 @@ struct staged {
       iter = iterator_t(container);
     }
     void set_end() { iter->set_end(); }
-    typename staged<typename Params::next_param_t>::StagedIterator& nxt() {
+    typename NXT_STAGE_T::StagedIterator& nxt() {
       if constexpr (!IS_BOTTOM) {
         if (!this->_nxt.valid()) {
           auto nxt_container = iter->get_nxt_container();
@@ -1016,7 +1036,7 @@ struct staged {
         assert(false);
       }
     }
-    typename staged<typename Params::next_param_t>::StagedIterator& get_nxt() {
+    typename NXT_STAGE_T::StagedIterator& get_nxt() {
       if constexpr (!IS_BOTTOM) {
         return this->_nxt;
       } else {
@@ -1078,7 +1098,7 @@ struct staged {
     iterator_t& iter = split_at.get();
     current_size = iter.seek_split(current_size, extra_size, target_size);
     if constexpr (!IS_BOTTOM) {
-      staged<typename Params::next_param_t>::recursively_locate_split(
+      NXT_STAGE_T::recursively_locate_split(
           current_size, extra_size + iter.size_to_nxt(),
           target_size, split_at.nxt());
     }
@@ -1119,7 +1139,7 @@ struct staged {
         }
         if (!i_to_left.has_value()) {
           assert(iter.index() == i_index);
-          staged<typename Params::next_param_t>::recursively_locate_split_inserted(
+          NXT_STAGE_T::recursively_locate_split_inserted(
               current_size, extra_size + iter.size_to_nxt(), target_size,
               i_position.nxt, i_stage, i_size, i_to_left, split_at.nxt());
           assert(i_to_left.has_value());
@@ -1130,7 +1150,7 @@ struct staged {
       }
     }
     if constexpr (!IS_BOTTOM) {
-      staged<typename Params::next_param_t>::recursively_locate_split(
+      NXT_STAGE_T::recursively_locate_split(
           current_size, extra_size + iter.size_to_nxt(),
           target_size, split_at.nxt());
     }
@@ -1161,15 +1181,15 @@ struct staged {
    *   append(const container_t& src, size_t from, size_t items)
    *   wrap() -> char*
    * IF !IS_BOTTOM:
-   *   open_nxt(const key_get_type& partial_key)
+   *   open_nxt(const key_get_type&)
+   *   open_nxt(const onode_key_t&)
    *       -> std::tuple<LogicalCachedExtent&, char*>
    *   wrap_nxt(char* p_append)
-   *   require_wrap_nxt() -> bool
    * ELSE
    *   append(const onode_key_t& key, const value_t& value)
    */
   struct _BaseWithNxtAppender {
-    typename staged<typename Params::next_param_t>::StagedAppender _nxt;
+    typename NXT_STAGE_T::StagedAppender _nxt;
   };
   class StagedAppender
       : std::conditional_t<IS_BOTTOM, _BaseEmpty, _BaseWithNxtAppender> {
@@ -1223,8 +1243,7 @@ struct staged {
       appender.reset();
       return ret;
     }
-    typename staged<typename Params::next_param_t>::StagedAppender&
-    open_nxt(key_get_type paritial_key) {
+    typename NXT_STAGE_T::StagedAppender& open_nxt(key_get_type paritial_key) {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         require_wrap_nxt = true;
@@ -1235,8 +1254,7 @@ struct staged {
         assert(false);
       }
     }
-    typename staged<typename Params::next_param_t>::StagedAppender&
-    open_nxt(const onode_key_t& key) {
+    typename NXT_STAGE_T::StagedAppender& open_nxt(const onode_key_t& key) {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         require_wrap_nxt = true;
@@ -1247,8 +1265,7 @@ struct staged {
         assert(false);
       }
     }
-    typename staged<typename Params::next_param_t>::StagedAppender&
-    get_nxt() {
+    typename NXT_STAGE_T::StagedAppender& get_nxt() {
       if constexpr (!IS_BOTTOM) {
         assert(require_wrap_nxt);
         return this->_nxt;
@@ -1285,7 +1302,7 @@ struct staged {
       if (appender.in_progress()) {
         // we are in the progress of appending
         auto to_index_nxt = INDEX_END;
-        staged<typename Params::next_param_t>::_append_range(
+        NXT_STAGE_T::_append_range(
             src_iter.nxt(), appender.get_nxt(),
             to_index_nxt, STAGE - 1);
         ++src_iter;
@@ -1293,7 +1310,7 @@ struct staged {
       } else if (src_iter.in_progress()) {
         // cannot append the current item as-a-whole
         auto to_index_nxt = INDEX_END;
-        staged<typename Params::next_param_t>::_append_range(
+        NXT_STAGE_T::_append_range(
             src_iter.nxt(), appender.open_nxt(src_iter.get_key()),
             to_index_nxt, STAGE - 1);
         ++src_iter;
@@ -1314,7 +1331,7 @@ struct staged {
     } else {
       assert(stage < STAGE);
       // process append in the next stage
-      staged<typename Params::next_param_t>::append_until(
+      NXT_STAGE_T::append_until(
           src_iter.nxt(), appender.open_nxt(src_iter.get_key()),
           position.nxt, stage);
     }
@@ -1354,7 +1371,7 @@ struct staged {
     } else {
       assert(stage < STAGE);
       if constexpr (!IS_BOTTOM) {
-        auto nxt_is_end = staged<typename Params::next_param_t>::append_insert(
+        auto nxt_is_end = NXT_STAGE_T::append_insert(
             key, value, src_iter.get_nxt(), appender.get_nxt(), stage);
         if (nxt_is_end) {
           appender.wrap_nxt();
@@ -1367,6 +1384,54 @@ struct staged {
       } else {
         assert(false);
       }
+    }
+  }
+
+  static std::tuple<TrimType, size_t>
+  recursively_trim(LogicalCachedExtent& extent, StagedIterator& trim_at) {
+    if (!trim_at.valid()) {
+      return {TrimType::BEFORE, 0u};
+    }
+    if (trim_at.is_end()) {
+      return {TrimType::AFTER, 0u};
+    }
+
+    auto& iter = trim_at.get();
+    if constexpr (!IS_BOTTOM) {
+      auto [type, trimmed] = NXT_STAGE_T::recursively_trim(
+          extent, trim_at.get_nxt());
+      size_t trim_size;
+      if (type == TrimType::AFTER) {
+        if (iter.is_last()) {
+          return {TrimType::AFTER, 0u};
+        }
+        ++iter;
+        trim_size = iter.trim_until(extent);
+      } else if (type == TrimType::BEFORE) {
+        if (iter.index() == 0) {
+          return {TrimType::BEFORE, 0u};
+        }
+        trim_size = iter.trim_until(extent);
+      } else {
+        trim_size = iter.trim_at(extent, trimmed);
+      }
+      return {TrimType::AT, trim_size};
+    } else {
+      if (iter.index() == 0) {
+        return {TrimType::BEFORE, 0u};
+      } else {
+        auto trimmed = iter.trim_until(extent);
+        return {TrimType::AT, trimmed};
+      }
+    }
+  }
+
+  static void trim(LogicalCachedExtent& extent, StagedIterator& trim_at) {
+    auto [type, trimmed] = recursively_trim(extent, trim_at);
+    if (type == TrimType::AFTER) {
+      auto& iter = trim_at.get();
+      assert(iter.is_end());
+      iter.trim_until(extent);
     }
   }
 };

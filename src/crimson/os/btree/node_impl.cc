@@ -311,11 +311,12 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   assert(append_at.is_end());
   appender.wrap();
 
-  right_node->dump(std::cout) << std::endl << std::endl;
+  right_node->dump(std::cout) << std::endl;
 
   // trim left
   this->set_level_tail(false);
-  // STAGE_T::trim(*this, split_at);
+  STAGE_T::trim(this->extent(), split_at);
+  this->dump(std::cout) << std::endl << std::endl;
 
   if (i_to_left) {
     // insert to left

@@ -50,7 +50,7 @@ class internal_sub_items_t {
     return (p_first_item - index)->get_key();
   }
   size_t size_before(size_t index) const {
-    assert(false);
+    assert(false && "not implemented");
   }
   const laddr_t* get_p_value(size_t index) const {
     assert(index < num_items);
@@ -63,6 +63,10 @@ class internal_sub_items_t {
 
   static node_offset_t estimate_insert_new(const laddr_t&) {
     return estimate_insert_one();
+  }
+
+  static const size_t trim_until(LogicalCachedExtent&, internal_sub_items_t&, size_t) {
+    assert(false && "not implemented");
   }
 
   class Appender;
@@ -118,7 +122,7 @@ class leaf_sub_items_t {
     p_offsets = reinterpret_cast<const node_offset_t*>(_p_offsets);
     p_items_end = reinterpret_cast<const char*>(&get_offset(keys() - 1));
     assert(range.p_start < p_items_end);
-    assert(range.p_start == get_item_start(keys() - 1));
+    assert(range.p_start == p_start());
   }
 
   bool operator==(const leaf_sub_items_t& x) {
@@ -126,6 +130,8 @@ class leaf_sub_items_t {
             p_offsets == x.p_offsets &&
             p_items_end == x.p_items_end);
   }
+
+  const char* p_start() const { return get_item_end(keys()); }
 
   const node_offset_t& get_offset(size_t index) const {
     assert(index < keys());
@@ -148,7 +154,7 @@ class leaf_sub_items_t {
   // container type system
   using key_get_type = const snap_gen_t&;
   static constexpr auto CONTAINER_TYPE = ContainerType::INDEXABLE;
-  const num_keys_t& keys() const { return *p_num_keys; }
+  num_keys_t keys() const { return *p_num_keys; }
   key_get_type operator[](size_t index) const {
     assert(index < keys());
     auto pointer = get_item_end(index);
@@ -191,6 +197,8 @@ class leaf_sub_items_t {
   static const onode_t* insert_new(
       LogicalCachedExtent&, const onode_key_t&, const onode_t&,
       char*&);
+
+  static size_t trim_until(LogicalCachedExtent&, leaf_sub_items_t&, size_t index);
 
   class Appender;
 

@@ -57,6 +57,22 @@ const typename ITER_T::value_t* ITER_T::insert(
   }
 }
 
+template <node_type_t NODE_TYPE>
+size_t ITER_T::trim_until(LogicalCachedExtent& extent, const ITER_T& iter) {
+  assert(iter.index() != 0);
+  return iter.p_end() - iter.p_items_start;
+}
+
+template <node_type_t NODE_TYPE>
+size_t ITER_T::trim_at(
+    LogicalCachedExtent& extent, const ITER_T& iter, size_t trimmed) {
+  size_t trim_size = iter.p_start() - iter.p_items_start + trimmed;
+  assert(iter.get_back_offset() > trimmed);
+  node_offset_t new_offset = iter.get_back_offset() - trimmed;
+  extent.copy_in_mem(new_offset, (void*)iter.item_range.p_end);
+  return trim_size;
+}
+
 #define APPEND_T item_iterator_t<NODE_TYPE>::Appender
 
 template <node_type_t NODE_TYPE>

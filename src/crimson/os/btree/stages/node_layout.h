@@ -112,6 +112,10 @@ struct _node_fields_013_t {
     assert(offset <= SIZE);
     return offset;
   }
+  const void* p_offset(size_t index) const {
+    assert(index < num_keys);
+    return &slots[index].right_offset;
+  }
   node_offset_t get_item_end_offset(size_t index) const {
     return index == 0 ? SIZE : get_item_start_offset(index - 1);
   }
@@ -196,6 +200,10 @@ struct node_fields_2_t {
     auto offset = offsets[index];
     assert(offset <= SIZE);
     return offset;
+  }
+  const void* p_offset(size_t index) const {
+    assert(index < num_keys);
+    return &offsets[index];
   }
   node_offset_t get_item_end_offset(size_t index) const {
     return index == 0 ? SIZE : get_item_start_offset(index - 1);
