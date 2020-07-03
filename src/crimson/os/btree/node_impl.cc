@@ -213,7 +213,7 @@ Node::search_result_t L_NODE_T::lower_bound(
       assert(this->is_level_tail());
     }
     auto p_cursor = get_or_create_cursor(result.position, result.p_value);
-    return {p_cursor, result.match};
+    return {p_cursor, result.match()};
   }
 }
 

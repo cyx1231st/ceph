@@ -65,15 +65,18 @@ search_result_bs_t binary_search_r(
 }
 
 using match_stat_t = int8_t;
-constexpr match_stat_t MSTAT_PO = -2; // index is search_position_t::end()
-constexpr match_stat_t MSTAT_EQ = -1; // key == index
-constexpr match_stat_t MSTAT_NE0 = 0; // key == index [pool/shard crush ns/oid]; key < index [snap/gen]
-constexpr match_stat_t MSTAT_NE1 = 1; // key == index [pool/shard crush]; key < index [ns/oid]
-constexpr match_stat_t MSTAT_NE2 = 2; // key < index [pool/shard crush ns/oid] ||
-                                      // key == index [pool/shard]; key < index [crush]
-constexpr match_stat_t MSTAT_NE3 = 3; // key < index [pool/shard]
+constexpr match_stat_t MSTAT_END = -2; // index is search_position_t::end()
+constexpr match_stat_t MSTAT_EQ  = -1; // key == index
+constexpr match_stat_t MSTAT_NE0 =  0; // key == index [pool/shard crush ns/oid]; key < index [snap/gen]
+constexpr match_stat_t MSTAT_NE1 =  1; // key == index [pool/shard crush]; key < index [ns/oid]
+constexpr match_stat_t MSTAT_NE2 =  2; // key < index [pool/shard crush ns/oid] ||
+                                       // key == index [pool/shard]; key < index [crush]
+constexpr match_stat_t MSTAT_NE3 =  3;  // key < index [pool/shard]
+constexpr match_stat_t MSTAT_MIN = MSTAT_END;
+constexpr match_stat_t MSTAT_MAX = MSTAT_NE3;
 
 inline bool matchable(field_type_t type, match_stat_t mstat) {
+  assert(mstat >= MSTAT_MIN && mstat <= MSTAT_MAX);
   /*
    * compressed prefix by field type:
    * N0: NONE
@@ -84,10 +87,16 @@ inline bool matchable(field_type_t type, match_stat_t mstat) {
    * if key matches the node's compressed prefix, return true
    * else, return false
    */
+#ifndef NDEBUG
+  if (mstat == MSTAT_END) {
+    assert(type == field_type_t::N0);
+  }
+#endif
   return mstat + to_unsigned(type) < 4;
 }
 
 inline void assert_mstat(const onode_key_t& key, const index_view_t& index, match_stat_t mstat) {
+  assert(mstat >= MSTAT_MIN && mstat <= MSTAT_NE2);
   // key < index ...
   switch (mstat) {
    case MSTAT_EQ:
@@ -139,21 +148,23 @@ template <node_type_t NODE_TYPE, match_stage_t STAGE>
 struct staged_result_t {
   using me_t = staged_result_t<NODE_TYPE, STAGE>;
   bool is_end() const { return position.is_end(); }
+  MatchKindBS match() const {
+    assert(mstat >= MSTAT_MIN && mstat <= MSTAT_MAX);
+    return (mstat == MSTAT_EQ ? MatchKindBS::EQ : MatchKindBS::NE);
+  }
 
   static me_t end() {
-    return {staged_position_t<STAGE>::end(), MatchKindBS::NE, nullptr, MSTAT_PO};
+    return {staged_position_t<STAGE>::end(), nullptr, MSTAT_END};
   }
   template <typename T = me_t>
   static std::enable_if_t<STAGE != STAGE_BOTTOM, T>
   from_nxt(size_t index, const staged_result_t<NODE_TYPE, STAGE - 1>& nxt_stage_result) {
     return {{index, nxt_stage_result.position},
-            nxt_stage_result.match,
             nxt_stage_result.p_value,
             nxt_stage_result.mstat};
   }
 
   staged_position_t<STAGE> position;
-  MatchKindBS match;
   const value_type_t<NODE_TYPE>* p_value;
   match_stat_t mstat;
 };
@@ -166,7 +177,8 @@ template <node_type_t NODE_TYPE, match_stage_t STAGE,
           typename = std::enable_if_t<STAGE != STAGE_TOP>>
 staged_result_t<NODE_TYPE, STAGE_TOP> normalize(
     staged_result_t<NODE_TYPE, STAGE>&& result) {
-  return {normalize(std::move(result.position)), result.match, result.p_value};
+  // FIXME: assert result.mstat correct
+  return {normalize(std::move(result.position)), result.p_value, result.mstat};
 }
 
 /*
@@ -766,7 +778,7 @@ struct staged {
     auto pos_smallest = NXT_STAGE_T::position_t::begin();
     auto nxt_container = iter.get_nxt_container();
     auto value_ptr = NXT_STAGE_T::get_p_value(nxt_container, pos_smallest);
-    return {{iter.index(), pos_smallest}, MatchKindBS::NE, value_ptr, STAGE};
+    return result_t{{iter.index(), pos_smallest}, value_ptr, STAGE};
   }
 
   static result_t
@@ -856,7 +868,7 @@ struct staged {
         }
         if constexpr (IS_BOTTOM) {
           auto value_ptr = iter.get_p_value();
-          return {{iter.index()}, MatchKindBS::EQ, value_ptr, MSTAT_EQ};
+          return result_t{{iter.index()}, value_ptr, MSTAT_EQ};
         } else {
           auto nxt_container = iter.get_nxt_container();
           auto nxt_result = NXT_STAGE_T::lower_bound(nxt_container, key, history);
@@ -879,8 +891,8 @@ struct staged {
                        MatchKindCMP::EQ : MatchKindCMP::NE);
     if constexpr (IS_BOTTOM) {
       auto value_ptr = iter.get_p_value();
-      return {{iter.index()}, bs_match, value_ptr,
-              (bs_match == MatchKindBS::EQ ? MSTAT_EQ : MSTAT_NE0)};
+      return result_t{{iter.index()}, value_ptr,
+                      (bs_match == MatchKindBS::EQ ? MSTAT_EQ : MSTAT_NE0)};
     } else {
       if (bs_match == MatchKindBS::EQ) {
         return nxt_lower_bound(key, iter, history);
@@ -930,7 +942,7 @@ struct staged {
     auto&& result = lower_bound(container, key, history);
 #ifndef NDEBUG
     if (result.is_end()) {
-      assert(result.mstat == MSTAT_PO);
+      assert(result.mstat == MSTAT_END);
     } else {
       index_view_t index;
       get_index_view(container, result.position, index);
