@@ -73,15 +73,17 @@ memory_range_t NODE_T::get_nxt_container(size_t index) const {
 
 template <typename FieldType, node_type_t NODE_TYPE>
 node_offset_t NODE_T::estimate_insert_one(
-    const onode_key_t* p_key, const value_t& value) {
+    const onode_key_t& key, const value_t& value,
+    const ns_oid_view_t::Type& dedup_type) {
   node_offset_t left_size = FieldType::estimate_insert_one();
   node_offset_t right_size;
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
                 FIELD_TYPE == field_type_t::N1) {
-    right_size = item_iterator_t<NODE_TYPE>::estimate_insert_new(p_key, value);
+    right_size = item_iterator_t<NODE_TYPE>::
+      estimate_insert_new(key, value, dedup_type);
   } else if constexpr (FIELD_TYPE == field_type_t::N2) {
     right_size = sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
-                 ns_oid_view_t::estimate_size(p_key);
+                 ns_oid_view_t::estimate_size(key, dedup_type);
   } else {
     if constexpr (NODE_TYPE == node_type_t::LEAF) {
       right_size = value.size;
@@ -198,12 +200,12 @@ void APPEND_T::append(const node_extent_t& src, size_t from, size_t items) {
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>
-void APPEND_T::append(const onode_key_t& key, const onode_t& value) {
+void APPEND_T::append(
+    const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
   if constexpr (FIELD_TYPE == field_type_t::N3) {
-    // TODO: not implemented
-    assert(false);
+    assert(false && "not implemented");
   } else {
-    assert(false);
+    assert(false && "should not happen");
   }
 }
 

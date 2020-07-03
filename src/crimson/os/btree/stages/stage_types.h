@@ -86,8 +86,6 @@ const bool MatchHistory::is_PO() const {
   return _check_PO_t<STAGE>::eval(this);
 }
 
-// TODO: consolidate with INDEX_END
-
 template <match_stage_t STAGE>
 struct staged_position_t {
   static_assert(STAGE > STAGE_BOTTOM && STAGE <= STAGE_TOP);

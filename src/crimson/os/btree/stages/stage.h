@@ -1220,14 +1220,14 @@ struct staged {
       src_iter.get().copy_out_until(*appender, to_index, to_stage);
       _index += (to_index - s_index);
     }
-    void append(const onode_key_t& key, const onode_t& value) {
+    void append(const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         auto& nxt = open_nxt(key);
-        nxt.append(key, value);
+        nxt.append(key, value, p_value);
         wrap_nxt();
       } else {
-        appender->append(key, value);
+        appender->append(key, value, p_value);
         ++_index;
       }
     }
@@ -1359,10 +1359,10 @@ struct staged {
 
   static bool append_insert(const onode_key_t& key, const onode_t& value,
                             StagedIterator& src_iter, StagedAppender& appender,
-                            match_stage_t stage) {
+                            match_stage_t stage, const onode_t*& p_value) {
     assert(src_iter.valid());
     if (stage == STAGE) {
-      appender.append(key, value);
+      appender.append(key, value, p_value);
       if (src_iter.is_end()) {
         return true;
       } else {
@@ -1372,7 +1372,7 @@ struct staged {
       assert(stage < STAGE);
       if constexpr (!IS_BOTTOM) {
         auto nxt_is_end = NXT_STAGE_T::append_insert(
-            key, value, src_iter.get_nxt(), appender.get_nxt(), stage);
+            key, value, src_iter.get_nxt(), appender.get_nxt(), stage, p_value);
         if (nxt_is_end) {
           appender.wrap_nxt();
           ++src_iter;

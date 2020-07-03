@@ -14,9 +14,11 @@ template class item_iterator_t<node_type_t::INTERNAL>;
 
 template <node_type_t NODE_TYPE>
 node_offset_t ITER_T::estimate_insert_one(
-    const onode_key_t* p_key, const value_t& value) {
+    const onode_key_t& key, const value_t& value,
+    const ns_oid_view_t::Type& dedup_type) {
   return (sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
-          ns_oid_view_t::estimate_size(p_key) + sizeof(node_offset_t));
+          ns_oid_view_t::estimate_size(key, dedup_type) +
+          sizeof(node_offset_t));
 }
 
 template <node_type_t NODE_TYPE>

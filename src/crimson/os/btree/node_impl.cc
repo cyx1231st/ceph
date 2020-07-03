@@ -260,10 +260,9 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
 #ifndef NDEBUG
     auto free_size_before = stage.free_size();
 #endif
-    auto p_value = proceed_insert(
+    auto p_value = proceed_insert<false>(
         key, value, i_position, i_stage, i_dedup_type, i_estimated_size);
 #ifndef NDEBUG
-    this->validate_unused();
     assert(stage.free_size() == free_size_before - i_estimated_size);
 #endif
     return get_or_create_cursor(i_position, p_value);
@@ -296,16 +295,17 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   typename STAGE_T::StagedAppender appender;
   appender.init(&right_node->extent(),
                 const_cast<char*>(right_node->stage().p_start()));
+  const onode_t* p_value = nullptr;
   if (!i_to_left) {
-    // append split [start(append_at), i_position)
+    // right node: append [start(append_at), i_position)
     STAGE_T::append_until(append_at, appender, _i_position, i_stage);
     std::cout << "  insert right at: " << _i_position << std::endl;
-    // append split [i_position]
-    bool is_end = STAGE_T::append_insert(key, value, append_at, appender, i_stage);
+    // right node: append [i_position(key, value)]
+    bool is_end = STAGE_T::append_insert(key, value, append_at, appender, i_stage, p_value);
     assert(append_at.is_end() == is_end);
   }
 
-  // append split (i_position, end)
+  // right node: append (i_position, end)
   auto pos_end = STAGE_T::position_t::end();
   STAGE_T::append_until(append_at, appender, pos_end, STAGE_T::STAGE);
   assert(append_at.is_end());
@@ -313,23 +313,30 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
 
   right_node->dump(std::cout) << std::endl;
 
-  // trim left
+  // left node: trim
   this->set_level_tail(false);
   STAGE_T::trim(this->extent(), split_at);
-  this->dump(std::cout) << std::endl << std::endl;
 
   if (i_to_left) {
-    // insert to left
+    // left node: insert
+    p_value = proceed_insert<true>(
+        key, value, i_position, i_stage, i_dedup_type, i_estimated_size);
+  }
+  this->dump(std::cout) << std::endl << std::endl;
+  assert(p_value);
+
+  // TODO: propagate index to parent
+
+  if (i_to_left) {
+    assert(this->get_index_view(i_position).match(key));
+    return get_or_create_cursor(i_position, p_value);
+  } else {
+    assert(right_node->get_index_view(i_position).match(key));
+    return right_node->get_or_create_cursor(i_position, p_value);
   }
 
-  // TODO: assert the insert position point to the inserted value
-
-  // propagate index to parent
-
-  return get_or_create_cursor(search_position_t::end(), nullptr);
   // TODO (optimize)
-  // try to acquire space from siblings ... see btrfs
-  // try to insert value
+  // try to acquire space from siblings before split... see btrfs
 }
 
 template <typename FieldType, typename ConcreteType>
@@ -392,11 +399,9 @@ bool L_NODE_T::can_insert(
     }
 
     // take ns/oid deduplication into consideration
-    const onode_key_t* p_key = &key;
     dedup_type = ns_oid_view_t::Type::STR;
     auto& s_match = history.get<STAGE_STRING>();
     if (s_match.has_value() && *s_match == MatchKindCMP::EQ) {
-      p_key = nullptr;
       if (is_PO) {
         dedup_type = ns_oid_view_t::Type::MIN;
       } else {
@@ -404,21 +409,21 @@ bool L_NODE_T::can_insert(
       }
     }
 
-    auto stage = this->stage();
     // estimated size for insertion
     switch (i_stage) {
      case STAGE_LEFT:
-      estimated_size = stage.estimate_insert_one(p_key, value);
+      estimated_size = node_stage_t::estimate_insert_one(key, value, dedup_type);
       break;
      case STAGE_STRING:
-      estimated_size = item_iterator_t<parent_t::NODE_TYPE>::estimate_insert_one(p_key, value);
+      estimated_size = item_iterator_t<parent_t::NODE_TYPE>::
+        estimate_insert_one(key, value, dedup_type);
       break;
      case STAGE_RIGHT:
       estimated_size = leaf_sub_items_t::estimate_insert_one(value);
       break;
     }
 
-    if (stage.free_size() < estimated_size) {
+    if (this->stage().free_size() < estimated_size) {
       return false;
     } else {
       return true;
@@ -430,6 +435,7 @@ bool L_NODE_T::can_insert(
 }
 
 template <typename FieldType, typename ConcreteType>
+template <bool SPLIT>
 const onode_t* L_NODE_T::proceed_insert(
     const onode_key_t& key, const onode_t& value,
     search_position_t& i_position, match_stage_t i_stage,
@@ -438,15 +444,24 @@ const onode_t* L_NODE_T::proceed_insert(
   if constexpr (parent_t::FIELD_TYPE == field_type_t::N0) {
     auto stage = this->stage();
     // modify block at STAGE_LEFT
-    assert(i_position.index < stage.keys() ||
-           i_position.index == INDEX_END);
     const char* left_bound = stage.p_start() +
                              stage.fields().get_item_end_offset(stage.keys());
     size_t& index_2 = i_position.index;
-    if (i_stage == STAGE_LEFT) {
+    bool do_insert_2 = (i_stage == STAGE_LEFT);
+    if constexpr (SPLIT) {
+      if (!do_insert_2 && index_2 == stage.keys()) {
+        do_insert_2 = true;
+        estimated_size = node_stage_t::estimate_insert_one(key, value, dedup_type);
+        // TODO: dedup type is changed
+      }
+    } else {
+      assert(index_2 != stage.keys());
+    }
+    if (do_insert_2) {
       if (index_2 == INDEX_END) {
         index_2 = stage.keys();
       }
+      assert(index_2 <= stage.keys());
       i_position.nxt = search_position_t::nxt_t::begin();
 
       auto estimated_size_right = estimated_size - FieldType::estimate_insert_one();
@@ -465,21 +480,28 @@ const onode_t* L_NODE_T::proceed_insert(
     if (index_2 == INDEX_END) {
       index_2 = stage.keys() - 1;
     }
+    assert(index_2 < stage.keys());
 
     // modify block at STAGE_STRING
     auto range = stage.get_nxt_container(index_2);
     item_iterator_t<parent_t::NODE_TYPE> iter(range);
     size_t& index_1 = i_position.nxt.index;
+    bool is_end = false;
+    // TODO: SPLIT == true
     if (index_1 == INDEX_END) {
-      // reuse staged::_iterator_t::last
+      // reuse staged::_iterator_t::seek_last()
       while (iter.has_next()) {
         ++iter;
       }
     } else {
-      // reuse staged::_iterator_t::at
+      // reuse staged::_iterator_t::seek_at()
       auto index = index_1;
       while (index > 0) {
-        assert(iter.has_next());
+        if (!iter.has_next()) {
+          assert(index == 1);
+          is_end = true;
+          break;
+        }
         ++iter;
         --index;
       }
@@ -487,8 +509,11 @@ const onode_t* L_NODE_T::proceed_insert(
     if (i_stage == STAGE_STRING) {
       char* p_insert;
       if (index_1 == INDEX_END) {
-        p_insert = const_cast<char*>(iter.p_start());
         index_1 = iter.index() + 1;
+        is_end = true;
+      }
+      if (is_end) {
+        p_insert = const_cast<char*>(iter.p_start());
       } else {
         p_insert = const_cast<char*>(iter.p_end());
       }
@@ -505,6 +530,7 @@ const onode_t* L_NODE_T::proceed_insert(
     if (index_1 == INDEX_END) {
       index_1 = iter.index();
     }
+    assert(!is_end);
     item_iterator_t<parent_t::NODE_TYPE>::update_size(
         this->extent(), iter, estimated_size);
 
@@ -515,6 +541,7 @@ const onode_t* L_NODE_T::proceed_insert(
     if (index_0 == INDEX_END) {
       index_0 = sub_items.keys();
     }
+    assert(index_0 <= sub_items.keys());
     auto p_value = leaf_sub_items_t::insert_at(
         this->extent(), key, value,
         index_0, sub_items, left_bound, estimated_size);

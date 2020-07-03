@@ -55,9 +55,11 @@ const onode_t* leaf_sub_items_t::insert_new(
     LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
     char*& p_insert) {
   Appender appender(&dst, p_insert);
-  appender.append(key, value);
+  const onode_t* p_value = nullptr;
+  appender.append(key, value, p_value);
   p_insert = appender.wrap();
-  return reinterpret_cast<const onode_t*>(p_insert);
+  assert(p_insert == (char*)p_value);
+  return p_value;
 }
 
 size_t leaf_sub_items_t::trim_until(
@@ -130,10 +132,12 @@ char* leaf_sub_items_t::Appender::wrap() {
         p_dst->copy_in_mem(_p_start, p_cur, _len);
       },
       [&] (const kv_item_t& arg) {
+        assert(pp_value);
         p_cur -= sizeof(snap_gen_t);
         p_dst->copy_in_mem(snap_gen_t::from_key(*arg.p_key), p_cur);
         p_cur -= arg.p_value->size;
         p_dst->copy_in_mem(arg.p_value, p_cur, arg.p_value->size);
+        *pp_value = reinterpret_cast<const onode_t*>(p_cur);
       }
     }, a);
   }

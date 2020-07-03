@@ -84,7 +84,7 @@ class internal_sub_items_t::Appender {
   void append(const internal_sub_items_t& src, size_t from, size_t items) {
     assert(false);
   }
-  void append(const onode_key_t& key, const onode_t& value) {
+  void append(const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
     assert(false);
   }
   char* wrap() { return nullptr; }
@@ -243,15 +243,18 @@ class leaf_sub_items_t::Appender {
     appends[cnt] = range_items_t{from, items};
     ++cnt;
   }
-  void append(const onode_key_t& key, const onode_t& value) {
+  void append(const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
+    assert(pp_value == nullptr);
     assert(cnt <= APPENDER_LIMIT);
     appends[cnt] = kv_item_t{&key, &value};
     ++cnt;
+    pp_value = &p_value;
   }
   char* wrap();
 
  private:
   std::optional<leaf_sub_items_t> op_src;
+  const onode_t** pp_value = nullptr;
   LogicalCachedExtent* p_dst;
   char* p_append;
   var_t appends[APPENDER_LIMIT];

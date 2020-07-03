@@ -69,9 +69,13 @@ class item_iterator_t {
     return *this;
   }
 
-  static node_offset_t estimate_insert_one(const onode_key_t* p_key, const value_t& value);
-  static node_offset_t estimate_insert_new(const onode_key_t* p_key, const value_t& value) {
-    return estimate_insert_one(p_key, value);
+  static node_offset_t estimate_insert_one(
+      const onode_key_t& key, const value_t& value,
+      const ns_oid_view_t::Type& dedup_type);
+  static node_offset_t estimate_insert_new(
+      const onode_key_t& key, const value_t& value,
+      const ns_oid_view_t::Type& dedup_type) {
+    return estimate_insert_one(key, value, dedup_type);
   }
   static void update_size(
       LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter, int change);

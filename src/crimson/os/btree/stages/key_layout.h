@@ -101,7 +101,7 @@ struct string_key_view_t {
   // presumably the maximum string length is 2KiB
   using string_size_t = uint16_t;
   string_key_view_t(const char* p_end) {
-    auto p_length = p_end - sizeof(string_size_t);
+    p_length = p_end - sizeof(string_size_t);
     std::memcpy(&length, p_length, sizeof(string_size_t));
     if (length && length != std::numeric_limits<string_size_t>::max()) {
       auto _p_key = p_length - length;
@@ -211,12 +211,12 @@ struct ns_oid_view_t {
   }
   bool operator!=(const ns_oid_view_t& x) const { return !(*this == x); }
 
-  static node_offset_t estimate_size(const onode_key_t* key) {
-    if (key == nullptr) {
+  static node_offset_t estimate_size(const onode_key_t& key, const Type& type) {
+    if (type != Type::STR) {
       // size after deduplication
       return sizeof(string_size_t);
     } else {
-      return 2 * sizeof(string_size_t) + key->nspace.size() + key->oid.size();
+      return 2 * sizeof(string_size_t) + key.nspace.size() + key.oid.size();
     }
   }
 
@@ -283,6 +283,29 @@ struct index_view_t {
       return true;
     assert(index.p_shard_pool != nullptr);
     if (*p_shard_pool != *index.p_shard_pool)
+      return false;
+
+    return true;
+  }
+  bool match(const onode_key_t& key) const {
+    assert(p_snap_gen != nullptr);
+    if (compare_to(key, *p_snap_gen) != MatchKindCMP::EQ)
+      return false;
+
+    if (!p_ns_oid.has_value())
+      return true;
+    if (p_ns_oid->type() == ns_oid_view_t::Type::STR &&
+        compare_to(key, *p_ns_oid) != MatchKindCMP::EQ)
+      return false;
+
+    if (p_crush == nullptr)
+      return true;
+    if (compare_to(key, *p_crush) != MatchKindCMP::EQ)
+      return false;
+
+    if (p_shard_pool == nullptr)
+      return true;
+    if (compare_to(key, *p_shard_pool) != MatchKindCMP::EQ)
       return false;
 
     return true;

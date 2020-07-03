@@ -88,7 +88,8 @@ class node_extent_t {
     }
   }
 
-  static node_offset_t estimate_insert_one(const onode_key_t* p_key, const value_t& value);
+  static node_offset_t estimate_insert_one(
+      const onode_key_t&, const value_t&, const ns_oid_view_t::Type&);
   static size_t trim_until(LogicalCachedExtent&, const node_extent_t&, size_t index);
   static size_t trim_at(LogicalCachedExtent&, const node_extent_t&,
                         size_t index, size_t trimmed);
@@ -117,7 +118,7 @@ class node_extent_t<FieldType, NODE_TYPE>::Appender {
     p_append_right = p_start + FieldType::SIZE;
   }
   void append(const node_extent_t& src, size_t from, size_t items);
-  void append(const onode_key_t& key, const onode_t& value);
+  void append(const onode_key_t&, const onode_t&, const onode_t*&);
   char* wrap();
   std::tuple<LogicalCachedExtent*, char*> open_nxt(const key_get_type&);
   std::tuple<LogicalCachedExtent*, char*> open_nxt(const onode_key_t&);
