@@ -34,6 +34,12 @@ struct onode_key_t {
   snap_t snap;
   gen_t gen;
 };
+inline std::ostream& operator<<(std::ostream& os, const onode_key_t& key) {
+  return os << "key("
+            << (unsigned)key.shard << "," << key.pool << "," << key.crush << ";\" "
+            << key.nspace << "\",\"" << key.oid << "\"; "
+            << key.snap << "," << key.gen << ")";
+}
 
 template <typename T>
 inline MatchKindCMP _compare_shard_pool(const onode_key_t& key, const T& target) {

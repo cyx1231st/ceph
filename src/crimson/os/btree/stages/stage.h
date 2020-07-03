@@ -1167,10 +1167,10 @@ struct staged {
     recursively_locate_split_inserted(
         current_size, 0, target_size,
         i_position, i_stage, i_size, i_to_left, split_at);
-    std::cout << "  size_to_left=" << current_size
+    std::cout << "  locate_split(): size_to_left=" << current_size
               << ", target_split_size=" << target_size
               << ", original_size=" << container.size_before(container.keys())
-              << ", insert_size=" << i_size;
+              << std::endl;
     assert(current_size <= target_size);
     return *i_to_left;
   }

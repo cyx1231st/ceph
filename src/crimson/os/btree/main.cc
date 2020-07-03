@@ -365,48 +365,111 @@ int main(int argc, char* argv[])
     auto f_split = [&leaf_node] (const onode_key_t& key, const onode_t& value) {
       auto node = leaf_node->test_clone();
       MatchHistory history;
-      auto [cursor, success] = node->insert(key, value, history);
+      std::cout << "insert " << key << ":" << std::endl;
+      auto [p_cursor, success] = node->insert(key, value, history);
+      assert(success);
+      assert(p_cursor->get_p_value());
+      assert(p_cursor->get_p_value() != &value);
+      assert(p_cursor->get_p_value()->size == value.size);
+      Onodes::validate(*p_cursor->get_p_value());
     };
     auto& onode = onodes.create(1280);
 
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to left front at stage 2, 1, 0"
+              << std::endl << std::endl;
     f_split(onode_key_t{1, 1, 1, "ns3", "oid3", 3, 3}, onode);
     f_split(onode_key_t{2, 2, 2, "ns1", "oid1", 3, 3}, onode);
     f_split(onode_key_t{2, 2, 2, "ns2", "oid2", 1, 1}, onode);
     std::cout << std::endl;
 
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to left back at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
     f_split(onode_key_t{2, 2, 2, "ns4", "oid4", 5, 5}, onode);
     f_split(onode_key_t{2, 2, 2, "ns5", "oid5", 3, 3}, onode);
     f_split(onode_key_t{2, 3, 3, "ns3", "oid3", 3, 3}, onode);
-    f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 1, 1}, onode);
     f_split(onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3}, onode);
+    f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 1, 1}, onode);
     std::cout << std::endl;
 
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to right front at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
     f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onode);
     f_split(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onode);
     f_split(onode_key_t{3, 4, 4, "ns3", "oid3", 3, 3}, onode);
-    f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode);
     f_split(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onode);
+    f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode);
     std::cout << std::endl;
 
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to right back at stage 0, 1, 2"
+              << std::endl << std::endl;
     f_split(onode_key_t{4, 4, 4, "ns4", "oid4", 5, 5}, onode);
     f_split(onode_key_t{4, 4, 4, "ns5", "oid5", 3, 3}, onode);
     f_split(onode_key_t{5, 5, 5, "ns3", "oid3", 3, 3}, onode);
     std::cout << std::endl;
 
-    auto& onode1 = onodes.create(256);
-    f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onode1);
-    f_split(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onode1);
-    f_split(onode_key_t{3, 3, 4, "ns3", "oid3", 3, 3}, onode1);
-    f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode1);
-    f_split(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onode1);
+    auto& onode1 = onodes.create(512);
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 1; insert to left middle at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
+    f_split(onode_key_t{2, 2, 2, "ns4", "oid4", 5, 5}, onode1);
+    f_split(onode_key_t{2, 2, 2, "ns5", "oid5", 3, 3}, onode1);
+    f_split(onode_key_t{2, 2, 3, "ns3", "oid3", 3, 3}, onode1);
+    f_split(onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3}, onode1);
+    f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 1, 1}, onode1);
     std::cout << std::endl;
 
-    auto& onode2 = onodes.create(768);
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 1; insert to left back at stage 0, 1, 0"
+              << std::endl << std::endl;
+    f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 5, 5}, onode1);
+    f_split(onode_key_t{3, 3, 3, "ns2", "oid3", 3, 3}, onode1);
+    f_split(onode_key_t{3, 3, 3, "ns3", "oid3", 1, 1}, onode1);
+    std::cout << std::endl;
+
+    auto& onode2 = onodes.create(256);
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 1; insert to right front at stage 0, 1, 0"
+              << std::endl << std::endl;
+    f_split(onode_key_t{3, 3, 3, "ns3", "oid3", 5, 5}, onode2);
+    f_split(onode_key_t{3, 3, 3, "ns3", "oid4", 3, 3}, onode2);
+    f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 1, 1}, onode2);
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 1; insert to right middle at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
     f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onode2);
     f_split(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onode2);
     f_split(onode_key_t{3, 3, 4, "ns3", "oid3", 3, 3}, onode2);
-    f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode2);
     f_split(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onode2);
+    f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode2);
+    std::cout << std::endl;
+
+    auto& onode3 = onodes.create(768);
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 0; insert to right middle at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
+    f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 5, 5}, onode3);
+    f_split(onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, onode3);
+    f_split(onode_key_t{3, 3, 4, "ns3", "oid3", 3, 3}, onode3);
+    f_split(onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, onode3);
+    f_split(onode_key_t{4, 4, 4, "ns2", "oid2", 1, 1}, onode3);
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 0; insert to right front at 0"
+              << std::endl << std::endl;
+    f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 2, 3}, onode3);
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 0; insert to left back at 0"
+              << std::endl << std::endl;
+    f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 3, 4}, onode3);
     std::cout << std::endl;
   }
 

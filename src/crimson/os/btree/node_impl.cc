@@ -271,8 +271,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   // TODO: no need to cast after insert is generalized
   auto& _i_position = cast_down<STAGE_T::STAGE>(i_position);
 
-  std::cout << "should split:"
-            << "\n  insert at: " << _i_position
+  std::cout << "  try insert at: " << _i_position
             << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
             << std::endl;
 
@@ -285,8 +284,8 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   bool i_to_left = STAGE_T::locate_split(
       stage, target_split_size, _i_position, i_stage, i_estimated_size, split_at);
 
-  std::cout << "\n  split at: " << split_at << ", is_left=" << i_to_left
-            << "\n  insert at: " << _i_position
+  std::cout << "  split at: " << split_at << ", is_left=" << i_to_left
+            << ", now insert at: " << _i_position
             << std::endl;
 
   auto append_at = split_at;
@@ -299,7 +298,8 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   if (!i_to_left) {
     // right node: append [start(append_at), i_position)
     STAGE_T::append_until(append_at, appender, _i_position, i_stage);
-    std::cout << "  insert right at: " << _i_position << std::endl;
+    std::cout << "insert to right: " << _i_position
+              << ", i_stage=" << (int)i_stage << std::endl;
     // right node: append [i_position(key, value)]
     bool is_end = STAGE_T::append_insert(key, value, append_at, appender, i_stage, p_value);
     assert(append_at.is_end() == is_end);
@@ -310,7 +310,6 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   STAGE_T::append_until(append_at, appender, pos_end, STAGE_T::STAGE);
   assert(append_at.is_end());
   appender.wrap();
-
   right_node->dump(std::cout) << std::endl;
 
   // left node: trim
@@ -321,6 +320,8 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
     // left node: insert
     p_value = proceed_insert<true>(
         key, value, i_position, i_stage, i_dedup_type, i_estimated_size);
+    std::cout << "insert to left: " << i_position
+              << ", i_stage=" << (int)i_stage << std::endl;
   }
   this->dump(std::cout) << std::endl << std::endl;
   assert(p_value);
@@ -454,8 +455,6 @@ const onode_t* L_NODE_T::proceed_insert(
         estimated_size = node_stage_t::estimate_insert_one(key, value, dedup_type);
         // TODO: dedup type is changed
       }
-    } else {
-      assert(index_2 != stage.keys());
     }
     if (do_insert_2) {
       if (index_2 == INDEX_END) {
@@ -506,7 +505,16 @@ const onode_t* L_NODE_T::proceed_insert(
         --index;
       }
     }
-    if (i_stage == STAGE_STRING) {
+    bool do_insert_1 = (i_stage == STAGE_STRING);
+    if constexpr (SPLIT) {
+      if (!do_insert_1 && is_end) {
+        do_insert_1 = true;
+        estimated_size = item_iterator_t<parent_t::NODE_TYPE>::
+          estimate_insert_one(key, value, dedup_type);
+        // TODO: dedup type is changed
+      }
+    }
+    if (do_insert_1) {
       char* p_insert;
       if (index_1 == INDEX_END) {
         index_1 = iter.index() + 1;
