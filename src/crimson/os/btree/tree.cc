@@ -65,15 +65,13 @@ Btree::Cursor Btree::end() {
 }
 
 bool Btree::contains(const onode_key_t& key) {
-  MatchHistory history;
   // TODO: improve lower_bound()
-  return MatchKindBS::EQ == root_node->lower_bound(key, history).match;
+  return MatchKindBS::EQ == root_node->lower_bound(key).match;
 }
 
 Btree::Cursor Btree::find(const onode_key_t& key) {
-  MatchHistory history;
   // TODO: improve lower_bound()
-  auto result = root_node->lower_bound(key, history);
+  auto result = root_node->lower_bound(key);
   if (result.match == MatchKindBS::EQ) {
     return Cursor(this, result.p_cursor);
   } else {
@@ -82,14 +80,12 @@ Btree::Cursor Btree::find(const onode_key_t& key) {
 }
 
 Btree::Cursor Btree::lower_bound(const onode_key_t& key) {
-  MatchHistory history;
-  return Cursor(this, root_node->lower_bound(key, history).p_cursor);
+  return Cursor(this, root_node->lower_bound(key).p_cursor);
 }
 
 std::pair<Btree::Cursor, bool>
 Btree::insert(const onode_key_t& key, const onode_t& value) {
-  MatchHistory history;
-  auto [cursor, success] = root_node->insert(key, value, history);
+  auto [cursor, success] = root_node->insert(key, value);
   return {{this, cursor}, success};
 }
 

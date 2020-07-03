@@ -138,7 +138,7 @@ template class InternalNodeT<node_fields_2_t, InternalNode2>;
 template class InternalNodeT<internal_fields_3_t, InternalNode3>;
 
 template <typename FieldType, typename ConcreteType>
-Node::search_result_t I_NODE_T::lower_bound(
+Node::search_result_t I_NODE_T::do_lower_bound(
     const onode_key_t& key, MatchHistory& history) {
   auto stage = this->stage();
   auto ret = STAGE_T::lower_bound_normalized(stage, key, history);
@@ -156,7 +156,7 @@ Node::search_result_t I_NODE_T::lower_bound(
   Ref<Node> child = get_or_load_child(child_addr, position);
   match_stat_t mstat = ret.mstat;
   if (matchable(child->field_type(), mstat)) {
-    return child->lower_bound(key, history);
+    return child->do_lower_bound(key, history);
   } else {
     // out of lookup range due to prefix compression
     auto&& ret = child->lookup_smallest();
@@ -199,7 +199,7 @@ template class LeafNodeT<node_fields_2_t, LeafNode2>;
 template class LeafNodeT<leaf_fields_3_t, LeafNode3>;
 
 template <typename FieldType, typename ConcreteType>
-Node::search_result_t L_NODE_T::lower_bound(
+Node::search_result_t L_NODE_T::do_lower_bound(
     const onode_key_t& key, MatchHistory& history) {
   auto stage = this->stage();
   if (unlikely(stage.keys() == 0)) {

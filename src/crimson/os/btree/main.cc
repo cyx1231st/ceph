@@ -351,8 +351,7 @@ int main(int argc, char* argv[])
           key.snap = k;
           key.gen = k;
 
-          MatchHistory history;
-          auto [p_cursor, success] = leaf_node->insert(key, onodes.pick_largest(), history);
+          auto [p_cursor, success] = leaf_node->insert(key, onodes.pick_largest());
           assert(success == true);
           assert(p_cursor->get_leaf_node() == leaf_node);
           assert(p_cursor->get_p_value());
@@ -364,9 +363,8 @@ int main(int argc, char* argv[])
 
     auto f_split = [&leaf_node] (const onode_key_t& key, const onode_t& value) {
       auto node = leaf_node->test_clone();
-      MatchHistory history;
       std::cout << "insert " << key << ":" << std::endl;
-      auto [p_cursor, success] = node->insert(key, value, history);
+      auto [p_cursor, success] = node->insert(key, value);
       assert(success);
       assert(p_cursor->get_p_value());
       assert(p_cursor->get_p_value() != &value);

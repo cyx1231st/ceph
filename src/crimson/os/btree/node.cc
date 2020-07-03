@@ -11,8 +11,9 @@
 namespace crimson::os::seastore::onode {
 
 std::pair<Ref<tree_cursor_t>, bool>
-Node::insert(const onode_key_t& key, const onode_t& value, MatchHistory& history) {
-  auto result = lower_bound(key, history);
+Node::insert(const onode_key_t& key, const onode_t& value) {
+  MatchHistory history;
+  auto result = do_lower_bound(key, history);
   if (result.match == MatchKindBS::EQ) {
     return {result.p_cursor, false};
   } else {

@@ -61,8 +61,11 @@ class Node
   virtual level_t level() const = 0;
   virtual Ref<tree_cursor_t> lookup_smallest() = 0;
   virtual Ref<tree_cursor_t> lookup_largest() = 0;
-  virtual search_result_t lower_bound(const onode_key_t&, MatchHistory&) = 0;
-  std::pair<Ref<tree_cursor_t>, bool> insert(const onode_key_t&, const onode_t&, MatchHistory&);
+  search_result_t lower_bound(const onode_key_t& key) {
+    MatchHistory history;
+    return do_lower_bound(key, history);
+  }
+  std::pair<Ref<tree_cursor_t>, bool> insert(const onode_key_t&, const onode_t&);
 
   virtual std::ostream& dump(std::ostream&) const = 0;
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
@@ -84,6 +87,7 @@ class Node
   virtual field_type_t field_type() const = 0;
   virtual laddr_t laddr() const = 0;
   virtual index_view_t get_index_view(const search_position_t&) const = 0;
+  virtual search_result_t do_lower_bound(const onode_key_t&, MatchHistory&) = 0;
 };
 inline std::ostream& operator<<(std::ostream& os, const Node& node) {
   return node.dump_brief(os);
@@ -98,7 +102,7 @@ class LeafNode : virtual public Node {
       const onode_key_t&,
       const onode_t&,
       const search_position_t&,
-      const MatchHistory& histor) = 0;
+      const MatchHistory&) = 0;
 
   friend class Node;
 };

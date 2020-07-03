@@ -68,7 +68,7 @@ class InternalNodeT : public NodeT<FieldType, node_type_t::INTERNAL, ConcreteTyp
 
   virtual ~InternalNodeT() = default;
 
-  Node::search_result_t lower_bound(const onode_key_t&, MatchHistory&) override final;
+  Node::search_result_t do_lower_bound(const onode_key_t&, MatchHistory&) override final;
 
   Ref<tree_cursor_t> lookup_smallest() override final {
     auto position = search_position_t::begin();
@@ -110,7 +110,7 @@ class LeafNodeT: public LeafNode, public NodeT<FieldType, node_type_t::LEAF, Con
 
   virtual ~LeafNodeT() = default;
 
-  search_result_t lower_bound(const onode_key_t&, MatchHistory&) override final;
+  search_result_t do_lower_bound(const onode_key_t&, MatchHistory&) override final;
   Ref<tree_cursor_t> lookup_smallest() override final;
   Ref<tree_cursor_t> lookup_largest() override final;
   Ref<tree_cursor_t> insert_bottomup(
