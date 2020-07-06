@@ -848,12 +848,16 @@ struct staged {
               test_key_equal = (iter.get_key().type() == ns_oid_view_t::Type::MIN);
             } else {
               auto cmp = compare_to(key, iter.get_key());
+              // From history, key[stage] == parent[stage][index - 1]
+              // which should be the smallest possible value for all
+              // index[stage][*]
               assert(cmp != MatchKindCMP::PO);
               test_key_equal = (cmp == MatchKindCMP::EQ);
             }
             if (test_key_equal) {
               return nxt_lower_bound(key, iter, history);
             } else {
+              // key[stage] < index[stage][left-most]
               return smallest_result(iter);
             }
           }
@@ -872,6 +876,8 @@ struct staged {
         } else {
           auto nxt_container = iter.get_nxt_container();
           auto nxt_result = NXT_STAGE_T::lower_bound(nxt_container, key, history);
+          // !history.is_PO<STAGE - 1>() means
+          // key[stage+1 ...] <= index[stage+1 ...][*]
           assert(!nxt_result.is_end());
           return result_t::from_nxt(iter.index(), nxt_result);
         }

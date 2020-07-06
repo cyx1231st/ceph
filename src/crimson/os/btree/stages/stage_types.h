@@ -18,6 +18,17 @@ constexpr match_stage_t STAGE_RIGHT = 0u;  // snap/gen
 constexpr auto STAGE_TOP = STAGE_LEFT;
 constexpr auto STAGE_BOTTOM = STAGE_RIGHT;
 
+// TODO: replace by
+// using match_history_t = int8_t;
+//     left_m, str_m, right_m
+//  3: PO,
+//  2: EQ,     PO,
+//  1: EQ,     EQ,    PO
+//  0: EQ,     EQ,    EQ
+// -1: EQ,     EQ,    NE
+// -2: EQ,     NE,
+// -3: NE,
+
 struct MatchHistory {
   template <match_stage_t STAGE>
   const std::optional<MatchKindCMP>& get() const {

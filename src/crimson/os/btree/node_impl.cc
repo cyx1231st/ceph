@@ -326,7 +326,23 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   this->dump(std::cout) << std::endl << std::endl;
   assert(p_value);
 
-  // TODO: propagate index to parent
+  // propagate index to parent
+  Ref<Node> parent_node;
+  search_position_t parent_pos;
+  if (is_root()) {
+    // TODO replace root reference
+    parent_node = InternalNode0::allocate(true, this->level() + 1);
+    parent_pos = search_position_t::end();
+  } else {
+    parent_node = this->parent_info().ptr;
+    parent_pos = this->parent_info().position;
+  }
+  laddr_t l_addr = this->laddr();
+  laddr_t r_addr = right_node->laddr();
+  // TODO: i_pos & i_stage
+  // TODO: key_view to insert
+  // TODO: parent_node->insert_bottomup(...)
+  // TODO: update parent_info for left&right child
 
   if (i_to_left) {
     assert(this->get_index_view(i_position).match(key));
@@ -348,24 +364,34 @@ bool L_NODE_T::can_insert(
     ns_oid_view_t::Type& dedup_type, node_offset_t& estimated_size) {
   // TODO: should be generalized and move out
   if constexpr (parent_t::FIELD_TYPE == field_type_t::N0) {
-    // calculate the stage where insertion happens
-    i_stage = STAGE_LEFT;
-    bool is_PO = history.is_PO();
-    if (position == search_position_t::begin() && is_PO) {
-      assert(*history.get<STAGE_LEFT>() == MatchKindCMP::PO);
-    } else {
-      while (*history.get_by_stage(i_stage) == MatchKindCMP::EQ) {
-        assert(i_stage != STAGE_RIGHT);
-        --i_stage;
-      }
-    }
 #ifndef NDEBUG
     if (position.is_end()) {
       assert(this->is_level_tail());
     }
 #endif
 
-    // calculate i_position
+    // calculate the stage where insertion happens
+    i_stage = STAGE_LEFT;
+    dedup_type = ns_oid_view_t::Type::STR;
+    bool is_PO = history.is_PO();
+    if (position == search_position_t::begin() && is_PO) {
+      // I must be short-circuited by staged::smallest_result()
+      // in staged::lower_bound()
+      assert(false && "not implemented");
+      // take ns/oid deduplication into consideration
+      auto& s_match = history.get<STAGE_STRING>();
+      if (s_match.has_value() && *s_match == MatchKindCMP::EQ) {
+        dedup_type = ns_oid_view_t::Type::MIN;
+      }
+    } else {
+      while (*history.get_by_stage(i_stage) == MatchKindCMP::EQ) {
+        assert(i_stage != STAGE_RIGHT);
+        --i_stage;
+      }
+    }
+
+    // compensate i_position by staged::smallest_result()
+    // in staged::nxt_lower_bound()
     i_position = position;
     if (is_PO) {
       if (i_position != search_position_t::begin() &&
@@ -399,18 +425,7 @@ bool L_NODE_T::can_insert(
       }
     }
 
-    // take ns/oid deduplication into consideration
-    dedup_type = ns_oid_view_t::Type::STR;
-    auto& s_match = history.get<STAGE_STRING>();
-    if (s_match.has_value() && *s_match == MatchKindCMP::EQ) {
-      if (is_PO) {
-        dedup_type = ns_oid_view_t::Type::MIN;
-      } else {
-        dedup_type = ns_oid_view_t::Type::MAX;
-      }
-    }
-
-    // estimated size for insertion
+    // estimate size for insertion
     switch (i_stage) {
      case STAGE_LEFT:
       estimated_size = node_stage_t::estimate_insert_one(key, value, dedup_type);
