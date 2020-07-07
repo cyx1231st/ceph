@@ -811,6 +811,16 @@ struct staged {
     }
   }
 
+  static void lookup_largest_index(const container_t& container, index_view_t& output) {
+    auto iter = iterator_t(container);
+    iter.seek_last();
+    output.set(iter.get_key());
+    if constexpr (!IS_BOTTOM) {
+      auto nxt_container = iter.get_nxt_container();
+      NXT_STAGE_T::lookup_largest_index(nxt_container, output);
+    }
+  }
+
   static const value_t* get_p_value(const container_t& container, const position_t& position) {
     auto iter = iterator_t(container);
     iter.seek_at(position.index);

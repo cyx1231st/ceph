@@ -247,7 +247,7 @@ Ref<tree_cursor_t> L_NODE_T::lookup_largest() {
 }
 
 template <typename FieldType, typename ConcreteType>
-Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
+Ref<tree_cursor_t> L_NODE_T::insert_value(
     const onode_key_t& key, const onode_t& value,
     const search_position_t& position, const MatchHistory& history) {
   auto stage = this->stage();
@@ -339,10 +339,9 @@ Ref<tree_cursor_t> L_NODE_T::insert_bottomup(
   }
   laddr_t l_addr = this->laddr();
   laddr_t r_addr = right_node->laddr();
-  // TODO: i_pos & i_stage
-  // TODO: key_view to insert
-  // TODO: parent_node->insert_bottomup(...)
-  // TODO: update parent_info for left&right child
+  index_view_t key_view;
+  STAGE_T::lookup_largest_index(stage, key_view);
+  // TODO: parent_node->apply_child_split(key_view, l_addr, r_addr, parent_pos);
 
   if (i_to_left) {
     assert(this->get_index_view(i_position).match(key));

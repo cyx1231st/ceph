@@ -459,13 +459,13 @@ int main(int argc, char* argv[])
     std::cout << std::endl;
 
     std::cout << "---------------------------------------------\n"
-              << "split at stage 0; insert to right front at 0"
+              << "split at stage 0; insert to right front at stage 0"
               << std::endl << std::endl;
     f_split(onode_key_t{3, 3, 3, "ns4", "oid4", 2, 3}, onode3);
     std::cout << std::endl;
 
     std::cout << "---------------------------------------------\n"
-              << "split at stage 0; insert to left back at 0"
+              << "split at stage 0; insert to left back at stage 0"
               << std::endl << std::endl;
     f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 3, 4}, onode3);
     std::cout << std::endl;

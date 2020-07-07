@@ -98,7 +98,7 @@ class LeafNode : virtual public Node {
   virtual ~LeafNode() = default;
 
  private:
-  virtual Ref<tree_cursor_t> insert_bottomup(
+  virtual Ref<tree_cursor_t> insert_value(
       const onode_key_t&,
       const onode_t&,
       const search_position_t&,

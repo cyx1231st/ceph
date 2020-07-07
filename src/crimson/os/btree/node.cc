@@ -18,7 +18,7 @@ Node::insert(const onode_key_t& key, const onode_t& value) {
     return {result.p_cursor, false};
   } else {
     auto leaf_node = result.p_cursor->get_leaf_node();
-    auto p_cursor = leaf_node->insert_bottomup(
+    auto p_cursor = leaf_node->insert_value(
         key, value, result.p_cursor->get_position(), history);
     return {p_cursor, true};
   }

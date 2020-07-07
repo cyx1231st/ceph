@@ -113,7 +113,7 @@ class LeafNodeT: public LeafNode, public NodeT<FieldType, node_type_t::LEAF, Con
   search_result_t do_lower_bound(const onode_key_t&, MatchHistory&) override final;
   Ref<tree_cursor_t> lookup_smallest() override final;
   Ref<tree_cursor_t> lookup_largest() override final;
-  Ref<tree_cursor_t> insert_bottomup(
+  Ref<tree_cursor_t> insert_value(
       const onode_key_t&, const onode_t&,
       const search_position_t&, const MatchHistory&) override final;
 
