@@ -24,11 +24,11 @@ Node::insert(const onode_key_t& key, const onode_t& value) {
   }
 }
 
-Ref<Node> Node::allocate_root() {
-  return LeafNode0::allocate(true);
+void Node::allocate_root(Ref<Node>& ref) {
+  LeafNode0::allocate_root(ref);
 }
 
-Ref<Node> Node::load(laddr_t addr, bool is_level_tail, const parent_info_t& parent_info) {
+Ref<Node> Node::load(laddr_t addr, bool is_level_tail) {
   // TODO: throw error if cannot read from address
   auto extent = get_transaction_manager().read_extent(addr);
   const auto header = extent->get_ptr<node_header_t>(0u);
@@ -65,7 +65,7 @@ Ref<Node> Node::load(laddr_t addr, bool is_level_tail, const parent_info_t& pare
   } else {
     assert(false);
   }
-  ret->init(extent, is_level_tail, &parent_info);
+  ret->init(extent, is_level_tail);
   return ret;
 }
 

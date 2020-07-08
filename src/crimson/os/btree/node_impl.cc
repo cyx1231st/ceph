@@ -70,7 +70,9 @@ std::ostream& NODE_T::dump_brief(std::ostream& os) const {
 #ifndef NDEBUG
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 Ref<Node> NODE_T::test_clone() const {
+  static Ref<Node> dummy_root_ref;
   auto ret = ConcreteType::_allocate(level(), is_level_tail());
+  ret->as_root(dummy_root_ref);
   ret->extent().copy_in(_extent->get_ptr<void>(0u), 0u, node_stage_t::EXTENT_SIZE);
   return ret;
 }
@@ -107,7 +109,7 @@ Ref<ConcreteType> NODE_T::_allocate(level_t level, bool level_tail) {
   extent->copy_in(node_header_t{FIELD_TYPE, NODE_TYPE, level}, 0u);
   extent->copy_in(typename FieldType::num_keys_t(0u), sizeof(node_header_t));
   auto ret = Ref<ConcreteType>(new ConcreteType());
-  ret->init(extent, level_tail, nullptr);
+  ret->init(extent, level_tail);
 #ifndef NDEBUG
   // ret->stage().fields().template fill_unused<NODE_TYPE>(is_level_tail, *extent);
 #endif
@@ -115,13 +117,8 @@ Ref<ConcreteType> NODE_T::_allocate(level_t level, bool level_tail) {
 }
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-void NODE_T::init(Ref<LogicalCachedExtent> block_extent,
-                  bool b_level_tail,
-                  const parent_info_t* p_info) {
-  assert(!_parent_info.has_value());
-  if (p_info) {
-   _parent_info = *p_info;
-  }
+void NODE_T::init(
+    Ref<LogicalCachedExtent> block_extent, bool b_level_tail) {
   assert(!_extent);
   assert(node_stage_t::EXTENT_SIZE == block_extent->get_length());
   _extent = block_extent;
@@ -165,15 +162,53 @@ Node::search_result_t I_NODE_T::do_lower_bound(
 }
 
 template <typename FieldType, typename ConcreteType>
+void I_NODE_T::apply_child_split(
+    // TODO: cross-node string dedup
+    const index_view_t& l_key, Ref<Node> l_node, Ref<Node> r_node) {
+  auto [r_pos, ptr] = l_node->parent_info();
+  assert(ptr.get() == this);
+
+  // update r_pos => l_addr to r_addr
+  const laddr_t* p_rvalue = this->get_value_ptr(r_pos);
+  assert(*p_rvalue == l_node->laddr());
+  this->extent().copy_in_mem(r_node->laddr(), const_cast<laddr_t*>(p_rvalue));
+
+  // track the right node
+  assert(tracked_child_nodes[r_pos] == l_node);
+  track_child(r_pos, r_node);
+
+  // evaluate insertion
+  search_position_t i_position;
+  match_stage_t i_stage;
+  node_offset_t i_estimated_size;
+  evaluate_insert(l_key, r_pos, i_position, i_stage, i_estimated_size);
+
+  // ...
+  // TODO track the left node
+}
+
+template <typename FieldType, typename ConcreteType>
+void I_NODE_T::evaluate_insert(
+    const index_view_t& key, const search_position_t& position,
+    search_position_t& i_position, match_stage_t& i_stage,
+    node_offset_t& i_estimated_size) {
+  // TODO: should be generalized and move out
+  if constexpr (parent_t::FIELD_TYPE == field_type_t::N0) {
+    // TODO
+  } else {
+    assert(false && "not implemented");
+  }
+}
+
+template <typename FieldType, typename ConcreteType>
 Ref<Node> I_NODE_T::get_or_load_child(
     laddr_t child_addr, const search_position_t& position) {
   Ref<Node> child;
   auto found = tracked_child_nodes.find(position);
   if (found == tracked_child_nodes.end()) {
     child = Node::load(child_addr,
-                       position.is_end(),
-                       {position, this});
-    tracked_child_nodes.insert({position, child});
+                       position.is_end());
+    track_child(position, child);
   } else {
     child = found->second;
     assert(child_addr == child->laddr());
@@ -190,6 +225,16 @@ Ref<Node> I_NODE_T::get_or_load_child(
   assert(child->get_index_view(search_position_t::begin()).match_parent(
         this->get_index_view(position)));
   return child;
+}
+
+void InternalNode0::upgrade_root(Ref<Node> root) {
+  assert(root->is_root());
+  auto new_root = allocate(true, root->level() + 1);
+  auto pos = search_position_t::end();
+  const laddr_t* p_value = new_root->get_value_ptr(pos);
+  new_root->extent().copy_in_mem(root->laddr(), const_cast<laddr_t*>(p_value));
+  root->handover_root(new_root);
+  new_root->track_child(pos, root);
 }
 
 #define L_NODE_T LeafNodeT<FieldType, ConcreteType>
@@ -255,16 +300,14 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   match_stage_t i_stage;
   ns_oid_view_t::Type i_dedup_type;
   node_offset_t i_estimated_size;
-  if (can_insert(key, value, position, history,
-                 i_position, i_stage, i_dedup_type, i_estimated_size)) {
-#ifndef NDEBUG
-    auto free_size_before = stage.free_size();
-#endif
+  evaluate_insert(key, value, position, history,
+                  i_position, i_stage, i_dedup_type, i_estimated_size);
+
+  auto free_size = stage.free_size();
+  if (free_size >= i_estimated_size) {
     auto p_value = proceed_insert<false>(
         key, value, i_position, i_stage, i_dedup_type, i_estimated_size);
-#ifndef NDEBUG
-    assert(stage.free_size() == free_size_before - i_estimated_size);
-#endif
+    assert(stage.free_size() == free_size - i_estimated_size);
     return get_or_create_cursor(i_position, p_value);
   }
 
@@ -327,21 +370,14 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   assert(p_value);
 
   // propagate index to parent
-  Ref<Node> parent_node;
-  search_position_t parent_pos;
   if (is_root()) {
-    // TODO replace root reference
-    parent_node = InternalNode0::allocate(true, this->level() + 1);
-    parent_pos = search_position_t::end();
-  } else {
-    parent_node = this->parent_info().ptr;
-    parent_pos = this->parent_info().position;
+    InternalNode0::upgrade_root(this);
   }
-  laddr_t l_addr = this->laddr();
-  laddr_t r_addr = right_node->laddr();
+  auto parent_node = this->parent_info().ptr;
+  // TODO: cross-node string dedup
   index_view_t key_view;
   STAGE_T::lookup_largest_index(stage, key_view);
-  // TODO: parent_node->apply_child_split(key_view, l_addr, r_addr, parent_pos);
+  parent_node->apply_child_split(key_view, this, right_node);
 
   if (i_to_left) {
     assert(this->get_index_view(i_position).match(key));
@@ -356,7 +392,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
 }
 
 template <typename FieldType, typename ConcreteType>
-bool L_NODE_T::can_insert(
+void L_NODE_T::evaluate_insert(
     const onode_key_t& key, const onode_t& value,
     const search_position_t& position, const MatchHistory& history,
     search_position_t& i_position, match_stage_t& i_stage,
@@ -437,15 +473,8 @@ bool L_NODE_T::can_insert(
       estimated_size = leaf_sub_items_t::estimate_insert_one(value);
       break;
     }
-
-    if (this->stage().free_size() < estimated_size) {
-      return false;
-    } else {
-      return true;
-    }
   } else {
-    // not implemented
-    assert(false);
+    assert(false && "not implemented");
   }
 }
 

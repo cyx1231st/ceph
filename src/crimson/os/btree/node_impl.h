@@ -25,43 +25,63 @@ class NodeT : virtual public Node {
 
   virtual ~NodeT() = default;
 
-  bool is_root() const override final { return !_parent_info.has_value(); }
-  const parent_info_t& parent_info() const override final{ return *_parent_info; }
+  void as_child(const parent_info_t& info) override final {
+    assert(!p_root_ref);
+    _parent_info = info;
+  }
+  void as_root(Ref<Node>& ref) override final {
+    assert(!p_root_ref);
+    assert(!_parent_info);
+    p_root_ref = &ref;
+  }
+  void handover_root(Ref<InternalNode> new_root) override final {
+    assert(is_root());
+    new_root->as_root(*p_root_ref);
+    p_root_ref = nullptr;
+  }
+  bool is_root() const override final {
+    assert((p_root_ref && !_parent_info.has_value()) ||
+           (!p_root_ref && _parent_info.has_value()));
+    return !_parent_info.has_value();
+  }
+  const parent_info_t& parent_info() const override final { return *_parent_info; }
+
   bool is_level_tail() const override final { return _is_level_tail; }
   field_type_t field_type() const override final { return FIELD_TYPE; }
   laddr_t laddr() const override final;
   level_t level() const override final;
   index_view_t get_index_view(const search_position_t&) const override final;
+  const value_t* get_value_ptr(const search_position_t&);
   std::ostream& dump(std::ostream&) const override final;
   std::ostream& dump_brief(std::ostream& os) const override final;
 
 #ifndef NDEBUG
+  Ref<Node> test_clone() const override final;
+
   void validate_unused() const {
     // node.fields().template validate_unused<NODE_TYPE>(is_level_tail());
   }
-
-  Ref<Node> test_clone() const;
 #endif
 
  protected:
   node_stage_t stage() const;
   LogicalCachedExtent& extent();
   void set_level_tail(bool value) { _is_level_tail = value; }
-  const value_t* get_value_ptr(const search_position_t&);
   static Ref<ConcreteType> _allocate(level_t level, bool level_tail);
 
  private:
   void init(Ref<LogicalCachedExtent> _extent,
-            bool is_level_tail,
-            const parent_info_t* p_info) override final;
+            bool is_level_tail) override final;
 
   std::optional<parent_info_t> _parent_info;
+  Ref<Node>* p_root_ref = nullptr;
   bool _is_level_tail;
   Ref<LogicalCachedExtent> _extent;
 };
 
 template <typename FieldType, typename ConcreteType>
-class InternalNodeT : public NodeT<FieldType, node_type_t::INTERNAL, ConcreteType> {
+class InternalNodeT : public InternalNode,
+                      public NodeT<FieldType, node_type_t::INTERNAL, ConcreteType> {
  public:
   using parent_t = NodeT<FieldType, node_type_t::INTERNAL, ConcreteType>;
   using node_stage_t = typename parent_t::node_stage_t;
@@ -84,12 +104,22 @@ class InternalNodeT : public NodeT<FieldType, node_type_t::INTERNAL, ConcreteTyp
     return child->lookup_largest();
   }
 
+  void apply_child_split(const index_view_t&, Ref<Node>, Ref<Node>) override final;
+
+  void track_child(const search_position_t& pos, Ref<Node> child) {
+    tracked_child_nodes[pos] = child;
+    child->as_child({pos, this});
+  }
+
   static Ref<ConcreteType> allocate(level_t level, bool level_tail) {
     assert(level != 0u);
     return ConcreteType::_allocate(level, level_tail);
   }
 
  private:
+  void evaluate_insert(const index_view_t& key, const search_position_t& position,
+                       search_position_t& i_position, match_stage_t& i_stage,
+                       node_offset_t& i_estimated_size);
   Ref<Node> get_or_load_child(laddr_t child_addr, const search_position_t& position);
   // TODO: intrusive
   // TODO: use weak ref
@@ -97,13 +127,17 @@ class InternalNodeT : public NodeT<FieldType, node_type_t::INTERNAL, ConcreteTyp
   // hierarchy needs to be attached to the specific transaction.
   std::map<search_position_t, Ref<Node>> tracked_child_nodes;
 };
-class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {};
+class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {
+ public:
+  static void upgrade_root(Ref<Node> root);
+};
 class InternalNode1 final : public InternalNodeT<node_fields_1_t, InternalNode1> {};
 class InternalNode2 final : public InternalNodeT<node_fields_2_t, InternalNode2> {};
 class InternalNode3 final : public InternalNodeT<internal_fields_3_t, InternalNode3> {};
 
 template <typename FieldType, typename ConcreteType>
-class LeafNodeT: public LeafNode, public NodeT<FieldType, node_type_t::LEAF, ConcreteType> {
+class LeafNodeT: public LeafNode,
+                 public NodeT<FieldType, node_type_t::LEAF, ConcreteType> {
  public:
   using parent_t = NodeT<FieldType, node_type_t::LEAF, ConcreteType>;
   using node_stage_t = typename parent_t::node_stage_t;
@@ -123,7 +157,7 @@ class LeafNodeT: public LeafNode, public NodeT<FieldType, node_type_t::LEAF, Con
 
  private:
   // TODO: move out
-  bool can_insert(
+  void evaluate_insert(
       const onode_key_t& key, const onode_t& value,
       const search_position_t& position, const MatchHistory& history,
       search_position_t& i_position, match_stage_t& i_stage,
@@ -144,7 +178,13 @@ class LeafNodeT: public LeafNode, public NodeT<FieldType, node_type_t::LEAF, Con
   // hierarchy needs to be attached to the specific transaction.
   //std::map<search_position_t, Ref<tree_cursor_t>> tracked_cursors;
 };
-class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {};
+class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {
+ public:
+  static void allocate_root(Ref<Node>& ref) {
+    ref = allocate(true);
+    ref->as_root(ref);
+  }
+};
 class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {};
 class LeafNode2 final : public LeafNodeT<node_fields_2_t, LeafNode2> {};
 class LeafNode3 final : public LeafNodeT<leaf_fields_3_t, LeafNode3> {};

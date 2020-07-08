@@ -332,7 +332,8 @@ int main(int argc, char* argv[])
 
   // in-node split
   {
-    auto leaf_node = LeafNode0::allocate(true);
+    Ref<Node> root;
+    LeafNode0::allocate_root(root);
 
     // insert key, value randomly until a perfect 3-ary tree is formed
     onode_key_t key;
@@ -351,18 +352,18 @@ int main(int argc, char* argv[])
           key.snap = k;
           key.gen = k;
 
-          auto [p_cursor, success] = leaf_node->insert(key, onodes.pick_largest());
+          auto [p_cursor, success] = root->insert(key, onodes.pick_largest());
           assert(success == true);
-          assert(p_cursor->get_leaf_node() == leaf_node);
+          assert(p_cursor->get_leaf_node() == root);
           assert(p_cursor->get_p_value());
           Onodes::validate(*p_cursor->get_p_value());
         }
       }
     }
-    leaf_node->dump(std::cout) << std::endl << std::endl;
+    root->dump(std::cout) << std::endl << std::endl;
 
-    auto f_split = [&leaf_node] (const onode_key_t& key, const onode_t& value) {
-      auto node = leaf_node->test_clone();
+    auto f_split = [&root] (const onode_key_t& key, const onode_t& value) {
+      auto node = root->test_clone();
       std::cout << "insert " << key << ":" << std::endl;
       auto [p_cursor, success] = node->insert(key, value);
       assert(success);

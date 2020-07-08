@@ -52,6 +52,10 @@ Btree::Cursor Btree::Cursor::make_end(Btree* tree) {
   return {tree};
 }
 
+Btree::Btree() {
+  Node::allocate_root(root_node);
+}
+
 Btree::Cursor Btree::begin() {
   return {this, root_node->lookup_smallest()};
 }
@@ -115,7 +119,7 @@ std::ostream& Btree::dump(std::ostream& os) {
 Btree& Btree::get() {
   static std::unique_ptr<Btree> singleton;
   if (!singleton) {
-    singleton.reset(new Btree(Node::allocate_root()));
+    singleton.reset(new Btree());
   }
   return *singleton;
 }

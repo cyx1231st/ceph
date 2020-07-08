@@ -46,7 +46,7 @@ class Btree {
   static Btree& get();
 
  private:
-  Btree(Ref<Node> root_node) : root_node{root_node} {}
+  Btree();
   Btree(const Btree&) = delete;
   Btree(Btree&&) = delete;
   Btree& operator=(const Btree&) = delete;

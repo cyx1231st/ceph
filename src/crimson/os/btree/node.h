@@ -15,6 +15,7 @@
 namespace crimson::os::seastore::onode {
 
 class LeafNode;
+class InternalNode;
 
 class tree_cursor_t
   : public boost::intrusive_ref_counter<
@@ -47,8 +48,7 @@ class Node
  public:
   struct parent_info_t {
     search_position_t position;
-    // TODO: Ref<InternalNode>
-    Ref<Node> ptr;
+    Ref<InternalNode> ptr;
   };
   struct search_result_t {
     bool is_end() const { return p_cursor->is_end(); }
@@ -70,19 +70,25 @@ class Node
   virtual std::ostream& dump(std::ostream&) const = 0;
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
 
-  static Ref<Node> allocate_root();
+#ifndef NDEBUG
+  virtual Ref<Node> test_clone() const = 0;
+#endif
+
+  static void allocate_root(Ref<Node>&);
 
  protected:
   Node() {}
-  virtual bool is_root() const = 0;
-  virtual void init(Ref<LogicalCachedExtent>,
-                    bool is_level_tail,
-                    const parent_info_t* p_info) = 0;
-  static Ref<Node> load(laddr_t, bool is_level_tail, const parent_info_t&);
+  virtual void init(Ref<LogicalCachedExtent>, bool is_level_tail) = 0;
+  static Ref<Node> load(laddr_t, bool is_level_tail);
 
  // FIXME: protected
  public:
+  virtual void as_child(const parent_info_t&) = 0;
+  virtual void as_root(Ref<Node>& ref) = 0;
+  virtual void handover_root(Ref<InternalNode> new_root) = 0;
+  virtual bool is_root() const = 0;
   virtual const parent_info_t& parent_info() const = 0;
+
   virtual bool is_level_tail() const = 0;
   virtual field_type_t field_type() const = 0;
   virtual laddr_t laddr() const = 0;
@@ -92,6 +98,14 @@ class Node
 inline std::ostream& operator<<(std::ostream& os, const Node& node) {
   return node.dump_brief(os);
 }
+
+class InternalNode : virtual public Node {
+ public:
+  virtual ~InternalNode() = default;
+
+  // TODO: async
+  virtual void apply_child_split(const index_view_t&, Ref<Node>, Ref<Node>) = 0;
+};
 
 class LeafNode : virtual public Node {
  public:
