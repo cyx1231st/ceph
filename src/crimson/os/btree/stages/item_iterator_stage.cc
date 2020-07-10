@@ -16,9 +16,13 @@ template <node_type_t NODE_TYPE>
 node_offset_t ITER_T::estimate_insert_one(
     const onode_key_t& key, const value_t& value,
     const ns_oid_view_t::Type& dedup_type) {
-  return (sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
-          ns_oid_view_t::estimate_size(key, dedup_type) +
-          sizeof(node_offset_t));
+  if constexpr (NODE_TYPE == node_type_t::LEAF) {
+    return (sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
+            ns_oid_view_t::estimate_size(key, dedup_type) +
+            sizeof(node_offset_t));
+  } else {
+    assert(false && "should not happen");
+  }
 }
 
 template <node_type_t NODE_TYPE>

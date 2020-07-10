@@ -69,6 +69,20 @@ class item_iterator_t {
     return *this;
   }
 
+  static node_offset_t header_size() { return 0u; }
+
+  template <typename T = node_offset_t>
+  static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T>
+  estimate_insert(const index_view_t& key) {
+    return key.p_ns_oid->size() + sizeof(node_offset_t);
+  }
+
+  template <typename T = node_offset_t>
+  static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
+  estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type, const onode_t&) {
+    return ns_oid_view_t::estimate_size(key, type) + sizeof(node_offset_t);
+  }
+
   static node_offset_t estimate_insert_one(
       const onode_key_t& key, const value_t& value,
       const ns_oid_view_t::Type& dedup_type);

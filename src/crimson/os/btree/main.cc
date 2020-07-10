@@ -14,9 +14,8 @@
 
 #include "dummy_transaction_manager.h"
 #include "node_impl.h"
-#include "stages/item_iterator_stage.h"
 #include "stages/node_stage.h"
-#include "stages/sub_items_stage.h"
+#include "stages/stage.h"
 #include "tree.h"
 
 using namespace crimson::os::seastore::onode;
@@ -101,44 +100,56 @@ int main(int argc, char* argv[])
     std::cout << "s-p-c, 'n'-'o', s-g => onode_t{2}: typically internal 41B, leaf 35B" << std::endl;
     onode_key_t key = {0, 0, 0, "n", "o", 0, 0};
     onode_t value = {2};
+
+    auto extent = get_transaction_manager().alloc_extent(NODE_BLOCK_SIZE);
+    char* p_fill = reinterpret_cast<char*>(extent->get_laddr() + 20);
+    char* _p_fill = p_fill;
+    ns_oid_view_t::append(*extent, key, ns_oid_view_t::Type::STR, _p_fill);
+    ns_oid_view_t ns_oid_view(p_fill);
+    index_view_t key_view;
+    key_view.set(shard_pool_crush_t::from_key(key));
+    key_view.set(ns_oid_view);
+    key_view.set(snap_gen_t::from_key(key));
+
+#define STAGE_T(NodeType) node_to_stage_t<typename NodeType::node_stage_t>
+#define NXT_T(StageType)  staged<typename StageType::next_param_t>
+
     std::cout << "InternalNode0: "
-              << InternalNode0::node_stage_t::
-                   estimate_insert_one(key, 0, ns_oid_view_t::Type::STR) << " "
-              << item_iterator_t<node_type_t::INTERNAL>::
-                   estimate_insert_one(key, 0, ns_oid_view_t::Type::STR) << " "
-              << internal_sub_items_t::estimate_insert_one() << std::endl;
+              << STAGE_T(InternalNode0)::insert_size(key_view) << " "
+              << NXT_T(STAGE_T(InternalNode0))::insert_size(key_view) << " "
+              << NXT_T(NXT_T(STAGE_T(InternalNode0)))::insert_size(key_view) << std::endl;
     std::cout << "InternalNode1: "
-              << InternalNode1::node_stage_t::
-                   estimate_insert_one(key, 0, ns_oid_view_t::Type::STR) << " "
-              << item_iterator_t<node_type_t::INTERNAL>::
-                    estimate_insert_one(key, 0, ns_oid_view_t::Type::STR) << " "
-              << internal_sub_items_t::estimate_insert_one() << std::endl;
+              << STAGE_T(InternalNode1)::insert_size(key_view) << " "
+              << NXT_T(STAGE_T(InternalNode1))::insert_size(key_view) << " "
+              << NXT_T(NXT_T(STAGE_T(InternalNode1)))::insert_size(key_view) << std::endl;
     std::cout << "InternalNode2: "
-              << InternalNode2::node_stage_t::
-                   estimate_insert_one(key, 0, ns_oid_view_t::Type::STR) << " "
-              << internal_sub_items_t::estimate_insert_one() << std::endl;
+              << STAGE_T(InternalNode2)::insert_size(key_view) << " "
+              << NXT_T(STAGE_T(InternalNode2))::insert_size(key_view) << std::endl;
     std::cout << "InternalNode3: "
-              << InternalNode3::node_stage_t::
-                   estimate_insert_one(key, 0, ns_oid_view_t::Type::STR) << std::endl;
+              << STAGE_T(InternalNode3)::insert_size(key_view) << std::endl;
+
     std::cout << "LeafNode0: "
-              << LeafNode0::node_stage_t::
-                   estimate_insert_one(key, value, ns_oid_view_t::Type::STR) << " "
-              << item_iterator_t<node_type_t::LEAF>::
-                   estimate_insert_one(key, value, ns_oid_view_t::Type::STR) << " "
-              << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
+              << STAGE_T(LeafNode0)::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << " "
+              << NXT_T(STAGE_T(LeafNode0))::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << " "
+              << NXT_T(NXT_T(STAGE_T(LeafNode0)))::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << std::endl;
     std::cout << "LeafNode1: "
-              << LeafNode1::node_stage_t::
-                   estimate_insert_one(key, value, ns_oid_view_t::Type::STR) << " "
-              << item_iterator_t<node_type_t::LEAF>::
-                   estimate_insert_one(key, value, ns_oid_view_t::Type::STR) << " "
-              << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
+              << STAGE_T(LeafNode1)::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << " "
+              << NXT_T(STAGE_T(LeafNode1))::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << " "
+              << NXT_T(NXT_T(STAGE_T(LeafNode1)))::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << std::endl;
     std::cout << "LeafNode2: "
-              << LeafNode2::node_stage_t::
-                   estimate_insert_one(key, value, ns_oid_view_t::Type::STR) << " "
-              << leaf_sub_items_t::estimate_insert_one(value) << std::endl;
+              << STAGE_T(LeafNode2)::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << " "
+              << NXT_T(STAGE_T(LeafNode2))::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << std::endl;
     std::cout << "LeafNode3: "
-              << LeafNode3::node_stage_t::
-                   estimate_insert_one(key, value, ns_oid_view_t::Type::STR) << std::endl;
+              << STAGE_T(LeafNode3)::insert_size(
+                  key, ns_oid_view_t::Type::STR, value) << std::endl;
     std::cout << std::endl;
   }
 

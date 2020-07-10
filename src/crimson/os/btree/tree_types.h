@@ -41,37 +41,23 @@ inline std::ostream& operator<<(std::ostream& os, const onode_key_t& key) {
             << key.snap << "," << key.gen << ")";
 }
 
-template <typename T>
-inline MatchKindCMP _compare_shard_pool(const onode_key_t& key, const T& target) {
-  if (key.shard < target.shard)
-    return MatchKindCMP::NE;
-  if (key.shard > target.shard)
-    return MatchKindCMP::PO;
-  if (key.pool < target.pool)
-    return MatchKindCMP::NE;
-  if (key.pool > target.pool)
-    return MatchKindCMP::PO;
-  return MatchKindCMP::EQ;
+template <typename L, typename R>
+MatchKindCMP _compare_shard_pool(const L& l, const R& r) {
+  auto ret = toMatchKindCMP(l.shard, r.shard);
+  if (ret != MatchKindCMP::EQ)
+    return ret;
+  return toMatchKindCMP(l.pool, r.pool);
 }
-template <typename T>
-inline MatchKindCMP _compare_crush(const onode_key_t& key, const T& target) {
-  if (key.crush < target.crush)
-    return MatchKindCMP::NE;
-  if (key.crush > target.crush)
-    return MatchKindCMP::PO;
-  return MatchKindCMP::EQ;
+template <typename L, typename R>
+MatchKindCMP _compare_crush(const L& l, const R& r) {
+  return toMatchKindCMP(l.crush, r.crush);
 }
-template <typename T>
-inline MatchKindCMP _compare_snap_gen(const onode_key_t& key, const T& target) {
-  if (key.snap < target.snap)
-    return MatchKindCMP::NE;
-  if (key.snap > target.snap)
-    return MatchKindCMP::PO;
-  if (key.gen < target.gen)
-    return MatchKindCMP::NE;
-  if (key.gen > target.gen)
-    return MatchKindCMP::PO;
-  return MatchKindCMP::EQ;
+template <typename L, typename R>
+MatchKindCMP _compare_snap_gen(const L& l, const R& r) {
+  auto ret = toMatchKindCMP(l.snap, r.snap);
+  if (ret != MatchKindCMP::EQ)
+    return ret;
+  return toMatchKindCMP(l.gen, r.gen);
 }
 inline MatchKindCMP compare_to(const onode_key_t& key, const onode_key_t& target) {
   auto ret = _compare_shard_pool(key, target);
@@ -79,15 +65,12 @@ inline MatchKindCMP compare_to(const onode_key_t& key, const onode_key_t& target
     return ret;
   ret = _compare_crush(key, target);
   if (ret != MatchKindCMP::EQ)
+  ret = toMatchKindCMP(key.nspace, target.nspace);
+  if (ret != MatchKindCMP::EQ)
     return ret;
-  if (key.nspace < target.nspace)
-    return MatchKindCMP::NE;
-  if (key.nspace > target.nspace)
-    return MatchKindCMP::PO;
-  if (key.oid < target.oid)
-    return MatchKindCMP::NE;
-  if (key.oid > target.oid)
-    return MatchKindCMP::PO;
+  ret = toMatchKindCMP(key.oid, target.oid);
+  if (ret != MatchKindCMP::EQ)
+    return ret;
   return _compare_snap_gen(key, target);
 }
 

@@ -234,7 +234,7 @@ struct staged_params_node_3 {
   using next_param_t = staged_params_node_3<NodeType>;
 };
 
-#define NXT_STAGE_T staged<typename Params::next_param_t>
+#define NXT_STAGE_T staged<next_param_t>
 
 enum class TrimType { BEFORE, AFTER, AT };
 
@@ -244,6 +244,7 @@ struct staged {
   static_assert(Params::STAGE <= STAGE_TOP);
   using container_t = typename Params::container_t;
   using key_get_type = typename container_t::key_get_type;
+  using next_param_t = typename Params::next_param_t;
   using position_t = staged_position_t<Params::STAGE>;
   using result_t = staged_result_t<Params::NODE_TYPE, Params::STAGE>;
   using value_t = value_type_t<Params::NODE_TYPE>;
@@ -291,11 +292,13 @@ struct staged {
     *   keys() const -> size_t
     *   operator[](size_t) const -> key_get_type
     *   size_before(size_t) const -> size_t
-    * IF IS_BOTTOM:
-    *   get_p_value(size_t) const -> const value_t*
-    * ELSE
-    *   size_to_nxt_at(size_t) const -> size_t
-    *   get_nxt_container(size_t) const
+    *   (IS_BOTTOM) get_p_value(size_t) const -> const value_t*
+    *   (!IS_BOTTOM) size_to_nxt_at(size_t) const -> size_t
+    *   (!IS_BOTTOM) get_nxt_container(size_t) const
+    * static:
+    *   header_size() -> node_offset_t
+    *   (INTERNAL) estimate_insert(key_view) -> node_offset_t
+    *   (LEAF) estimate_insert(key, type, value) -> node_offset_t
     * Appender::append(const container_t& src, from, items)
     */
    public:
@@ -332,6 +335,7 @@ struct staged {
     bool is_end() const { return _index == container.keys(); }
     size_t size() const {
       assert(!is_end());
+      assert(header_size() == container.size_before(0));
       return container.size_before(_index + 1) -
              container.size_before(_index);
     }
@@ -402,6 +406,7 @@ struct staged {
               --index;
             }
           }
+          // already includes header size
           current_size += container.size_before(index);
         }
         return current_size;
@@ -429,6 +434,7 @@ struct staged {
         if (unlikely(index == 0)) {
           current_size = start_size;
         } else {
+          // already includes header size
           current_size = start_size_1 + container.size_before(index);
         }
         return current_size;
@@ -478,6 +484,23 @@ struct staged {
       return container_t::trim_at(extent, container, _index, trimmed);
     }
 
+    static node_offset_t header_size() {
+      return container_t::header_size();
+    }
+
+    template <typename T = size_t>
+    static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T>
+    estimate_insert(const index_view_t& key) {
+      return container_t::estimate_insert(key);
+    }
+
+    template <typename T = size_t>
+    static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
+    estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type,
+                    const onode_t& value) {
+      return container_t::estimate_insert(key, type, value);
+    }
+
    private:
     container_t container;
     size_t _index = 0;
@@ -495,6 +518,10 @@ struct staged {
      *   get_nxt_container() const
      *   has_next() const -> bool
      *   operator++()
+    * static:
+    *   header_size() -> node_offset_t
+    *   (INTERNAL) estimate_insert(key_view) -> node_offset_t
+    *   (LEAF) estimate_insert(key, type, value) -> node_offset_t
      */
     // currently the iterative iterator is only implemented with STAGE_STRING
     // for in-node space efficiency
@@ -601,6 +628,7 @@ struct staged {
       assert(index() == 0);
       size_t current_size = start_size;
       size_t s_index = 0;
+      extra_size += header_size();
       do {
         if constexpr (!is_exclusive) {
           if (is_last()) {
@@ -727,6 +755,23 @@ struct staged {
       return container_t::trim_at(extent, container, trimmed);
     }
 
+    static node_offset_t header_size() {
+      return container_t::header_size();
+    }
+
+    template <typename T = node_offset_t>
+    static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T>
+    estimate_insert(const index_view_t& key) {
+      return container_t::estimate_insert(key);
+    }
+
+    template <typename T = node_offset_t>
+    static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
+    estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type,
+                    const onode_t& value) {
+      return container_t::estimate_insert(key, type, value);
+    }
+
    private:
     container_t container;
     bool _is_end = false;
@@ -743,11 +788,9 @@ struct staged {
    *   is_last() -> bool
    *   is_end() -> bool
    *   size() -> size_t
-   * IF IS_BOTTOM
-   *   get_p_value() -> const value_t*
-   * ELSE
-   *   get_nxt_container() -> nxt_stage::container_t
-   *   size_to_nxt() -> size_t
+   *   (IS_BOTTOM) get_p_value() -> const value_t*
+   *   (!IS_BOTTOM) get_nxt_container() -> nxt_stage::container_t
+   *   (!IS_BOTTOM) size_to_nxt() -> size_t
    * modifiers:
    *   operator++() -> iterator_t&
    *   set_end()
@@ -764,6 +807,10 @@ struct staged {
    *   copy_out_until(appender, to_index, to_stage) (can be end)
    *   trim_until(extent) -> trim_size
    *   (!IS_BOTTOM) trim_at(extent, trimmed) -> trim_size
+   * static:
+   *   header_size() -> node_offset_t
+   *   (INTERNAL) estimate_insert(key_view) -> node_offset_t
+   *   (LEAF) estimate_insert(key, type, value) -> node_offset_t
    */
   using iterator_t = _iterator_t<CONTAINER_TYPE>;
 
@@ -917,6 +964,84 @@ struct staged {
       }
     }
   }
+
+  template <typename T = node_offset_t>
+  static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T> insert_size(
+      const index_view_t& key) {
+    if constexpr (IS_BOTTOM) {
+      return iterator_t::estimate_insert(key);
+    } else {
+      return iterator_t::estimate_insert(key) +
+             NXT_STAGE_T::iterator_t::header_size() +
+             NXT_STAGE_T::insert_size(key);
+    }
+  }
+
+  template <typename T = std::tuple<match_stage_t, node_offset_t>>
+  static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T> evaluate_insert(
+      const container_t& container, const index_view_t& key, position_t& position) {
+    auto iter = iterator_t(container);
+    auto& index = position.index;
+    if (index == INDEX_END) {
+      iter.seek_last();
+      // evaluate the next index
+    } else {
+      // evaluate the current index
+      iter.seek_at(index);
+      auto match = compare_to(key, iter.get_key());
+      if (match == MatchKindCMP::EQ) {
+        if constexpr (IS_BOTTOM) {
+          // ceph_abort?
+          assert(false && "insert conflict at current index!");
+        } else {
+          // insert into the current index
+          auto nxt_container = iter.get_nxt_container();
+          return NXT_STAGE_T::evaluate_insert(nxt_container, key, position.nxt);
+        }
+      } else {
+        // insert before the current index
+        assert(match == MatchKindCMP::NE);
+        if (index == 0) {
+          // already the first index, so insert now
+          return {STAGE, insert_size(key)};
+        }
+        --index;
+        iter = iterator_t(container);
+        iter.seek_at(index);
+        // proceed to evaluate the previous index
+      }
+    }
+
+    // XXX: when key is from a different type of node
+    auto match = compare_to(key, iter.get_key());
+    if (match == MatchKindCMP::PO) {
+      // key doesn't match both indexes, so insert now
+      ++index;
+      return {STAGE, insert_size(key)};
+    } else {
+      assert(match == MatchKindCMP::EQ);
+      if constexpr (IS_BOTTOM) {
+        // ceph_abort?
+        assert(false && "insert conflict at the previous index!");
+      } else {
+        // insert into the next index
+        auto nxt_container = iter.get_nxt_container();
+        return NXT_STAGE_T::evaluate_insert(nxt_container, key, position.nxt);
+      }
+    }
+  }
+
+  template <typename T = node_offset_t>
+  static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T> insert_size(
+      const onode_key_t& key, const ns_oid_view_t::Type& type, const onode_t& value) {
+    if constexpr (IS_BOTTOM) {
+      return iterator_t::estimate_insert(key, type, value);
+    } else {
+      return iterator_t::estimate_insert(key, type, value) +
+             NXT_STAGE_T::iterator_t::header_size() +
+             NXT_STAGE_T::insert_size(key, type, value);
+    }
+  }
   
   /*
    * Lookup interfaces
@@ -988,6 +1113,7 @@ struct staged {
     assert(!iter.is_end());
     std::string prefix_blank(prefix.size(), ' ');
     const std::string* p_prefix = &prefix;
+    size += iterator_t::header_size();
     do {
       std::ostringstream sos;
       sos << *p_prefix << iter.get_key() << ": ";
@@ -1152,7 +1278,9 @@ struct staged {
         return;
       }
       assert(!iter.is_end());
-      if (iter.index() != 0) {
+      if (iter.index() == 0) {
+        extra_size += iterator_t::header_size();
+      } else {
         extra_size = 0;
       }
     } else {
@@ -1162,7 +1290,9 @@ struct staged {
             current_size, extra_size, target_size,
             i_index, i_size, i_to_left);
         assert(!iter.is_end());
-        if (iter.index() != 0) {
+        if (iter.index() == 0) {
+          extra_size += iterator_t::header_size();
+        } else {
           extra_size = 0;
         }
         if (!i_to_left.has_value()) {

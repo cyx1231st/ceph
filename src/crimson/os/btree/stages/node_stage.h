@@ -88,6 +88,30 @@ class node_extent_t {
     }
   }
 
+  static node_offset_t header_size() { return FieldType::HEADER_SIZE; }
+
+  template <typename T = node_offset_t>
+  static std::enable_if_t<_NODE_TYPE == node_type_t::INTERNAL, T>
+  estimate_insert(const index_view_t& key) {
+    auto size = FieldType::estimate_insert_one();
+    if constexpr (FIELD_TYPE == field_type_t::N2) {
+      size += key.p_ns_oid->size();
+    }
+    return size;
+  }
+
+  template <typename T = node_offset_t>
+  static std::enable_if_t<_NODE_TYPE == node_type_t::LEAF, T>
+  estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type, const onode_t& value) {
+    auto size = FieldType::estimate_insert_one();
+    if constexpr (FIELD_TYPE == field_type_t::N2) {
+      size += ns_oid_view_t::estimate_size(key, type);
+    } else if constexpr (FIELD_TYPE == field_type_t::N3) {
+      size += value.size;
+    }
+    return size;
+  }
+
   static node_offset_t estimate_insert_one(
       const onode_key_t&, const value_t&, const ns_oid_view_t::Type&);
   static size_t trim_until(LogicalCachedExtent&, const node_extent_t&, size_t index);

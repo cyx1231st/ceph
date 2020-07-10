@@ -117,9 +117,6 @@ class InternalNodeT : public InternalNode,
   }
 
  private:
-  void evaluate_insert(const index_view_t& key, const search_position_t& position,
-                       search_position_t& i_position, match_stage_t& i_stage,
-                       node_offset_t& i_estimated_size);
   Ref<Node> get_or_load_child(laddr_t child_addr, const search_position_t& position);
   // TODO: intrusive
   // TODO: use weak ref

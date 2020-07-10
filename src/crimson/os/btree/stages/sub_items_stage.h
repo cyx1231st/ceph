@@ -57,12 +57,10 @@ class internal_sub_items_t {
     return (p_first_item - index)->get_p_value();
   }
 
-  static node_offset_t estimate_insert_one() {
-    return sizeof(internal_sub_item_t);
-  }
+  static node_offset_t header_size() { return 0u; }
 
-  static node_offset_t estimate_insert_new(const laddr_t&) {
-    return estimate_insert_one();
+  static node_offset_t estimate_insert(const index_view_t&) {
+    return sizeof(internal_sub_item_t);
   }
 
   static const size_t trim_until(LogicalCachedExtent&, internal_sub_items_t&, size_t) {
@@ -166,7 +164,7 @@ class leaf_sub_items_t {
   size_t size_before(size_t index) const {
     assert(index <= keys());
     if (index == 0) {
-      return 0;
+      return sizeof(num_keys_t);
     }
     --index;
     auto ret = sizeof(num_keys_t) +
@@ -180,6 +178,13 @@ class leaf_sub_items_t {
     auto value = reinterpret_cast<const onode_t*>(pointer);
     assert(pointer + value->size + sizeof(snap_gen_t) == get_item_end(index));
     return value;
+  }
+
+  static node_offset_t header_size() { return sizeof(num_keys_t); }
+
+  static node_offset_t estimate_insert(
+      const onode_key_t&, const ns_oid_view_t::Type&, const onode_t& value) {
+    return value.size + sizeof(snap_gen_t) + sizeof(node_offset_t);
   }
 
   static node_offset_t estimate_insert_one(const onode_t& value) {

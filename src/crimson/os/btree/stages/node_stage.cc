@@ -23,19 +23,14 @@ template class node_extent_t<leaf_fields_3_t, node_type_t::LEAF>;
 template <typename FieldType, node_type_t NODE_TYPE>
 size_t NODE_T::size_to_nxt_at(size_t index) const {
   assert(index < keys());
-  auto ret = FieldType::estimate_insert_one();
-  if (index == 0) {
-    ret += size_before(0);
-  }
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
                 FIELD_TYPE == field_type_t::N1) {
-    return ret;
+    return FieldType::estimate_insert_one();
   } else if constexpr (FIELD_TYPE == field_type_t::N2) {
     auto p_end = p_start() + p_fields->get_item_end_offset(index);
-    return ret + ns_oid_view_t(p_end).size();
+    return FieldType::estimate_insert_one() + ns_oid_view_t(p_end).size();
   } else {
-    // N3 node is not nested
-    assert(false);
+    assert(false && "N3 node is not nested");
   }
 }
 
@@ -52,8 +47,7 @@ size_t NODE_T::total_size() const {
 template <typename FieldType, node_type_t NODE_TYPE>
 memory_range_t NODE_T::get_nxt_container(size_t index) const {
   if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-    // N3 internal node doesn't have left and right parts
-    assert(false);
+    assert(false && "N3 internal node doesn't have left and right parts");
   } else {
     node_offset_t item_start_offset = p_fields->get_item_start_offset(index);
     node_offset_t item_end_offset = p_fields->get_item_end_offset(index);
@@ -75,23 +69,27 @@ template <typename FieldType, node_type_t NODE_TYPE>
 node_offset_t NODE_T::estimate_insert_one(
     const onode_key_t& key, const value_t& value,
     const ns_oid_view_t::Type& dedup_type) {
-  node_offset_t left_size = FieldType::estimate_insert_one();
-  node_offset_t right_size;
-  if constexpr (FIELD_TYPE == field_type_t::N0 ||
-                FIELD_TYPE == field_type_t::N1) {
-    right_size = item_iterator_t<NODE_TYPE>::
-      estimate_insert_new(key, value, dedup_type);
-  } else if constexpr (FIELD_TYPE == field_type_t::N2) {
-    right_size = sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
-                 ns_oid_view_t::estimate_size(key, dedup_type);
-  } else {
-    if constexpr (NODE_TYPE == node_type_t::LEAF) {
-      right_size = value.size;
+  if constexpr (NODE_TYPE == node_type_t::LEAF) {
+    node_offset_t left_size = FieldType::estimate_insert_one();
+    node_offset_t right_size;
+    if constexpr (FIELD_TYPE == field_type_t::N0 ||
+                  FIELD_TYPE == field_type_t::N1) {
+      right_size = item_iterator_t<NODE_TYPE>::
+        estimate_insert_new(key, value, dedup_type);
+    } else if constexpr (FIELD_TYPE == field_type_t::N2) {
+      right_size = sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
+                   ns_oid_view_t::estimate_size(key, dedup_type);
     } else {
-      right_size = 0u;
+      if constexpr (NODE_TYPE == node_type_t::LEAF) {
+        right_size = value.size;
+      } else {
+        right_size = 0u;
+      }
     }
+    return left_size + right_size;
+  } else {
+    assert(false);
   }
-  return left_size + right_size;
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>

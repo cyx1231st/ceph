@@ -4,7 +4,6 @@
 #pragma once
 
 #include <cassert>
-#include <cstring>
 #include <limits>
 #include <optional>
 #include <ostream>
@@ -32,6 +31,9 @@ struct shard_pool_t {
   shard_t shard;
   pool_t pool;
 } __attribute__((packed));
+inline MatchKindCMP compare_to(const shard_pool_t& l, const shard_pool_t& r) {
+  return _compare_shard_pool(l, r);
+}
 inline MatchKindCMP compare_to(const onode_key_t& key, const shard_pool_t& target) {
   return _compare_shard_pool(key, target);
 }
@@ -46,6 +48,9 @@ struct crush_t {
 
   crush_hash_t crush;
 } __attribute__((packed));
+inline MatchKindCMP compare_to(const crush_t& l, const crush_t& r) {
+  return _compare_crush(l, r);
+}
 inline MatchKindCMP compare_to(const onode_key_t& key, const crush_t& target) {
   return _compare_crush(key, target);
 }
@@ -87,6 +92,9 @@ struct snap_gen_t {
   snap_t snap;
   gen_t gen;
 } __attribute__((packed));
+inline MatchKindCMP compare_to(const snap_gen_t& l, const snap_gen_t& r) {
+  return _compare_snap_gen(l, r);
+}
 inline MatchKindCMP compare_to(const onode_key_t& key, const snap_gen_t& target) {
   return _compare_snap_gen(key, target);
 }
@@ -171,15 +179,29 @@ struct string_key_view_t {
 
   friend std::ostream& operator<<(std::ostream&, const string_key_view_t&);
 };
+inline MatchKindCMP compare_to(const string_key_view_t& l, const string_key_view_t& r) {
+  using Type = string_key_view_t::Type;
+  auto l_type = l.type();
+  auto r_type = r.type();
+  if (l_type == Type::STR && r_type == Type::STR) {
+    return toMatchKindCMP(l.p_key, l.length, r.p_key, r.length);
+  } else if (l_type == r_type) {
+    return MatchKindCMP::EQ;
+  } else if (l_type == Type::MIN || r_type == Type::MAX) {
+    return MatchKindCMP::NE;
+  } else { // l_type == Type::MAX || r_type == Type::MIN
+    return MatchKindCMP::PO;
+  }
+}
 inline MatchKindCMP compare_to(const std::string& key, const string_key_view_t& target) {
   assert(key.length());
   if (target.type() == string_key_view_t::Type::MIN) {
     return MatchKindCMP::PO;
   } else if (target.type() == string_key_view_t::Type::MAX) {
     return MatchKindCMP::NE;
+  } else {
+    return toMatchKindCMP(key, target.p_key, target.length);
   }
-  assert(target.p_key);
-  return toMatchKindCMP(key.compare(0u, key.length(), target.p_key, target.length));
 }
 inline std::ostream& operator<<(std::ostream& os, const string_key_view_t& view) {
   auto type = view.type();
@@ -192,6 +214,7 @@ inline std::ostream& operator<<(std::ostream& os, const string_key_view_t& view)
   }
 }
 
+struct index_view_t;
 struct ns_oid_view_t {
   using string_size_t = string_key_view_t::string_size_t;
   using Type = string_key_view_t::Type;
@@ -246,11 +269,18 @@ struct ns_oid_view_t {
   string_key_view_t nspace;
   string_key_view_t oid;
 };
-inline MatchKindCMP compare_to(const onode_key_t& key, const ns_oid_view_t& target) {
-  auto ret = compare_to(key.nspace, target.nspace);
+template <typename L, typename R>
+MatchKindCMP _compare_ns_oid(const L& l, const R& r) {
+  auto ret = compare_to(l.nspace, r.nspace);
   if (ret != MatchKindCMP::EQ)
     return ret;
-  return compare_to(key.oid, target.oid);
+  return compare_to(l.oid, r.oid);
+}
+inline MatchKindCMP compare_to(const ns_oid_view_t& l, const ns_oid_view_t& r) {
+  return _compare_ns_oid(l, r);
+}
+inline MatchKindCMP compare_to(const onode_key_t& key, const ns_oid_view_t& target) {
+  return _compare_ns_oid(key, target);
 }
 inline std::ostream& operator<<(std::ostream& os, const ns_oid_view_t& ns_oid) {
   return os << ns_oid.nspace << "," << ns_oid.oid;
@@ -334,5 +364,32 @@ struct index_view_t {
   std::optional<ns_oid_view_t> p_ns_oid;
   const snap_gen_t* p_snap_gen = nullptr;
 };
+
+inline MatchKindCMP compare_to(const index_view_t& key, const shard_pool_t& target) {
+  assert(key.p_shard_pool);
+  return compare_to(*key.p_shard_pool, target);
+}
+
+inline MatchKindCMP compare_to(const index_view_t& key, const crush_t& target) {
+  assert(key.p_crush);
+  return compare_to(*key.p_crush, target);
+}
+
+inline MatchKindCMP compare_to(const index_view_t& key, const shard_pool_crush_t& target) {
+  auto ret = compare_to(key, target.shard_pool);
+  if (ret != MatchKindCMP::EQ)
+    return ret;
+  return compare_to(key, target.crush);
+}
+
+inline MatchKindCMP compare_to(const index_view_t& key, const ns_oid_view_t& target) {
+  assert(key.p_ns_oid);
+  return compare_to(*key.p_ns_oid, target);
+}
+
+inline MatchKindCMP compare_to(const index_view_t& key, const snap_gen_t& target) {
+  assert(key.p_snap_gen);
+  return compare_to(*key.p_snap_gen, target);
+}
 
 }

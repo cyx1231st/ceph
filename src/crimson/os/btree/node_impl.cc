@@ -167,6 +167,11 @@ void I_NODE_T::apply_child_split(
     const index_view_t& l_key, Ref<Node> l_node, Ref<Node> r_node) {
   auto [r_pos, ptr] = l_node->parent_info();
   assert(ptr.get() == this);
+#ifndef NDEBUG
+  if (r_pos.is_end()) {
+    assert(this->is_level_tail());
+  }
+#endif
 
   // update r_pos => l_addr to r_addr
   const laddr_t* p_rvalue = this->get_value_ptr(r_pos);
@@ -177,27 +182,19 @@ void I_NODE_T::apply_child_split(
   assert(tracked_child_nodes[r_pos] == l_node);
   track_child(r_pos, r_node);
 
+  auto stage = this->stage();
+  if (unlikely(!stage.keys())) {
+    // TODO: special case
+    return;
+  }
+
   // evaluate insertion
-  search_position_t i_position;
-  match_stage_t i_stage;
-  node_offset_t i_estimated_size;
-  evaluate_insert(l_key, r_pos, i_position, i_stage, i_estimated_size);
+  typename STAGE_T::position_t insert_pos = cast_down<STAGE_T::STAGE>(r_pos);
+  auto [insert_stage, insert_size] =
+    STAGE_T::evaluate_insert(stage, l_key, insert_pos);
 
   // ...
   // TODO track the left node
-}
-
-template <typename FieldType, typename ConcreteType>
-void I_NODE_T::evaluate_insert(
-    const index_view_t& key, const search_position_t& position,
-    search_position_t& i_position, match_stage_t& i_stage,
-    node_offset_t& i_estimated_size) {
-  // TODO: should be generalized and move out
-  if constexpr (parent_t::FIELD_TYPE == field_type_t::N0) {
-    // TODO
-  } else {
-    assert(false && "not implemented");
-  }
 }
 
 template <typename FieldType, typename ConcreteType>
