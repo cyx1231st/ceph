@@ -154,13 +154,6 @@ class LeafNodeT: public LeafNode,
 
  private:
   // TODO: move out
-  void evaluate_insert(
-      const onode_key_t& key, const onode_t& value,
-      const search_position_t& position, const MatchHistory& history,
-      search_position_t& i_position, match_stage_t& i_stage,
-      ns_oid_view_t::Type& dedup_type, node_offset_t& estimated_size);
-
-  // TODO: move out
   template <bool SPLIT>
   const onode_t* proceed_insert(
       const onode_key_t& key, const onode_t& value,

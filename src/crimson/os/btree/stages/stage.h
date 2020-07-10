@@ -984,7 +984,7 @@ struct staged {
     auto& index = position.index;
     if (index == INDEX_END) {
       iter.seek_last();
-      // evaluate the next index
+      // evaluate the previous index
     } else {
       // evaluate the current index
       iter.seek_at(index);
@@ -999,10 +999,9 @@ struct staged {
           return NXT_STAGE_T::evaluate_insert(nxt_container, key, position.nxt);
         }
       } else {
-        // insert before the current index
         assert(match == MatchKindCMP::NE);
         if (index == 0) {
-          // already the first index, so insert now
+          // already the first index, so insert at the current index
           return {STAGE, insert_size(key)};
         }
         --index;
@@ -1012,10 +1011,10 @@ struct staged {
       }
     }
 
-    // XXX: when key is from a different type of node
+    // XXX(multi-type): when key is from a different type of node
     auto match = compare_to(key, iter.get_key());
     if (match == MatchKindCMP::PO) {
-      // key doesn't match both indexes, so insert now
+      // key doesn't match both indexes, so insert at the current index
       ++index;
       return {STAGE, insert_size(key)};
     } else {
@@ -1024,7 +1023,7 @@ struct staged {
         // ceph_abort?
         assert(false && "insert conflict at the previous index!");
       } else {
-        // insert into the next index
+        // insert into the previous index
         auto nxt_container = iter.get_nxt_container();
         return NXT_STAGE_T::evaluate_insert(nxt_container, key, position.nxt);
       }
@@ -1042,7 +1041,88 @@ struct staged {
              NXT_STAGE_T::insert_size(key, type, value);
     }
   }
-  
+
+  template <typename T = node_offset_t>
+  static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T> insert_size_at(
+      match_stage_t stage, const onode_key_t& key,
+      const ns_oid_view_t::Type& type, const onode_t& value) {
+    if (stage == STAGE) {
+      return insert_size(key, type, value);
+    } else {
+      assert(stage < STAGE);
+      return NXT_STAGE_T::insert_size_at(stage, key, type, value);
+    }
+  }
+
+  template <typename T = bool>
+  static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
+  compensate_insert_position_at(match_stage_t stage, position_t& position) {
+    auto& index = position.index;
+    if (stage == STAGE) {
+      assert(index == 0);
+      // insert at the end of the current stage
+      index = INDEX_END;
+      return true;
+    } else {
+      if constexpr (IS_BOTTOM) {
+        assert(false && "impossible");
+      } else {
+        assert(stage < STAGE);
+        bool compensate = NXT_STAGE_T::
+          compensate_insert_position_at(stage, position.nxt);
+        if (compensate) {
+          assert(index != INDEX_END);
+          if (index == 0) {
+            // insert into the *last* index of the current stage
+            index = INDEX_END;
+            return true;
+          } else {
+            --index;
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
+    }
+  }
+
+  template <typename T = std::tuple<match_stage_t, node_offset_t>>
+  static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T> evaluate_insert(
+      const onode_key_t& key, const ns_oid_view_t::Type& type,
+      const onode_t& value, const MatchHistory& history, position_t& position) {
+    match_stage_t insert_stage = STAGE_TOP;
+    while (*history.get_by_stage(insert_stage) == MatchKindCMP::EQ) {
+      assert(insert_stage != STAGE_BOTTOM && "insert conflict!");
+      --insert_stage;
+    }
+
+    if (history.is_PO()) {
+      if (position.is_end()) {
+        // no need to compensate insert position
+        assert(insert_stage <= STAGE && "impossible insert stage");
+      } else if (position == position_t::begin()) {
+        // I must be short-circuited by staged::smallest_result()
+        // in staged::lower_bound()
+
+        // XXX(multi-type): need to upgrade node type before inserting an
+        // incompatible index at front.
+        assert(insert_stage <= STAGE && "incompatible insert");
+
+        // insert at begin and at the top stage
+        insert_stage = STAGE;
+      } else {
+        assert(insert_stage <= STAGE && "impossible insert stage");
+        bool ret = compensate_insert_position_at(insert_stage, position);
+        assert(!ret);
+      }
+    }
+
+    node_offset_t insert_size = insert_size_at(insert_stage, key, type, value);
+
+    return {insert_stage, insert_size};
+  }
+
   /*
    * Lookup interfaces
    */

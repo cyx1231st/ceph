@@ -292,14 +292,28 @@ template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::insert_value(
     const onode_key_t& key, const onode_t& value,
     const search_position_t& position, const MatchHistory& history) {
-  auto stage = this->stage();
-  search_position_t i_position;
-  match_stage_t i_stage;
-  ns_oid_view_t::Type i_dedup_type;
-  node_offset_t i_estimated_size;
-  evaluate_insert(key, value, position, history,
-                  i_position, i_stage, i_dedup_type, i_estimated_size);
+#ifndef NDEBUG
+  if (position.is_end()) {
+    assert(this->is_level_tail());
+  }
+#endif
 
+  // TODO(cross-node string deduplication): we need to imbed this type with
+  // onode_key_t when travel down the tree, marking the string as deduplicated
+  // (MIN/MAX) when the string comparision is done at parent node.
+  // When travel bottom up, we need to provide index_view_t with full string if
+  // it is deduplicated at child but need a full insertion.
+  ns_oid_view_t::Type i_dedup_type = ns_oid_view_t::Type::STR;
+
+  // TODO: replace by
+  // typename STAGE_T::position_t i_position = cast_down<STAGE_T::STAGE>(position);
+  search_position_t i_position = position;
+  auto& _i_position = cast_down<STAGE_T::STAGE>(i_position);
+
+  auto [i_stage, i_estimated_size] = STAGE_T::evaluate_insert(
+      key, i_dedup_type, value, history, _i_position);
+
+  auto stage = this->stage();
   auto free_size = stage.free_size();
   if (free_size >= i_estimated_size) {
     auto p_value = proceed_insert<false>(
@@ -307,9 +321,6 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
     assert(stage.free_size() == free_size - i_estimated_size);
     return get_or_create_cursor(i_position, p_value);
   }
-
-  // TODO: no need to cast after insert is generalized
-  auto& _i_position = cast_down<STAGE_T::STAGE>(i_position);
 
   std::cout << "  try insert at: " << _i_position
             << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
@@ -386,93 +397,6 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
 
   // TODO (optimize)
   // try to acquire space from siblings before split... see btrfs
-}
-
-template <typename FieldType, typename ConcreteType>
-void L_NODE_T::evaluate_insert(
-    const onode_key_t& key, const onode_t& value,
-    const search_position_t& position, const MatchHistory& history,
-    search_position_t& i_position, match_stage_t& i_stage,
-    ns_oid_view_t::Type& dedup_type, node_offset_t& estimated_size) {
-  // TODO: should be generalized and move out
-  if constexpr (parent_t::FIELD_TYPE == field_type_t::N0) {
-#ifndef NDEBUG
-    if (position.is_end()) {
-      assert(this->is_level_tail());
-    }
-#endif
-
-    // calculate the stage where insertion happens
-    i_stage = STAGE_LEFT;
-    dedup_type = ns_oid_view_t::Type::STR;
-    bool is_PO = history.is_PO();
-    if (position == search_position_t::begin() && is_PO) {
-      // I must be short-circuited by staged::smallest_result()
-      // in staged::lower_bound()
-      assert(false && "not implemented");
-      // take ns/oid deduplication into consideration
-      auto& s_match = history.get<STAGE_STRING>();
-      if (s_match.has_value() && *s_match == MatchKindCMP::EQ) {
-        dedup_type = ns_oid_view_t::Type::MIN;
-      }
-    } else {
-      while (*history.get_by_stage(i_stage) == MatchKindCMP::EQ) {
-        assert(i_stage != STAGE_RIGHT);
-        --i_stage;
-      }
-    }
-
-    // compensate i_position by staged::smallest_result()
-    // in staged::nxt_lower_bound()
-    i_position = position;
-    if (is_PO) {
-      if (i_position != search_position_t::begin() &&
-          !i_position.is_end()) {
-        switch (i_stage) {
-         size_t* p_index;
-         case STAGE_RIGHT:
-          p_index = &i_position.nxt.nxt.index;
-          assert(*p_index != INDEX_END);
-          if (*p_index > 0) {
-            --*p_index;
-            break;
-          }
-          *p_index = INDEX_END;
-          [[fallthrough]];
-         case STAGE_STRING:
-          p_index = &i_position.nxt.index;
-          assert(*p_index != INDEX_END);
-          if (*p_index > 0) {
-            --*p_index;
-            break;
-          }
-          *p_index = INDEX_END;
-          [[fallthrough]];
-         case STAGE_LEFT:
-          p_index = &i_position.index;
-          assert(*p_index != INDEX_END);
-          assert(*p_index > 0);
-          --*p_index;
-        }
-      }
-    }
-
-    // estimate size for insertion
-    switch (i_stage) {
-     case STAGE_LEFT:
-      estimated_size = node_stage_t::estimate_insert_one(key, value, dedup_type);
-      break;
-     case STAGE_STRING:
-      estimated_size = item_iterator_t<parent_t::NODE_TYPE>::
-        estimate_insert_one(key, value, dedup_type);
-      break;
-     case STAGE_RIGHT:
-      estimated_size = leaf_sub_items_t::estimate_insert_one(value);
-      break;
-    }
-  } else {
-    assert(false && "not implemented");
-  }
 }
 
 template <typename FieldType, typename ConcreteType>
