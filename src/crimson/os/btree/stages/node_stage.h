@@ -42,7 +42,7 @@ class node_extent_t {
         is_level_tail(), keys());
   }
   size_t total_size() const;
-
+  const char* p_left_bound() const;
   template <node_type_t T = NODE_TYPE>
   std::enable_if_t<T == node_type_t::INTERNAL, const laddr_t*>
   get_end_p_laddr() {
@@ -112,6 +112,15 @@ class node_extent_t {
     return size;
   }
 
+  static const value_t* insert_at(
+      LogicalCachedExtent& dst, const node_extent_t&,
+      const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
+      size_t index, node_offset_t size, const char* p_left_bound);
+
+  static void update_size_at(
+      LogicalCachedExtent& dst, const node_extent_t&, size_t index, int change);
+
+  // TODO: remove
   static node_offset_t estimate_insert_one(
       const onode_key_t&, const value_t&, const ns_oid_view_t::Type&);
   static size_t trim_until(LogicalCachedExtent&, const node_extent_t&, size_t index);

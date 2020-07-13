@@ -12,6 +12,7 @@ namespace crimson::os::seastore::onode {
 template class item_iterator_t<node_type_t::LEAF>;
 template class item_iterator_t<node_type_t::INTERNAL>;
 
+// TODO: remove
 template <node_type_t NODE_TYPE>
 node_offset_t ITER_T::estimate_insert_one(
     const onode_key_t& key, const value_t& value,
@@ -25,6 +26,55 @@ node_offset_t ITER_T::estimate_insert_one(
   }
 }
 
+// TODO: remove
+template <node_type_t NODE_TYPE>
+const typename ITER_T::value_t* ITER_T::_insert(
+    LogicalCachedExtent& dst, char* p_insert,
+    const onode_key_t& key, ns_oid_view_t::Type type,
+    const typename ITER_T::value_t& value,
+    node_offset_t size, const char* p_left_bound) {
+  if constexpr (NODE_TYPE == node_type_t::LEAF) {
+    const char* p_shift_start = p_left_bound;
+    const char* p_shift_end = p_insert;
+    dst.shift_mem(p_shift_start,
+                  p_shift_end - p_shift_start,
+                  -(int)size);
+
+    const char* p_insert_start = p_insert - size;
+    p_insert -= sizeof(node_offset_t);
+    node_offset_t back_offset = (p_insert - p_insert_start);
+    dst.copy_in_mem(back_offset, p_insert);
+
+    ns_oid_view_t::append(dst, key, type, p_insert);
+
+    auto p_value = leaf_sub_items_t::insert_new(dst, key, value, p_insert);
+    assert(p_insert == p_insert_start);
+    return p_value;
+  } else {
+    assert(false && "not implemented");
+  }
+}
+
+template <node_type_t NODE_TYPE>
+const typename ITER_T::value_t* ITER_T::insert(
+    LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
+    const onode_key_t& key, ns_oid_view_t::Type type,
+    const typename ITER_T::value_t& value, bool is_end,
+    node_offset_t size, const char* p_left_bound) {
+  if constexpr (NODE_TYPE == node_type_t::LEAF) {
+    char* p_insert;
+    if (is_end) {
+      assert(!iter.has_next());
+      p_insert = const_cast<char*>(iter.p_start());
+    } else {
+      p_insert = const_cast<char*>(iter.p_end());
+    }
+    return _insert(dst, p_insert, key, type, value, size, p_left_bound);
+  } else {
+    assert(false && "not implemented");
+  }
+}
+
 template <node_type_t NODE_TYPE>
 void ITER_T::update_size(
     LogicalCachedExtent& dst, const ITER_T& iter, int change) {
@@ -33,34 +83,6 @@ void ITER_T::update_size(
   assert(change + offset < NODE_BLOCK_SIZE);
   dst.copy_in_mem(node_offset_t(offset + change),
                   (void*)iter.get_item_range().p_end);
-}
-
-template <node_type_t NODE_TYPE>
-const typename ITER_T::value_t* ITER_T::insert(
-    LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
-    const char* left_bound, char* p_insert,
-    node_offset_t estimated_size, const ns_oid_view_t::Type& dedup_type) {
-  if constexpr (NODE_TYPE == node_type_t::LEAF) {
-    const char* p_shift_start = left_bound;
-    const char* p_shift_end = p_insert;
-    dst.shift_mem(p_shift_start,
-                  p_shift_end - p_shift_start,
-                  -(int)estimated_size);
-
-    const char* p_insert_start = p_insert - estimated_size;
-    p_insert -= sizeof(node_offset_t);
-    node_offset_t back_offset = (p_insert - p_insert_start);
-    dst.copy_in_mem(back_offset, p_insert);
-
-    ns_oid_view_t::append(dst, key, dedup_type, p_insert);
-
-    auto p_value = leaf_sub_items_t::insert_new(dst, key, value, p_insert);
-    assert(p_insert == p_insert_start);
-    return p_value;
-  } else {
-    // TODO: not implemented
-    assert(false);
-  }
 }
 
 template <node_type_t NODE_TYPE>

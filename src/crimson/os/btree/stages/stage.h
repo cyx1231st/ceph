@@ -299,6 +299,10 @@ struct staged {
     *   header_size() -> node_offset_t
     *   (INTERNAL) estimate_insert(key_view) -> node_offset_t
     *   (LEAF) estimate_insert(key, type, value) -> node_offset_t
+    *   insert_at(extent, src, key, type, value, index, size, p_left_bound)
+    *       -> const value_t*
+    *   (!IS_BOTTOM) update_size_at(extent, src, index, size)
+    *
     * Appender::append(const container_t& src, from, items)
     */
    public:
@@ -339,11 +343,27 @@ struct staged {
       return container.size_before(_index + 1) -
              container.size_before(_index);
     }
+
     me_t& operator++() {
       assert(!is_end());
       assert(!is_last());
       ++_index;
       return *this;
+    }
+    void seek_at(size_t index) {
+      assert(index < container.keys());
+      seek_till_end(index);
+    }
+    void seek_till_end(size_t index) {
+      assert(!is_end());
+      assert(this->index() == 0);
+      assert(index <= container.keys());
+      _index = index;
+    }
+    void seek_last() {
+      assert(!is_end());
+      assert(index() == 0);
+      _index = container.keys() - 1;
     }
     void set_end() {
       assert(!is_end());
@@ -366,17 +386,18 @@ struct staged {
       return ret.match;
     }
 
-    void seek_at(size_t index) {
-      assert(!is_end());
-      assert(this->index() == 0);
-      assert(index < container.keys());
-      _index = index;
+    const value_t* insert(
+        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        const value_t& value, node_offset_t insert_size, const char* p_left_bound) {
+      return container_t::insert_at(extent, container, key, type, value,
+                                    _index, insert_size, p_left_bound);
     }
 
-    void seek_last() {
+    template <typename T = void>
+    std::enable_if_t<!IS_BOTTOM, T>
+    update_size(LogicalCachedExtent& extent, node_offset_t insert_size) {
       assert(!is_end());
-      assert(index() == 0);
-      _index = container.keys() - 1;
+      container_t::update_size_at(extent, container, _index, insert_size);
     }
 
     // Note: possible to return an end iterator when is_exclusive is true
@@ -522,6 +543,9 @@ struct staged {
     *   header_size() -> node_offset_t
     *   (INTERNAL) estimate_insert(key_view) -> node_offset_t
     *   (LEAF) estimate_insert(key, type, value) -> node_offset_t
+    *   insert_at(extent, src, key, type, value,
+    *             index, size, p_left_bound, is_end) -> const value_t*
+    *   (!IS_BOTTOM) update_size_at(extent, src, index, size)
      */
     // currently the iterative iterator is only implemented with STAGE_STRING
     // for in-node space efficiency
@@ -557,21 +581,51 @@ struct staged {
       return !container.has_next();
     }
     bool is_end() const { return _is_end; }
+    size_t size() const {
+      assert(!is_end());
+      return container.size();
+    }
+
     me_t& operator++() {
       assert(!is_end());
       assert(!is_last());
       ++container;
       return *this;
     }
+    void seek_at(size_t index) {
+      assert(!is_end());
+      assert(this->index() == 0);
+      while (index > 0) {
+        assert(container.has_next());
+        ++container;
+        --index;
+      }
+    }
+    void seek_till_end(size_t index) {
+      assert(!is_end());
+      assert(this->index() == 0);
+      while (index > 0) {
+        if (!container.has_next()) {
+          assert(index == 1);
+          set_end();
+          break;
+        }
+        ++container;
+        --index;
+      }
+    }
+    void seek_last() {
+      assert(!is_end());
+      assert(index() == 0);
+      while (container.has_next()) {
+        ++container;
+      }
+    }
     void set_end() {
       assert(!is_end());
       assert(is_last());
       _is_end = true;
       end_index = container.index() + 1;
-    }
-    size_t size() const {
-      assert(!is_end());
-      return container.size();
     }
     // Note: possible to return an end iterator
     MatchKindBS seek(const onode_key_t& key, bool exclude_last) {
@@ -601,22 +655,18 @@ struct staged {
       return MatchKindBS::NE;
     }
 
-    void seek_at(size_t index) {
-      assert(!is_end());
-      assert(this->index() == 0);
-      while (index > 0) {
-        assert(container.has_next());
-        ++container;
-        --index;
-      }
+    const value_t* insert(
+        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        const value_t& value, node_offset_t insert_size, const char* p_left_bound) {
+      return container_t::insert(extent, container, key, type, value,
+                                 is_end(), insert_size, p_left_bound);
     }
 
-    void seek_last() {
+    template <typename T = void>
+    std::enable_if_t<!IS_BOTTOM, T>
+    update_size(LogicalCachedExtent& extent, node_offset_t insert_size) {
       assert(!is_end());
-      assert(index() == 0);
-      while (container.has_next()) {
-        ++container;
-      }
+      container_t::update_size(extent, container, insert_size);
     }
 
     // Note: possible to return an end iterator when is_exclusive is true
@@ -791,12 +841,18 @@ struct staged {
    *   (IS_BOTTOM) get_p_value() -> const value_t*
    *   (!IS_BOTTOM) get_nxt_container() -> nxt_stage::container_t
    *   (!IS_BOTTOM) size_to_nxt() -> size_t
-   * modifiers:
+   * seek:
    *   operator++() -> iterator_t&
-   *   set_end()
    *   seek_at(index)
+   *   seek_till_end(index)
    *   seek_last()
+   *   set_end()
    *   seek(key, exclude_last) -> MatchKindBS
+   * insert:
+   *   TODO: consolidate key/type and key_view
+   *   insert(extent, key, type, value, size, p_left_bound) -> p_value
+   *   (!IS_BOTTOM) update_size(extent, size)
+   * split;
    *   seek_split_inserted<bool is_exclusive>(
    *       start_size, extra_size, target_size, i_index, i_size,
    *       std::optional<bool>& i_to_left)
@@ -1123,10 +1179,91 @@ struct staged {
     return {insert_stage, insert_size};
   }
 
+  // TODO: in order to share this logic for internal node, we need to provide
+  // an abstraction of key to encapsulate both onode_key_t and index_view_t.
+  template <bool SPLIT>
+  static const value_t* proceed_insert_recursively(
+      LogicalCachedExtent& extent, const container_t& container,
+      const onode_key_t& key, ns_oid_view_t::Type type,
+      const value_t& value, position_t& position, match_stage_t stage,
+      node_offset_t& _insert_size, const char* p_left_bound) {
+    // proceed insert from right to left
+    assert(stage <= STAGE);
+    auto iter = iterator_t(container);
+    auto& index = position.index;
+    if (index == INDEX_END) {
+      iter.seek_last();
+    } else {
+      iter.seek_till_end(index);
+    }
+
+    bool do_insert = false;
+    if (stage == STAGE) {
+      if (index == INDEX_END) {
+        iter.set_end();
+      }
+      do_insert = true;
+    } else { // stage < STAGE
+      if constexpr (SPLIT) {
+        if (iter.is_end()) {
+          // insert at the higher stage due to split
+          do_insert = true;
+          _insert_size = insert_size(key, type, value);
+        }
+      } else {
+        assert(!iter.is_end());
+      }
+    }
+    if (index == INDEX_END) {
+      index = iter.index();
+    }
+
+    if (do_insert) {
+      if constexpr (!IS_BOTTOM) {
+        position.nxt = position_t::nxt_t::begin();
+      }
+      assert(_insert_size == insert_size(key, type, value));
+      return iter.insert(extent, key, type, value, _insert_size, p_left_bound);
+    } else {
+      if constexpr (!IS_BOTTOM) {
+        auto nxt_container = iter.get_nxt_container();
+        auto p_value = NXT_STAGE_T::template proceed_insert_recursively<SPLIT>(
+            extent, nxt_container, key, type, value,
+            position.nxt, stage, _insert_size, p_left_bound);
+        iter.update_size(extent, _insert_size);
+        return p_value;
+      } else {
+        assert(false && "impossible path");
+      }
+    }
+  }
+
+  template <bool SPLIT>
+  static const value_t* proceed_insert(
+      LogicalCachedExtent& extent, const container_t& container,
+      const onode_key_t& key, ns_oid_view_t::Type type,
+      const value_t& value, position_t& position, match_stage_t stage,
+      node_offset_t& _insert_size) {
+    auto p_left_bound = container.p_left_bound();
+    if (unlikely(!container.keys())) {
+      assert(position == position_t::end());
+      assert(stage == STAGE);
+      assert(NODE_TYPE == node_type_t::LEAF);
+      position = position_t::begin();
+      return container_t::insert_at(extent, container, key, type, value,
+                                    0, _insert_size, p_left_bound);
+    } else {
+      return proceed_insert_recursively<SPLIT>(
+          extent, container, key, type, value,
+          position, stage, _insert_size, p_left_bound);
+    }
+  }
+
   /*
    * Lookup interfaces
    */
 
+  // TODO: remove most of the normalize helper functions
   static void lookup_largest_normalized(
       const container_t& container, search_position_t& position, const onode_t*& p_value) {
     if constexpr (STAGE == STAGE_LEFT) {
@@ -1216,10 +1353,6 @@ struct staged {
     } while (true);
     return os;
   }
-
-  /*
-   * WIP: Iterative interfaces
-   */
 
   struct _BaseEmpty {};
   class _BaseWithNxtIterator {

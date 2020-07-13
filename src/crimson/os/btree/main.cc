@@ -481,6 +481,8 @@ int main(int argc, char* argv[])
               << std::endl << std::endl;
     f_split(onode_key_t{3, 3, 3, "ns2", "oid2", 3, 4}, onode3);
     std::cout << std::endl;
+
+    // TODO: test split at {0, 0, 0}
   }
 
   get_transaction_manager().free_all();

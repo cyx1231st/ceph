@@ -8,17 +8,16 @@
 namespace crimson::os::seastore::onode {
 
 const onode_t* leaf_sub_items_t::insert_at(
-    LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
-    size_t index, leaf_sub_items_t& sub_items, const char* p_left_bound, size_t estimated_size) {
-  assert(estimated_size == estimate_insert_one(value));
-
-  // a. [... item(index)] << estimated_size
+    LogicalCachedExtent& dst, const leaf_sub_items_t& sub_items,
+    const onode_key_t& key, ns_oid_view_t::Type, const onode_t& value,
+    size_t index, node_offset_t size, const char* p_left_bound) {
+  // a. [... item(index)] << size
   const char* p_shift_start = p_left_bound;
   const char* p_shift_end = sub_items.get_item_end(index);
-  dst.shift_mem(p_shift_start, p_shift_end - p_shift_start, -(int)estimated_size);
+  dst.shift_mem(p_shift_start, p_shift_end - p_shift_start, -(int)size);
 
   // b. insert item
-  auto p_insert = const_cast<char*>(p_shift_end - estimated_size);
+  auto p_insert = const_cast<char*>(p_shift_end - size);
   auto p_value = reinterpret_cast<const onode_t*>(p_insert);
   dst.copy_in_mem(&value, p_insert, value.size);
   p_insert += value.size;

@@ -41,16 +41,16 @@ void F013_T::append_offset(
 template <typename SlotType>
 void F013_T::insert_at(
     LogicalCachedExtent& dst, const onode_key_t& key,
-    const me_t& node, size_t index, node_offset_t size) {
+    const me_t& node, size_t index, node_offset_t size_right) {
   assert(index <= node.num_keys);
-  update_size_at(dst, node, index, size);
+  update_size_at(dst, node, index, size_right);
   auto p_insert = const_cast<char*>(fields_start(node)) +
                   node.get_key_start_offset(index);
   auto p_shift_end = fields_start(node) + node.get_key_start_offset(node.num_keys);
   dst.shift_mem(p_insert, p_shift_end - p_insert, estimate_insert_one());
   dst.copy_in_mem(num_keys_t(node.num_keys + 1), (void*)&node.num_keys);
   append_key(dst, key_t::from_key(key), p_insert);
-  append_offset(dst, node.get_item_end_offset(index) - size, p_insert);
+  append_offset(dst, node.get_item_end_offset(index) - size_right, p_insert);
 }
 
 void node_fields_2_t::append_offset(

@@ -83,6 +83,20 @@ class item_iterator_t {
     return ns_oid_view_t::estimate_size(key, type) + sizeof(node_offset_t);
   }
 
+  static const value_t* _insert(
+      LogicalCachedExtent& dst, char* p_insert,
+      const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
+      node_offset_t size, const char* p_left_bound);
+
+  static const value_t* insert(
+      LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
+      const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
+      bool is_end, node_offset_t size, const char* p_left_bound);
+
+  static void update_size(
+      LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter, int change);
+
+  // TODO: remove
   static node_offset_t estimate_insert_one(
       const onode_key_t& key, const value_t& value,
       const ns_oid_view_t::Type& dedup_type);
@@ -91,12 +105,6 @@ class item_iterator_t {
       const ns_oid_view_t::Type& dedup_type) {
     return estimate_insert_one(key, value, dedup_type);
   }
-  static void update_size(
-      LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter, int change);
-  static const value_t* insert(
-      LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
-      const char* left_bound, char* p_insert,
-      node_offset_t estimated_size, const ns_oid_view_t::Type& dedup_type);
   static size_t trim_until(LogicalCachedExtent&, const item_iterator_t<NODE_TYPE>&);
   static size_t trim_at(
       LogicalCachedExtent&, const item_iterator_t<NODE_TYPE>&, size_t trimmed);

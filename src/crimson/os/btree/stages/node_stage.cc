@@ -21,6 +21,27 @@ template class node_extent_t<node_fields_2_t, node_type_t::LEAF>;
 template class node_extent_t<leaf_fields_3_t, node_type_t::LEAF>;
 
 template <typename FieldType, node_type_t NODE_TYPE>
+size_t NODE_T::total_size() const {
+  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+    if (is_level_tail()) {
+      return FieldType::SIZE - sizeof(snap_gen_t);
+    }
+  }
+  return FieldType::SIZE;
+}
+
+template <typename FieldType, node_type_t NODE_TYPE>
+const char* NODE_T::p_left_bound() const {
+  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+    // N3 internal node doesn't have the right part
+    return nullptr;
+  } else {
+    return p_start() + fields().get_item_end_offset(keys());
+  }
+}
+
+
+template <typename FieldType, node_type_t NODE_TYPE>
 size_t NODE_T::size_to_nxt_at(size_t index) const {
   assert(index < keys());
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
@@ -35,19 +56,9 @@ size_t NODE_T::size_to_nxt_at(size_t index) const {
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>
-size_t NODE_T::total_size() const {
-  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-    if (is_level_tail()) {
-      return FieldType::SIZE - sizeof(snap_gen_t);
-    }
-  }
-  return FieldType::SIZE;
-}
-
-template <typename FieldType, node_type_t NODE_TYPE>
 memory_range_t NODE_T::get_nxt_container(size_t index) const {
   if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-    assert(false && "N3 internal node doesn't have left and right parts");
+    assert(false && "N3 internal node doesn't have the right part");
   } else {
     node_offset_t item_start_offset = p_fields->get_item_start_offset(index);
     node_offset_t item_end_offset = p_fields->get_item_end_offset(index);
@@ -65,6 +76,35 @@ memory_range_t NODE_T::get_nxt_container(size_t index) const {
   }
 }
 
+template <typename FieldType, node_type_t NODE_TYPE>
+const typename NODE_T::value_t* NODE_T::insert_at(
+    LogicalCachedExtent& dst, const node_extent_t& node,
+    const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
+    size_t index, node_offset_t size, const char* p_left_bound) {
+  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+    assert(false && "not implemented");
+  } else {
+    assert(index <= node.keys());
+    assert(p_left_bound == node.p_left_bound());
+    assert(size > FieldType::estimate_insert_one());
+    auto size_right = size - FieldType::estimate_insert_one();
+    char* p_insert = const_cast<char*>(node.p_start()) +
+      node.fields().get_item_end_offset(index);
+    auto p_value = item_iterator_t<NODE_TYPE>::_insert(
+        dst, p_insert, key, type, value, size_right, p_left_bound);
+    FieldType::insert_at(dst, key, node.fields(), index, size_right);
+    return p_value;
+  }
+}
+
+template <typename FieldType, node_type_t NODE_TYPE>
+void NODE_T::update_size_at(
+    LogicalCachedExtent& dst, const node_extent_t& node, size_t index, int change) {
+  assert(index < node.keys());
+  FieldType::update_size_at(dst, node.fields(), index, change);
+}
+
+// TODO: remove
 template <typename FieldType, node_type_t NODE_TYPE>
 node_offset_t NODE_T::estimate_insert_one(
     const onode_key_t& key, const value_t& value,

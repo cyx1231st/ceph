@@ -148,6 +148,9 @@ struct _node_fields_013_t {
 #endif
 
   static node_offset_t estimate_insert_one() { return sizeof(SlotType); }
+  static void insert_at(
+      LogicalCachedExtent& dst, const onode_key_t& key,
+      const me_t& node, size_t index, node_offset_t size_right);
   static void update_size_at(
       LogicalCachedExtent& dst, const me_t& node, size_t index, int change);
   static void append_key(
@@ -158,9 +161,6 @@ struct _node_fields_013_t {
   }
   static void append_offset(
       LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append);
-  static void insert_at(
-      LogicalCachedExtent& dst, const onode_key_t& key,
-      const me_t& node, size_t index, node_offset_t size);
 
   node_header_t header;
   num_keys_t num_keys = 0u;
@@ -237,6 +237,15 @@ struct node_fields_2_t {
 #endif
 
   static node_offset_t estimate_insert_one() { return sizeof(node_offset_t); }
+  static void insert_at(
+      LogicalCachedExtent& dst, const onode_key_t& key,
+      const node_fields_2_t& node, size_t index, node_offset_t size_right) {
+    assert(false && "not implemented");
+  }
+  static void update_size_at(
+      LogicalCachedExtent& dst, const node_fields_2_t& node, size_t index, int change) {
+    assert(false && "not implemented");
+  }
   static void append_key(
       LogicalCachedExtent& dst, const key_t& key, char*& p_append) {
     ns_oid_view_t::append(dst, key, p_append);
@@ -321,6 +330,15 @@ struct _internal_fields_3_t {
 
   static node_offset_t estimate_insert_one() {
     return sizeof(snap_gen_t) + sizeof(laddr_t);
+  }
+  static void insert_at(
+      LogicalCachedExtent& dst, const onode_key_t& key,
+      const me_t& node, size_t index, node_offset_t size_right) {
+    assert(false && "not implemented");
+  }
+  static void update_size_at(
+      LogicalCachedExtent& dst, const me_t& node, size_t index, int change) {
+    assert(false && "not implemented");
   }
 
   node_header_t header;
