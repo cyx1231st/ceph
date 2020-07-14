@@ -117,12 +117,14 @@ class node_extent_t {
       const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
       size_t index, node_offset_t size, const char* p_left_bound);
 
+  static memory_range_t insert_prefix_at(
+      LogicalCachedExtent& dst, const node_extent_t&,
+      const onode_key_t& key, ns_oid_view_t::Type type,
+      size_t index, node_offset_t size, const char* p_left_bound);
+
   static void update_size_at(
       LogicalCachedExtent& dst, const node_extent_t&, size_t index, int change);
 
-  // TODO: remove
-  static node_offset_t estimate_insert_one(
-      const onode_key_t&, const value_t&, const ns_oid_view_t::Type&);
   static size_t trim_until(LogicalCachedExtent&, const node_extent_t&, size_t index);
   static size_t trim_at(LogicalCachedExtent&, const node_extent_t&,
                         size_t index, size_t trimmed);

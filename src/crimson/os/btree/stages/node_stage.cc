@@ -81,19 +81,35 @@ const typename NODE_T::value_t* NODE_T::insert_at(
     LogicalCachedExtent& dst, const node_extent_t& node,
     const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
     size_t index, node_offset_t size, const char* p_left_bound) {
-  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
+  if constexpr (FIELD_TYPE == field_type_t::N3) {
     assert(false && "not implemented");
   } else {
+    assert(false && "impossible");
+  }
+}
+
+template <typename FieldType, node_type_t NODE_TYPE>
+memory_range_t NODE_T::insert_prefix_at(
+    LogicalCachedExtent& dst, const node_extent_t& node,
+    const onode_key_t& key, ns_oid_view_t::Type type,
+    size_t index, node_offset_t size, const char* p_left_bound) {
+  if constexpr (FIELD_TYPE == field_type_t::N0 ||
+                FIELD_TYPE == field_type_t::N1) {
     assert(index <= node.keys());
     assert(p_left_bound == node.p_left_bound());
     assert(size > FieldType::estimate_insert_one());
     auto size_right = size - FieldType::estimate_insert_one();
-    char* p_insert = const_cast<char*>(node.p_start()) +
-      node.fields().get_item_end_offset(index);
-    auto p_value = item_iterator_t<NODE_TYPE>::_insert(
-        dst, p_insert, key, type, value, size_right, p_left_bound);
+    const char* p_insert = node.p_start() + node.fields().get_item_end_offset(index);
+    const char* p_insert_front = p_insert - size_right;
     FieldType::insert_at(dst, key, node.fields(), index, size_right);
-    return p_value;
+    dst.shift_mem(p_left_bound,
+                  p_insert - p_left_bound,
+                  -(int)size_right);
+    return {p_insert_front, p_insert};
+  } else if constexpr (FIELD_TYPE == field_type_t::N2) {
+    assert(false && "not implemented");
+  } else {
+    assert(false && "impossible");
   }
 }
 
@@ -102,34 +118,6 @@ void NODE_T::update_size_at(
     LogicalCachedExtent& dst, const node_extent_t& node, size_t index, int change) {
   assert(index < node.keys());
   FieldType::update_size_at(dst, node.fields(), index, change);
-}
-
-// TODO: remove
-template <typename FieldType, node_type_t NODE_TYPE>
-node_offset_t NODE_T::estimate_insert_one(
-    const onode_key_t& key, const value_t& value,
-    const ns_oid_view_t::Type& dedup_type) {
-  if constexpr (NODE_TYPE == node_type_t::LEAF) {
-    node_offset_t left_size = FieldType::estimate_insert_one();
-    node_offset_t right_size;
-    if constexpr (FIELD_TYPE == field_type_t::N0 ||
-                  FIELD_TYPE == field_type_t::N1) {
-      right_size = item_iterator_t<NODE_TYPE>::
-        estimate_insert_new(key, value, dedup_type);
-    } else if constexpr (FIELD_TYPE == field_type_t::N2) {
-      right_size = sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
-                   ns_oid_view_t::estimate_size(key, dedup_type);
-    } else {
-      if constexpr (NODE_TYPE == node_type_t::LEAF) {
-        right_size = value.size;
-      } else {
-        right_size = 0u;
-      }
-    }
-    return left_size + right_size;
-  } else {
-    assert(false);
-  }
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>

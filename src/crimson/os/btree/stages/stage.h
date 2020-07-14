@@ -299,8 +299,10 @@ struct staged {
     *   header_size() -> node_offset_t
     *   (INTERNAL) estimate_insert(key_view) -> node_offset_t
     *   (LEAF) estimate_insert(key, type, value) -> node_offset_t
-    *   insert_at(extent, src, key, type, value, index, size, p_left_bound)
-    *       -> const value_t*
+    *   (IS_BOTTOM) insert_at(extent, src, key, type, value,
+    *                         index, size, p_left_bound) -> const value_t*
+    *   (!IS_BOTTOM) insert_prefix_at(extent, src, key, type,
+    *                         index, size, p_left_bound) -> memory_range_t
     *   (!IS_BOTTOM) update_size_at(extent, src, index, size)
     *
     * Appender::append(const container_t& src, from, items)
@@ -386,11 +388,20 @@ struct staged {
       return ret.match;
     }
 
-    const value_t* insert(
+    template <typename T = value_t>
+    std::enable_if_t<IS_BOTTOM, const T*> insert(
         LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
         const value_t& value, node_offset_t insert_size, const char* p_left_bound) {
       return container_t::insert_at(extent, container, key, type, value,
                                     _index, insert_size, p_left_bound);
+    }
+
+    template <typename T = memory_range_t>
+    std::enable_if_t<!IS_BOTTOM, T> insert_prefix(
+        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        node_offset_t size, const char* p_left_bound) {
+      return container_t::insert_prefix_at(
+          extent, container, key, type, _index, size, p_left_bound);
     }
 
     template <typename T = void>
@@ -543,9 +554,11 @@ struct staged {
     *   header_size() -> node_offset_t
     *   (INTERNAL) estimate_insert(key_view) -> node_offset_t
     *   (LEAF) estimate_insert(key, type, value) -> node_offset_t
-    *   insert_at(extent, src, key, type, value,
-    *             index, size, p_left_bound, is_end) -> const value_t*
-    *   (!IS_BOTTOM) update_size_at(extent, src, index, size)
+    *   (IS_BOTTOM) insert(extent, src, key, type, value,
+    *                      is_end, size, p_left_bound) -> const value_t*
+    *   (!IS_BOTTOM) insert_prefix(extent, src, key, type,
+    *                      is_end, size, p_left_bound) -> memory_range_t
+    *   (!IS_BOTTOM) update_size(extent, src, size)
      */
     // currently the iterative iterator is only implemented with STAGE_STRING
     // for in-node space efficiency
@@ -655,11 +668,20 @@ struct staged {
       return MatchKindBS::NE;
     }
 
-    const value_t* insert(
+    template <typename T = value_t>
+    std::enable_if_t<IS_BOTTOM, const T*> insert(
         LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
         const value_t& value, node_offset_t insert_size, const char* p_left_bound) {
       return container_t::insert(extent, container, key, type, value,
                                  is_end(), insert_size, p_left_bound);
+    }
+
+    template <typename T = memory_range_t>
+    std::enable_if_t<!IS_BOTTOM, T> insert_prefix(
+        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        node_offset_t size, const char* p_left_bound) {
+      return container_t::insert_prefix(
+          extent, container, key, type, is_end(), size, p_left_bound);
     }
 
     template <typename T = void>
@@ -850,7 +872,9 @@ struct staged {
    *   seek(key, exclude_last) -> MatchKindBS
    * insert:
    *   TODO: consolidate key/type and key_view
-   *   insert(extent, key, type, value, size, p_left_bound) -> p_value
+   *   (IS_BOTTOM) insert(extent, key, type, value, size, p_left_bound) -> p_value
+   *   (!IS_BOTTOM) insert_prefix(extent, key, type, size, p_left_bound)
+   *       -> memory_range_t
    *   (!IS_BOTTOM) update_size(extent, size)
    * split;
    *   seek_split_inserted<bool is_exclusive>(
@@ -902,7 +926,7 @@ struct staged {
   }
 
   static void
-  lookup_largest(const container_t& container, position_t& position, const onode_t*& p_value) {
+  lookup_largest(const container_t& container, position_t& position, const value_t*& p_value) {
     auto iter = iterator_t(container);
     iter.seek_last();
     position.index = iter.index();
@@ -1179,6 +1203,19 @@ struct staged {
     return {insert_stage, insert_size};
   }
 
+  static const value_t* insert_new(
+      LogicalCachedExtent& extent, const memory_range_t& range,
+      const onode_key_t& key, const value_t& value) {
+    char* p_insert = const_cast<char*>(range.p_end);
+    const value_t* p_value = nullptr;
+    StagedAppender appender;
+    appender.init(&extent, p_insert);
+    appender.append(key, value, p_value);
+    const char* p_insert_front = appender.wrap();
+    assert(p_insert_front == range.p_start);
+    return p_value;
+  }
+
   // TODO: in order to share this logic for internal node, we need to provide
   // an abstraction of key to encapsulate both onode_key_t and index_view_t.
   template <bool SPLIT>
@@ -1223,7 +1260,13 @@ struct staged {
         position.nxt = position_t::nxt_t::begin();
       }
       assert(_insert_size == insert_size(key, type, value));
-      return iter.insert(extent, key, type, value, _insert_size, p_left_bound);
+      if constexpr (IS_BOTTOM) {
+        return iter.insert(extent, key, type, value, _insert_size, p_left_bound);
+      } else {
+        auto range = iter.insert_prefix(
+            extent, key, type, _insert_size, p_left_bound);
+        return NXT_STAGE_T::insert_new(extent, range, key, value);
+      }
     } else {
       if constexpr (!IS_BOTTOM) {
         auto nxt_container = iter.get_nxt_container();
@@ -1250,8 +1293,14 @@ struct staged {
       assert(stage == STAGE);
       assert(NODE_TYPE == node_type_t::LEAF);
       position = position_t::begin();
-      return container_t::insert_at(extent, container, key, type, value,
-                                    0, _insert_size, p_left_bound);
+      if constexpr (IS_BOTTOM) {
+        return container_t::insert_at(extent, container, key, type, value,
+                                      0, _insert_size, p_left_bound);
+      } else {
+        auto range = container_t::insert_prefix_at(
+            extent, container, key, type, 0, _insert_size, p_left_bound);
+        return NXT_STAGE_T::insert_new(extent, range, key, value);
+      }
     } else {
       return proceed_insert_recursively<SPLIT>(
           extent, container, key, type, value,
@@ -1265,7 +1314,7 @@ struct staged {
 
   // TODO: remove most of the normalize helper functions
   static void lookup_largest_normalized(
-      const container_t& container, search_position_t& position, const onode_t*& p_value) {
+      const container_t& container, search_position_t& position, const value_t*& p_value) {
     if constexpr (STAGE == STAGE_LEFT) {
       lookup_largest(container, position, p_value);
       return;
@@ -1591,7 +1640,7 @@ struct staged {
       src_iter.get().copy_out_until(*appender, to_index, to_stage);
       _index += (to_index - s_index);
     }
-    void append(const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
+    void append(const onode_key_t& key, const value_t& value, const value_t*& p_value) {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         auto& nxt = open_nxt(key);
@@ -1728,9 +1777,9 @@ struct staged {
     to_index -= from_index;
   }
 
-  static bool append_insert(const onode_key_t& key, const onode_t& value,
+  static bool append_insert(const onode_key_t& key, const value_t& value,
                             StagedIterator& src_iter, StagedAppender& appender,
-                            match_stage_t stage, const onode_t*& p_value) {
+                            match_stage_t stage, const value_t*& p_value) {
     assert(src_iter.valid());
     if (stage == STAGE) {
       appender.append(key, value, p_value);

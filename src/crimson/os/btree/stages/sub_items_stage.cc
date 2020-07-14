@@ -50,17 +50,6 @@ const onode_t* leaf_sub_items_t::insert_at(
   return p_value;
 }
 
-const onode_t* leaf_sub_items_t::insert_new(
-    LogicalCachedExtent& dst, const onode_key_t& key, const onode_t& value,
-    char*& p_insert) {
-  Appender appender(&dst, p_insert);
-  const onode_t* p_value = nullptr;
-  appender.append(key, value, p_value);
-  p_insert = appender.wrap();
-  assert(p_insert == (char*)p_value);
-  return p_value;
-}
-
 size_t leaf_sub_items_t::trim_until(
     LogicalCachedExtent& extent, leaf_sub_items_t& items, size_t index) {
   assert(index != 0);

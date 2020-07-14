@@ -194,24 +194,10 @@ class leaf_sub_items_t {
     return value.size + sizeof(snap_gen_t) + sizeof(node_offset_t);
   }
 
-  // TODO: remove
-  static node_offset_t estimate_insert_one(const onode_t& value) {
-    return value.size + sizeof(snap_gen_t) + sizeof(node_offset_t);
-  }
-
-  // TODO: remove
-  static node_offset_t estimate_insert_new(const onode_t& value) {
-    return estimate_insert_one(value) + sizeof(num_keys_t);
-  }
-
   static const onode_t* insert_at(
       LogicalCachedExtent&, const leaf_sub_items_t&,
       const onode_key_t&, ns_oid_view_t::Type, const onode_t&,
       size_t index, node_offset_t size, const char* p_left_bound);
-
-  static const onode_t* insert_new(
-      LogicalCachedExtent&, const onode_key_t&, const onode_t&,
-      char*&);
 
   static size_t trim_until(LogicalCachedExtent&, leaf_sub_items_t&, size_t index);
 

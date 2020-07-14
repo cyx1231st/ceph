@@ -12,56 +12,13 @@ namespace crimson::os::seastore::onode {
 template class item_iterator_t<node_type_t::LEAF>;
 template class item_iterator_t<node_type_t::INTERNAL>;
 
-// TODO: remove
 template <node_type_t NODE_TYPE>
-node_offset_t ITER_T::estimate_insert_one(
-    const onode_key_t& key, const value_t& value,
-    const ns_oid_view_t::Type& dedup_type) {
-  if constexpr (NODE_TYPE == node_type_t::LEAF) {
-    return (sub_items_t<NODE_TYPE>::estimate_insert_new(value) +
-            ns_oid_view_t::estimate_size(key, dedup_type) +
-            sizeof(node_offset_t));
-  } else {
-    assert(false && "should not happen");
-  }
-}
-
-// TODO: remove
-template <node_type_t NODE_TYPE>
-const typename ITER_T::value_t* ITER_T::_insert(
-    LogicalCachedExtent& dst, char* p_insert,
-    const onode_key_t& key, ns_oid_view_t::Type type,
-    const typename ITER_T::value_t& value,
-    node_offset_t size, const char* p_left_bound) {
-  if constexpr (NODE_TYPE == node_type_t::LEAF) {
-    const char* p_shift_start = p_left_bound;
-    const char* p_shift_end = p_insert;
-    dst.shift_mem(p_shift_start,
-                  p_shift_end - p_shift_start,
-                  -(int)size);
-
-    const char* p_insert_start = p_insert - size;
-    p_insert -= sizeof(node_offset_t);
-    node_offset_t back_offset = (p_insert - p_insert_start);
-    dst.copy_in_mem(back_offset, p_insert);
-
-    ns_oid_view_t::append(dst, key, type, p_insert);
-
-    auto p_value = leaf_sub_items_t::insert_new(dst, key, value, p_insert);
-    assert(p_insert == p_insert_start);
-    return p_value;
-  } else {
-    assert(false && "not implemented");
-  }
-}
-
-template <node_type_t NODE_TYPE>
-const typename ITER_T::value_t* ITER_T::insert(
+memory_range_t ITER_T::insert_prefix(
     LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
     const onode_key_t& key, ns_oid_view_t::Type type,
-    const typename ITER_T::value_t& value, bool is_end,
-    node_offset_t size, const char* p_left_bound) {
+    bool is_end, node_offset_t size, const char* p_left_bound) {
   if constexpr (NODE_TYPE == node_type_t::LEAF) {
+    // 1. insert range
     char* p_insert;
     if (is_end) {
       assert(!iter.has_next());
@@ -69,7 +26,22 @@ const typename ITER_T::value_t* ITER_T::insert(
     } else {
       p_insert = const_cast<char*>(iter.p_end());
     }
-    return _insert(dst, p_insert, key, type, value, size, p_left_bound);
+    char* p_insert_front = p_insert - size;
+
+    // 2. shift memory
+    const char* p_shift_start = p_left_bound;
+    const char* p_shift_end = p_insert;
+    dst.shift_mem(p_shift_start,
+                  p_shift_end - p_shift_start,
+                  -(int)size);
+
+    // 3. append header
+    p_insert -= sizeof(node_offset_t);
+    node_offset_t back_offset = (p_insert - p_insert_front);
+    dst.copy_in_mem(back_offset, p_insert);
+    ns_oid_view_t::append(dst, key, type, p_insert);
+
+    return {p_insert_front, p_insert};
   } else {
     assert(false && "not implemented");
   }
