@@ -118,41 +118,50 @@ int main(int argc, char* argv[])
 #define NXT_T(StageType)  staged<typename StageType::next_param_t>
 
     std::cout << "InternalNode0: "
-              << STAGE_T(InternalNode0)::insert_size(key_view) << " "
-              << NXT_T(STAGE_T(InternalNode0))::insert_size(key_view) << " "
-              << NXT_T(NXT_T(STAGE_T(InternalNode0)))::insert_size(key_view) << std::endl;
+              << STAGE_T(InternalNode0)::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << " "
+              << NXT_T(STAGE_T(InternalNode0))::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << " "
+              << NXT_T(NXT_T(STAGE_T(InternalNode0)))::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << std::endl;
     std::cout << "InternalNode1: "
-              << STAGE_T(InternalNode1)::insert_size(key_view) << " "
-              << NXT_T(STAGE_T(InternalNode1))::insert_size(key_view) << " "
-              << NXT_T(NXT_T(STAGE_T(InternalNode1)))::insert_size(key_view) << std::endl;
+              << STAGE_T(InternalNode1)::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << " "
+              << NXT_T(STAGE_T(InternalNode1))::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << " "
+              << NXT_T(NXT_T(STAGE_T(InternalNode1)))::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << std::endl;
     std::cout << "InternalNode2: "
-              << STAGE_T(InternalNode2)::insert_size(key_view) << " "
-              << NXT_T(STAGE_T(InternalNode2))::insert_size(key_view) << std::endl;
+              << STAGE_T(InternalNode2)::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << " "
+              << NXT_T(STAGE_T(InternalNode2))::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << std::endl;
     std::cout << "InternalNode3: "
-              << STAGE_T(InternalNode3)::insert_size(key_view) << std::endl;
+              << STAGE_T(InternalNode3)::template
+                 insert_size<KeyT::VIEW>(key_view, 0) << std::endl;
 
     std::cout << "LeafNode0: "
-              << STAGE_T(LeafNode0)::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << " "
-              << NXT_T(STAGE_T(LeafNode0))::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << " "
-              << NXT_T(NXT_T(STAGE_T(LeafNode0)))::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << std::endl;
+              << STAGE_T(LeafNode0)::template
+                 insert_size<KeyT::HOBJ>(key, value) << " "
+              << NXT_T(STAGE_T(LeafNode0))::template
+                 insert_size<KeyT::HOBJ>(key, value) << " "
+              << NXT_T(NXT_T(STAGE_T(LeafNode0)))::template
+                 insert_size<KeyT::HOBJ>(key, value) << std::endl;
     std::cout << "LeafNode1: "
-              << STAGE_T(LeafNode1)::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << " "
-              << NXT_T(STAGE_T(LeafNode1))::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << " "
-              << NXT_T(NXT_T(STAGE_T(LeafNode1)))::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << std::endl;
+              << STAGE_T(LeafNode1)::template
+                 insert_size<KeyT::HOBJ>(key, value) << " "
+              << NXT_T(STAGE_T(LeafNode1))::template
+                 insert_size<KeyT::HOBJ>(key, value) << " "
+              << NXT_T(NXT_T(STAGE_T(LeafNode1)))::template
+                 insert_size<KeyT::HOBJ>(key, value) << std::endl;
     std::cout << "LeafNode2: "
-              << STAGE_T(LeafNode2)::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << " "
-              << NXT_T(STAGE_T(LeafNode2))::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << std::endl;
+              << STAGE_T(LeafNode2)::template
+                 insert_size<KeyT::HOBJ>(key, value) << " "
+              << NXT_T(STAGE_T(LeafNode2))::template
+                 insert_size<KeyT::HOBJ>(key, value) << std::endl;
     std::cout << "LeafNode3: "
-              << STAGE_T(LeafNode3)::insert_size(
-                  key, ns_oid_view_t::Type::STR, value) << std::endl;
+              << STAGE_T(LeafNode3)::template
+                 insert_size<KeyT::HOBJ>(key, value) << std::endl;
     std::cout << std::endl;
   }
 

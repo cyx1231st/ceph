@@ -71,21 +71,15 @@ class item_iterator_t {
 
   static node_offset_t header_size() { return 0u; }
 
-  template <typename T = node_offset_t>
-  static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T>
-  estimate_insert(const full_key_t<KeyT::VIEW>& key) {
-    return ns_oid_view_t::estimate_size<KeyT::VIEW>(key) + sizeof(node_offset_t);
-  }
-
-  template <typename T = node_offset_t>
-  static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
-  estimate_insert(const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type, const onode_t&) {
-    return ns_oid_view_t::estimate_size<KeyT::HOBJ>(key) + sizeof(node_offset_t);
+  template <KeyT KT>
+  static node_offset_t estimate_insert(
+      const full_key_t<KT>& key, const value_t&) {
+    return ns_oid_view_t::estimate_size<KT>(key) + sizeof(node_offset_t);
   }
 
   static memory_range_t insert_prefix(
       LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
-      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
+      const full_key_t<KeyT::HOBJ>& key,
       bool is_end, node_offset_t size, const char* p_left_bound);
 
   static void update_size(

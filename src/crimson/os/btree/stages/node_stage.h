@@ -90,23 +90,14 @@ class node_extent_t {
 
   static node_offset_t header_size() { return FieldType::HEADER_SIZE; }
 
-  template <typename T = node_offset_t>
-  static std::enable_if_t<_NODE_TYPE == node_type_t::INTERNAL, T>
-  estimate_insert(const full_key_t<KeyT::VIEW>& key) {
+  template <KeyT KT>
+  static node_offset_t estimate_insert(
+      const full_key_t<KT>& key, const value_t& value) {
     auto size = FieldType::estimate_insert_one();
     if constexpr (FIELD_TYPE == field_type_t::N2) {
-      size += ns_oid_view_t::estimate_size<KeyT::VIEW>(key);
-    }
-    return size;
-  }
-
-  template <typename T = node_offset_t>
-  static std::enable_if_t<_NODE_TYPE == node_type_t::LEAF, T>
-  estimate_insert(const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type, const onode_t& value) {
-    auto size = FieldType::estimate_insert_one();
-    if constexpr (FIELD_TYPE == field_type_t::N2) {
-      size += ns_oid_view_t::estimate_size<KeyT::HOBJ>(key);
-    } else if constexpr (FIELD_TYPE == field_type_t::N3) {
+      size += ns_oid_view_t::estimate_size<KT>(key);
+    } else if constexpr (FIELD_TYPE == field_type_t::N3 &&
+                         NODE_TYPE == node_type_t::LEAF) {
       size += value.size;
     }
     return size;
@@ -114,12 +105,12 @@ class node_extent_t {
 
   static const value_t* insert_at(
       LogicalCachedExtent& dst, const node_extent_t&,
-      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type, const value_t& value,
+      const full_key_t<KeyT::HOBJ>& key, const value_t& value,
       size_t index, node_offset_t size, const char* p_left_bound);
 
   static memory_range_t insert_prefix_at(
       LogicalCachedExtent& dst, const node_extent_t&,
-      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
+      const full_key_t<KeyT::HOBJ>& key,
       size_t index, node_offset_t size, const char* p_left_bound);
 
   static void update_size_at(

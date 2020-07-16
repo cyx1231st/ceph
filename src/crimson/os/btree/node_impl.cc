@@ -191,7 +191,7 @@ void I_NODE_T::apply_child_split(
   // evaluate insertion
   typename STAGE_T::position_t insert_pos = cast_down<STAGE_T::STAGE>(r_pos);
   auto [insert_stage, insert_size] =
-    STAGE_T::evaluate_insert(stage, l_key, insert_pos);
+    STAGE_T::evaluate_insert(stage, l_key, l_node->laddr(), insert_pos);
 
   // ...
   // TODO track the left node
@@ -298,22 +298,15 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   }
 #endif
 
-  // TODO(cross-node string deduplication): we need to imbed this type with
-  // onode_key_t when travel down the tree, marking the string as deduplicated
-  // (MIN/MAX) when the string comparision is done at parent node.
-  // When travel bottom up, we need to provide key_view_t with full string if
-  // it is deduplicated at child but need a full insertion.
-  ns_oid_view_t::Type i_dedup_type = ns_oid_view_t::Type::STR;
-
   typename STAGE_T::position_t i_position = cast_down<STAGE_T::STAGE>(position);
   auto [i_stage, i_estimated_size] = STAGE_T::evaluate_insert(
-      key, i_dedup_type, value, history, i_position);
+      key, value, history, i_position);
 
   auto stage = this->stage();
   auto free_size = stage.free_size();
   if (free_size >= i_estimated_size) {
     auto p_value = STAGE_T::template proceed_insert<false>(
-        this->extent(), stage, key, i_dedup_type, value,
+        this->extent(), stage, key, value,
         i_position, i_stage, i_estimated_size);
     assert(stage.free_size() == free_size - i_estimated_size);
     auto i_position_normalized = normalize(std::move(i_position));
@@ -368,7 +361,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   if (i_to_left) {
     // left node: insert
     p_value = STAGE_T::template proceed_insert<true>(
-        this->extent(), stage, key, i_dedup_type, value,
+        this->extent(), stage, key, value,
         i_position, i_stage, i_estimated_size);
     std::cout << "insert to left: " << i_position
               << ", i_stage=" << (int)i_stage << std::endl;

@@ -14,7 +14,7 @@ template class item_iterator_t<node_type_t::INTERNAL>;
 template <node_type_t NODE_TYPE>
 memory_range_t ITER_T::insert_prefix(
     LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
-    const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
+    const full_key_t<KeyT::HOBJ>& key,
     bool is_end, node_offset_t size, const char* p_left_bound) {
   if constexpr (NODE_TYPE == node_type_t::LEAF) {
     // 1. insert range

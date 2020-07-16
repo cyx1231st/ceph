@@ -9,7 +9,7 @@ namespace crimson::os::seastore::onode {
 
 const onode_t* leaf_sub_items_t::insert_at(
     LogicalCachedExtent& dst, const leaf_sub_items_t& sub_items,
-    const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type, const onode_t& value,
+    const full_key_t<KeyT::HOBJ>& key, const onode_t& value,
     size_t index, node_offset_t size, const char* p_left_bound) {
   // a. [... item(index)] << size
   const char* p_shift_start = p_left_bound;
