@@ -4,9 +4,7 @@
 #include "node_stage.h"
 
 #include "crimson/os/btree/dummy_transaction_manager.h"
-#include "item_iterator_stage.h"
 #include "node_layout.h"
-#include "sub_items_stage.h"
 
 namespace crimson::os::seastore::onode {
 
