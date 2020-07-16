@@ -32,11 +32,11 @@ template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 level_t NODE_T::level() const { return stage().level(); }
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-index_view_t NODE_T::get_index_view(
+full_key_t<KeyT::VIEW> NODE_T::get_key_view(
     const search_position_t& position) const {
   auto _stage = stage();
-  index_view_t ret;
-  STAGE_T::get_index_view_normalized(_stage, position, ret);
+  full_key_t<KeyT::VIEW> ret;
+  STAGE_T::get_key_view_normalized(_stage, position, ret);
   return ret;
 }
 
@@ -136,7 +136,7 @@ template class InternalNodeT<internal_fields_3_t, InternalNode3>;
 
 template <typename FieldType, typename ConcreteType>
 Node::search_result_t I_NODE_T::do_lower_bound(
-    const onode_key_t& key, MatchHistory& history) {
+    const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
   auto stage = this->stage();
   auto ret = STAGE_T::lower_bound_normalized(stage, key, history);
 
@@ -164,7 +164,7 @@ Node::search_result_t I_NODE_T::do_lower_bound(
 template <typename FieldType, typename ConcreteType>
 void I_NODE_T::apply_child_split(
     // TODO: cross-node string dedup
-    const index_view_t& l_key, Ref<Node> l_node, Ref<Node> r_node) {
+    const full_key_t<KeyT::VIEW>& l_key, Ref<Node> l_node, Ref<Node> r_node) {
   auto [r_pos, ptr] = l_node->parent_info();
   assert(ptr.get() == this);
 #ifndef NDEBUG
@@ -219,8 +219,8 @@ Ref<Node> I_NODE_T::get_or_load_child(
   }
   assert(this->level() - 1 == child->level());
   assert(this->field_type() <= child->field_type());
-  assert(child->get_index_view(search_position_t::begin()).match_parent(
-        this->get_index_view(position)));
+  assert(child->get_key_view(search_position_t::begin()).match_parent(
+        this->get_key_view(position)));
   return child;
 }
 
@@ -242,7 +242,7 @@ template class LeafNodeT<leaf_fields_3_t, LeafNode3>;
 
 template <typename FieldType, typename ConcreteType>
 Node::search_result_t L_NODE_T::do_lower_bound(
-    const onode_key_t& key, MatchHistory& history) {
+    const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
   auto stage = this->stage();
   if (unlikely(stage.keys() == 0)) {
     assert(this->is_root());
@@ -290,7 +290,7 @@ Ref<tree_cursor_t> L_NODE_T::lookup_largest() {
 
 template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::insert_value(
-    const onode_key_t& key, const onode_t& value,
+    const full_key_t<KeyT::HOBJ>& key, const onode_t& value,
     const search_position_t& position, const MatchHistory& history) {
 #ifndef NDEBUG
   if (position.is_end()) {
@@ -301,7 +301,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   // TODO(cross-node string deduplication): we need to imbed this type with
   // onode_key_t when travel down the tree, marking the string as deduplicated
   // (MIN/MAX) when the string comparision is done at parent node.
-  // When travel bottom up, we need to provide index_view_t with full string if
+  // When travel bottom up, we need to provide key_view_t with full string if
   // it is deduplicated at child but need a full insertion.
   ns_oid_view_t::Type i_dedup_type = ns_oid_view_t::Type::STR;
 
@@ -382,16 +382,16 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   }
   auto parent_node = this->parent_info().ptr;
   // TODO: cross-node string dedup
-  index_view_t key_view;
+  full_key_t<KeyT::VIEW> key_view;
   STAGE_T::lookup_largest_index(stage, key_view);
   parent_node->apply_child_split(key_view, this, right_node);
   auto i_position_normalized = normalize(std::move(i_position));
 
   if (i_to_left) {
-    assert(this->get_index_view(i_position_normalized).match(key));
+    assert(this->get_key_view(i_position_normalized).match(key));
     return get_or_create_cursor(i_position_normalized, p_value);
   } else {
-    assert(right_node->get_index_view(i_position_normalized).match(key));
+    assert(right_node->get_key_view(i_position_normalized).match(key));
     return right_node->get_or_create_cursor(i_position_normalized, p_value);
   }
 

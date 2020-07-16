@@ -73,19 +73,19 @@ class item_iterator_t {
 
   template <typename T = node_offset_t>
   static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T>
-  estimate_insert(const index_view_t& key) {
-    return key.p_ns_oid->size() + sizeof(node_offset_t);
+  estimate_insert(const full_key_t<KeyT::VIEW>& key) {
+    return ns_oid_view_t::estimate_size<KeyT::VIEW>(key) + sizeof(node_offset_t);
   }
 
   template <typename T = node_offset_t>
   static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
-  estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type, const onode_t&) {
-    return ns_oid_view_t::estimate_size(key, type) + sizeof(node_offset_t);
+  estimate_insert(const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type, const onode_t&) {
+    return ns_oid_view_t::estimate_size<KeyT::HOBJ>(key) + sizeof(node_offset_t);
   }
 
   static memory_range_t insert_prefix(
       LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
-      const onode_key_t& key, ns_oid_view_t::Type type,
+      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
       bool is_end, node_offset_t size, const char* p_left_bound);
 
   static void update_size(
@@ -124,7 +124,7 @@ class item_iterator_t<NODE_TYPE>::Appender {
   bool append(const item_iterator_t<NODE_TYPE>& src, size_t& items, index_t type);
   char* wrap() { return p_append; }
   std::tuple<LogicalCachedExtent*, char*> open_nxt(const key_get_type&);
-  std::tuple<LogicalCachedExtent*, char*> open_nxt(const onode_key_t&);
+  std::tuple<LogicalCachedExtent*, char*> open_nxt(const full_key_t<KeyT::HOBJ>&);
   void wrap_nxt(char* _p_append);
 
  private:

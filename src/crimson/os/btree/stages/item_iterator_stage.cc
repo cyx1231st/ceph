@@ -15,7 +15,7 @@ template class item_iterator_t<node_type_t::INTERNAL>;
 template <node_type_t NODE_TYPE>
 memory_range_t ITER_T::insert_prefix(
     LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
-    const onode_key_t& key, ns_oid_view_t::Type type,
+    const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
     bool is_end, node_offset_t size, const char* p_left_bound) {
   if constexpr (NODE_TYPE == node_type_t::LEAF) {
     // 1. insert range
@@ -39,7 +39,7 @@ memory_range_t ITER_T::insert_prefix(
     p_insert -= sizeof(node_offset_t);
     node_offset_t back_offset = (p_insert - p_insert_front);
     dst.copy_in_mem(back_offset, p_insert);
-    ns_oid_view_t::append(dst, key, type, p_insert);
+    ns_oid_view_t::append<KeyT::HOBJ>(dst, key, p_insert);
 
     return {p_insert_front, p_insert};
   } else {
@@ -125,10 +125,10 @@ APPEND_T::open_nxt(const key_get_type& partial_key) {
 
 template <node_type_t NODE_TYPE>
 std::tuple<LogicalCachedExtent*, char*>
-APPEND_T::open_nxt(const onode_key_t& key) {
+APPEND_T::open_nxt(const full_key_t<KeyT::HOBJ>& key) {
   p_append -= sizeof(node_offset_t);
   p_offset_while_open = p_append;
-  ns_oid_view_t::append(*p_dst, key, ns_oid_view_t::Type::STR, p_append);
+  ns_oid_view_t::append<KeyT::HOBJ>(*p_dst, key, p_append);
   return {p_dst, p_append};
 }
 

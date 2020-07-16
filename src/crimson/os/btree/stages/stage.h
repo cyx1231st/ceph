@@ -24,14 +24,14 @@ struct search_result_bs_t {
 };
 template <typename FGetKey>
 search_result_bs_t binary_search(
-    const onode_key_t& key, size_t begin, size_t end, FGetKey&& f_get_key) {
+    const full_key_t<KeyT::HOBJ>& key, size_t begin, size_t end, FGetKey&& f_get_key) {
   assert(begin <= end);
   while (begin < end) {
     auto total = begin + end;
     auto mid = total >> 1;
     // do not copy if return value is reference
     decltype(f_get_key(mid)) target = f_get_key(mid);
-    auto match = compare_to(key, target);
+    auto match = compare_to<KeyT::HOBJ>(key, target);
     if (match == MatchKindCMP::NE) {
       end = mid;
     } else if (match == MatchKindCMP::PO) {
@@ -95,28 +95,24 @@ inline bool matchable(field_type_t type, match_stat_t mstat) {
   return mstat + to_unsigned(type) < 4;
 }
 
-inline void assert_mstat(const onode_key_t& key, const index_view_t& index, match_stat_t mstat) {
+inline void assert_mstat(const full_key_t<KeyT::HOBJ> & key, const full_key_t<KeyT::VIEW>& index, match_stat_t mstat) {
   assert(mstat >= MSTAT_MIN && mstat <= MSTAT_NE2);
   // key < index ...
   switch (mstat) {
    case MSTAT_EQ:
     break;
    case MSTAT_NE0:
-    assert(index.p_snap_gen);
-    assert(compare_to(key, *index.p_snap_gen) == MatchKindCMP::NE);
+    assert(compare_to<KeyT::HOBJ>(key, index.snap_gen_packed()) == MatchKindCMP::NE);
     break;
    case MSTAT_NE1:
-    assert(index.p_ns_oid);
-    assert(compare_to(key, *index.p_ns_oid) == MatchKindCMP::NE);
+    assert(compare_to<KeyT::HOBJ>(key, index.ns_oid_view()) == MatchKindCMP::NE);
     break;
    case MSTAT_NE2:
-    assert(index.p_crush);
-    if (index.p_shard_pool) {
-      assert(compare_to(key, shard_pool_crush_t{*index.p_shard_pool,
-                                                *index.p_crush}) ==
-             MatchKindCMP::NE);
+    if (index.has_shard_pool()) {
+      assert(compare_to<KeyT::HOBJ>(key, shard_pool_crush_t{
+               index.shard_pool_packed(), index.crush_packed()}) == MatchKindCMP::NE);
     } else {
-      assert(compare_to(key, *index.p_crush) == MatchKindCMP::NE);
+      assert(compare_to<KeyT::HOBJ>(key, index.crush_packed()) == MatchKindCMP::NE);
     }
     break;
    default:
@@ -125,20 +121,19 @@ inline void assert_mstat(const onode_key_t& key, const index_view_t& index, matc
   // key == index ...
   switch (mstat) {
    case MSTAT_EQ:
-    assert(index.p_snap_gen);
-    assert(compare_to(key, *index.p_snap_gen) == MatchKindCMP::EQ);
+    assert(compare_to<KeyT::HOBJ>(key, index.snap_gen_packed()) == MatchKindCMP::EQ);
    case MSTAT_NE0:
-    if (!index.p_ns_oid)
+    if (!index.has_ns_oid())
       break;
-    assert(index.p_ns_oid->type() == ns_oid_view_t::Type::MAX ||
-           compare_to(key, *index.p_ns_oid) == MatchKindCMP::EQ);
+    assert(index.ns_oid_view().type() == ns_oid_view_t::Type::MAX ||
+           compare_to<KeyT::HOBJ>(key, index.ns_oid_view()) == MatchKindCMP::EQ);
    case MSTAT_NE1:
-    if (!index.p_crush)
+    if (!index.has_crush())
       break;
-    assert(compare_to(key, *index.p_crush) == MatchKindCMP::EQ);
-    if (!index.p_shard_pool)
+    assert(compare_to<KeyT::HOBJ>(key, index.crush_packed()) == MatchKindCMP::EQ);
+    if (!index.has_shard_pool())
       break;
-    assert(compare_to(key, *index.p_shard_pool) == MatchKindCMP::EQ);
+    assert(compare_to<KeyT::HOBJ>(key, index.shard_pool_packed()) == MatchKindCMP::EQ);
    default:
     break;
   }
@@ -373,14 +368,14 @@ struct staged {
       ++_index;
     }
     // Note: possible to return an end iterator
-    MatchKindBS seek(const onode_key_t& key, bool exclude_last) {
+    MatchKindBS seek(const full_key_t<KeyT::HOBJ>& key, bool exclude_last) {
       assert(!is_end());
       assert(index() == 0);
       size_t end_index = container.keys();
       if (exclude_last) {
         assert(end_index);
         --end_index;
-        assert(compare_to(key, container[end_index]) == MatchKindCMP::NE);
+        assert(compare_to<KeyT::HOBJ>(key, container[end_index]) == MatchKindCMP::NE);
       }
       auto ret = binary_search(key, _index, end_index,
           [this] (size_t index) { return container[index]; });
@@ -390,7 +385,7 @@ struct staged {
 
     template <typename T = value_t>
     std::enable_if_t<IS_BOTTOM, const T*> insert(
-        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        LogicalCachedExtent& extent, const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
         const value_t& value, node_offset_t insert_size, const char* p_left_bound) {
       return container_t::insert_at(extent, container, key, type, value,
                                     _index, insert_size, p_left_bound);
@@ -398,7 +393,7 @@ struct staged {
 
     template <typename T = memory_range_t>
     std::enable_if_t<!IS_BOTTOM, T> insert_prefix(
-        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        LogicalCachedExtent& extent, const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
         node_offset_t size, const char* p_left_bound) {
       return container_t::insert_prefix_at(
           extent, container, key, type, _index, size, p_left_bound);
@@ -522,13 +517,13 @@ struct staged {
 
     template <typename T = size_t>
     static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T>
-    estimate_insert(const index_view_t& key) {
+    estimate_insert(const full_key_t<KeyT::VIEW>& key) {
       return container_t::estimate_insert(key);
     }
 
     template <typename T = size_t>
     static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
-    estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type,
+    estimate_insert(const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type,
                     const onode_t& value) {
       return container_t::estimate_insert(key, type, value);
     }
@@ -641,15 +636,15 @@ struct staged {
       end_index = container.index() + 1;
     }
     // Note: possible to return an end iterator
-    MatchKindBS seek(const onode_key_t& key, bool exclude_last) {
+    MatchKindBS seek(const full_key_t<KeyT::HOBJ>& key, bool exclude_last) {
       assert(!is_end());
       assert(index() == 0);
       do {
         if (exclude_last && is_last()) {
-          assert(compare_to(key, get_key()) == MatchKindCMP::NE);
+          assert(compare_to<KeyT::HOBJ>(key, get_key()) == MatchKindCMP::NE);
           return MatchKindBS::NE;
         }
-        auto match = compare_to(key, get_key());
+        auto match = compare_to<KeyT::HOBJ>(key, get_key());
         if (match == MatchKindCMP::NE) {
           return MatchKindBS::NE;
         } else if (match == MatchKindCMP::EQ) {
@@ -670,7 +665,7 @@ struct staged {
 
     template <typename T = value_t>
     std::enable_if_t<IS_BOTTOM, const T*> insert(
-        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        LogicalCachedExtent& extent, const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
         const value_t& value, node_offset_t insert_size, const char* p_left_bound) {
       return container_t::insert(extent, container, key, type, value,
                                  is_end(), insert_size, p_left_bound);
@@ -678,7 +673,7 @@ struct staged {
 
     template <typename T = memory_range_t>
     std::enable_if_t<!IS_BOTTOM, T> insert_prefix(
-        LogicalCachedExtent& extent, const onode_key_t& key, ns_oid_view_t::Type type,
+        LogicalCachedExtent& extent, const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
         node_offset_t size, const char* p_left_bound) {
       return container_t::insert_prefix(
           extent, container, key, type, is_end(), size, p_left_bound);
@@ -833,13 +828,13 @@ struct staged {
 
     template <typename T = node_offset_t>
     static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T>
-    estimate_insert(const index_view_t& key) {
+    estimate_insert(const full_key_t<KeyT::VIEW>& key) {
       return container_t::estimate_insert(key);
     }
 
     template <typename T = node_offset_t>
     static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T>
-    estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type,
+    estimate_insert(const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type,
                     const onode_t& value) {
       return container_t::estimate_insert(key, type, value);
     }
@@ -909,7 +904,7 @@ struct staged {
   }
 
   static result_t
-  nxt_lower_bound(const onode_key_t& key, iterator_t& iter, MatchHistory& history) {
+  nxt_lower_bound(const full_key_t<KeyT::HOBJ>& key, iterator_t& iter, MatchHistory& history) {
     static_assert(!IS_BOTTOM);
     assert(!iter.is_end());
     auto nxt_container = iter.get_nxt_container();
@@ -938,7 +933,7 @@ struct staged {
     }
   }
 
-  static void lookup_largest_index(const container_t& container, index_view_t& output) {
+  static void lookup_largest_index(const container_t& container, full_key_t<KeyT::VIEW>& output) {
     auto iter = iterator_t(container);
     iter.seek_last();
     output.set(iter.get_key());
@@ -959,19 +954,19 @@ struct staged {
     }
   }
 
-  static void get_index_view(
-      const container_t& container, const position_t& position, index_view_t& output) {
+  static void get_key_view(
+      const container_t& container, const position_t& position, full_key_t<KeyT::VIEW>& output) {
     auto iter = iterator_t(container);
     iter.seek_at(position.index);
     output.set(iter.get_key());
     if constexpr (!IS_BOTTOM) {
       auto nxt_container = iter.get_nxt_container();
-      return NXT_STAGE_T::get_index_view(nxt_container, position.nxt, output);
+      return NXT_STAGE_T::get_key_view(nxt_container, position.nxt, output);
     }
   }
 
   static result_t
-  lower_bound(const container_t& container, const onode_key_t& key, MatchHistory& history) {
+  lower_bound(const container_t& container, const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
     bool exclude_last = false;
     if (history.get<STAGE>().has_value()) {
       if (*history.get<STAGE>() == MatchKindCMP::EQ) {
@@ -984,7 +979,7 @@ struct staged {
             if constexpr (STAGE == STAGE_STRING) {
               test_key_equal = (iter.get_key().type() == ns_oid_view_t::Type::MIN);
             } else {
-              auto cmp = compare_to(key, iter.get_key());
+              auto cmp = compare_to<KeyT::HOBJ>(key, iter.get_key());
               // From history, key[stage] == parent[stage][index - 1]
               // which should be the smallest possible value for all
               // index[stage][*]
@@ -1005,7 +1000,7 @@ struct staged {
         if constexpr (STAGE == STAGE_STRING) {
           assert(iter.get_key().type() == ns_oid_view_t::Type::MAX);
         } else {
-          assert(compare_to(key, iter.get_key()) == MatchKindCMP::EQ);
+          assert(compare_to<KeyT::HOBJ>(key, iter.get_key()) == MatchKindCMP::EQ);
         }
         if constexpr (IS_BOTTOM) {
           auto value_ptr = iter.get_p_value();
@@ -1047,7 +1042,7 @@ struct staged {
 
   template <typename T = node_offset_t>
   static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T> insert_size(
-      const index_view_t& key) {
+      const full_key_t<KeyT::VIEW>& key) {
     if constexpr (IS_BOTTOM) {
       return iterator_t::estimate_insert(key);
     } else {
@@ -1059,7 +1054,7 @@ struct staged {
 
   template <typename T = std::tuple<match_stage_t, node_offset_t>>
   static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T> evaluate_insert(
-      const container_t& container, const index_view_t& key, position_t& position) {
+      const container_t& container, const full_key_t<KeyT::VIEW>& key, position_t& position) {
     auto iter = iterator_t(container);
     auto& index = position.index;
     if (index == INDEX_END) {
@@ -1068,7 +1063,7 @@ struct staged {
     } else {
       // evaluate the current index
       iter.seek_at(index);
-      auto match = compare_to(key, iter.get_key());
+      auto match = compare_to<KeyT::VIEW>(key, iter.get_key());
       if (match == MatchKindCMP::EQ) {
         if constexpr (IS_BOTTOM) {
           // ceph_abort?
@@ -1092,7 +1087,7 @@ struct staged {
     }
 
     // XXX(multi-type): when key is from a different type of node
-    auto match = compare_to(key, iter.get_key());
+    auto match = compare_to<KeyT::VIEW>(key, iter.get_key());
     if (match == MatchKindCMP::PO) {
       // key doesn't match both indexes, so insert at the current index
       ++index;
@@ -1112,7 +1107,7 @@ struct staged {
 
   template <typename T = node_offset_t>
   static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T> insert_size(
-      const onode_key_t& key, const ns_oid_view_t::Type& type, const onode_t& value) {
+      const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type, const onode_t& value) {
     if constexpr (IS_BOTTOM) {
       return iterator_t::estimate_insert(key, type, value);
     } else {
@@ -1124,7 +1119,7 @@ struct staged {
 
   template <typename T = node_offset_t>
   static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T> insert_size_at(
-      match_stage_t stage, const onode_key_t& key,
+      match_stage_t stage, const full_key_t<KeyT::HOBJ>& key,
       const ns_oid_view_t::Type& type, const onode_t& value) {
     if (stage == STAGE) {
       return insert_size(key, type, value);
@@ -1169,7 +1164,7 @@ struct staged {
 
   template <typename T = std::tuple<match_stage_t, node_offset_t>>
   static std::enable_if_t<NODE_TYPE == node_type_t::LEAF, T> evaluate_insert(
-      const onode_key_t& key, const ns_oid_view_t::Type& type,
+      const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type,
       const onode_t& value, const MatchHistory& history, position_t& position) {
     match_stage_t insert_stage = STAGE_TOP;
     while (*history.get_by_stage(insert_stage) == MatchKindCMP::EQ) {
@@ -1205,7 +1200,7 @@ struct staged {
 
   static const value_t* insert_new(
       LogicalCachedExtent& extent, const memory_range_t& range,
-      const onode_key_t& key, const value_t& value) {
+      const full_key_t<KeyT::HOBJ>& key, const value_t& value) {
     char* p_insert = const_cast<char*>(range.p_end);
     const value_t* p_value = nullptr;
     StagedAppender appender;
@@ -1217,11 +1212,11 @@ struct staged {
   }
 
   // TODO: in order to share this logic for internal node, we need to provide
-  // an abstraction of key to encapsulate both onode_key_t and index_view_t.
+  // an abstraction of key to encapsulate both key_hobj_t and key_view_t.
   template <bool SPLIT>
   static const value_t* proceed_insert_recursively(
       LogicalCachedExtent& extent, const container_t& container,
-      const onode_key_t& key, ns_oid_view_t::Type type,
+      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
       const value_t& value, position_t& position, match_stage_t stage,
       node_offset_t& _insert_size, const char* p_left_bound) {
     // proceed insert from right to left
@@ -1284,7 +1279,7 @@ struct staged {
   template <bool SPLIT>
   static const value_t* proceed_insert(
       LogicalCachedExtent& extent, const container_t& container,
-      const onode_key_t& key, ns_oid_view_t::Type type,
+      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
       const value_t& value, position_t& position, match_stage_t stage,
       node_offset_t& _insert_size) {
     auto p_left_bound = container.p_left_bound();
@@ -1339,20 +1334,20 @@ struct staged {
     return get_p_value(container, cast_down<STAGE>(position));
   }
 
-  static void get_index_view_normalized(
-      const container_t& container, const search_position_t& position, index_view_t& output) {
-    get_index_view(container, cast_down<STAGE>(position), output);
+  static void get_key_view_normalized(
+      const container_t& container, const search_position_t& position, full_key_t<KeyT::VIEW>& output) {
+    get_key_view(container, cast_down<STAGE>(position), output);
   }
 
   static staged_result_t<NODE_TYPE, STAGE_TOP> lower_bound_normalized(
-      const container_t& container, const onode_key_t& key, MatchHistory& history) {
+      const container_t& container, const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
     auto&& result = lower_bound(container, key, history);
 #ifndef NDEBUG
     if (result.is_end()) {
       assert(result.mstat == MSTAT_END);
     } else {
-      index_view_t index;
-      get_index_view(container, result.position, index);
+      full_key_t<KeyT::VIEW> index;
+      get_key_view(container, result.position, index);
       assert_mstat(key, index, result.mstat);
     }
 #endif
@@ -1360,7 +1355,7 @@ struct staged {
       // currently only internal node checks mstat
       if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
         if (result.mstat == MSTAT_NE2) {
-          auto cmp = compare_to(key, container[result.position.index].shard_pool);
+          auto cmp = compare_to<KeyT::HOBJ>(key, container[result.position.index].shard_pool);
           assert(cmp != MatchKindCMP::PO);
           if (cmp != MatchKindCMP::EQ) {
             result.mstat = MSTAT_NE3;
@@ -1602,11 +1597,11 @@ struct staged {
    *   wrap() -> char*
    * IF !IS_BOTTOM:
    *   open_nxt(const key_get_type&)
-   *   open_nxt(const onode_key_t&)
+   *   open_nxt(const full_key_t&)
    *       -> std::tuple<LogicalCachedExtent&, char*>
    *   wrap_nxt(char* p_append)
    * ELSE
-   *   append(const onode_key_t& key, const value_t& value)
+   *   append(const full_key_t& key, const value_t& value)
    */
   struct _BaseWithNxtAppender {
     typename NXT_STAGE_T::StagedAppender _nxt;
@@ -1640,7 +1635,7 @@ struct staged {
       src_iter.get().copy_out_until(*appender, to_index, to_stage);
       _index += (to_index - s_index);
     }
-    void append(const onode_key_t& key, const value_t& value, const value_t*& p_value) {
+    void append(const full_key_t<KeyT::HOBJ>& key, const value_t& value, const value_t*& p_value) {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         auto& nxt = open_nxt(key);
@@ -1674,7 +1669,7 @@ struct staged {
         assert(false);
       }
     }
-    typename NXT_STAGE_T::StagedAppender& open_nxt(const onode_key_t& key) {
+    typename NXT_STAGE_T::StagedAppender& open_nxt(const full_key_t<KeyT::HOBJ>& key) {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         require_wrap_nxt = true;
@@ -1777,7 +1772,7 @@ struct staged {
     to_index -= from_index;
   }
 
-  static bool append_insert(const onode_key_t& key, const value_t& value,
+  static bool append_insert(const full_key_t<KeyT::HOBJ>& key, const value_t& value,
                             StagedIterator& src_iter, StagedAppender& appender,
                             match_stage_t stage, const value_t*& p_value) {
     assert(src_iter.valid());

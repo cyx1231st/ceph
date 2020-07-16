@@ -98,18 +98,21 @@ int main(int argc, char* argv[])
   {
     std::cout << "sizes of a key-value insertion (full-string):" << std::endl;
     std::cout << "s-p-c, 'n'-'o', s-g => onode_t{2}: typically internal 41B, leaf 35B" << std::endl;
-    onode_key_t key = {0, 0, 0, "n", "o", 0, 0};
+    onode_key_t hobj = {0, 0, 0, "n", "o", 0, 0};
     onode_t value = {2};
 
+    key_hobj_t key(hobj);
     auto extent = get_transaction_manager().alloc_extent(NODE_BLOCK_SIZE);
     char* p_fill = reinterpret_cast<char*>(extent->get_laddr() + 20);
     char* _p_fill = p_fill;
-    ns_oid_view_t::append(*extent, key, ns_oid_view_t::Type::STR, _p_fill);
+    ns_oid_view_t::append<KeyT::HOBJ>(*extent, key, _p_fill);
     ns_oid_view_t ns_oid_view(p_fill);
-    index_view_t key_view;
-    key_view.set(shard_pool_crush_t::from_key(key));
+    auto shard_pool_crush = shard_pool_crush_t::template from_key<KeyT::HOBJ>(key);
+    auto snap_gen = snap_gen_t::template from_key<KeyT::HOBJ>(key);
+    full_key_t<KeyT::VIEW> key_view;
+    key_view.set(shard_pool_crush);
     key_view.set(ns_oid_view);
-    key_view.set(snap_gen_t::from_key(key));
+    key_view.set(snap_gen);
 
 #define STAGE_T(NodeType) node_to_stage_t<typename NodeType::node_stage_t>
 #define NXT_T(StageType)  staged<typename StageType::next_param_t>

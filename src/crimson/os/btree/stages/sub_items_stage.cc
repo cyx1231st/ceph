@@ -9,7 +9,7 @@ namespace crimson::os::seastore::onode {
 
 const onode_t* leaf_sub_items_t::insert_at(
     LogicalCachedExtent& dst, const leaf_sub_items_t& sub_items,
-    const onode_key_t& key, ns_oid_view_t::Type, const onode_t& value,
+    const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type, const onode_t& value,
     size_t index, node_offset_t size, const char* p_left_bound) {
   // a. [... item(index)] << size
   const char* p_shift_start = p_left_bound;
@@ -21,7 +21,7 @@ const onode_t* leaf_sub_items_t::insert_at(
   auto p_value = reinterpret_cast<const onode_t*>(p_insert);
   dst.copy_in_mem(&value, p_insert, value.size);
   p_insert += value.size;
-  dst.copy_in_mem(snap_gen_t::from_key(key), p_insert);
+  dst.copy_in_mem(snap_gen_t::from_key<KeyT::HOBJ>(key), p_insert);
   assert(p_insert + sizeof(snap_gen_t) + sizeof(node_offset_t) == p_shift_end);
 
   // c. compensate affected offsets
@@ -122,7 +122,7 @@ char* leaf_sub_items_t::Appender::wrap() {
       [&] (const kv_item_t& arg) {
         assert(pp_value);
         p_cur -= sizeof(snap_gen_t);
-        p_dst->copy_in_mem(snap_gen_t::from_key(*arg.p_key), p_cur);
+        p_dst->copy_in_mem(snap_gen_t::template from_key<KeyT::HOBJ>(*arg.p_key), p_cur);
         p_cur -= arg.p_value->size;
         p_dst->copy_in_mem(arg.p_value, p_cur, arg.p_value->size);
         *pp_value = reinterpret_cast<const onode_t*>(p_cur);

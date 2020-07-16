@@ -92,20 +92,20 @@ class node_extent_t {
 
   template <typename T = node_offset_t>
   static std::enable_if_t<_NODE_TYPE == node_type_t::INTERNAL, T>
-  estimate_insert(const index_view_t& key) {
+  estimate_insert(const full_key_t<KeyT::VIEW>& key) {
     auto size = FieldType::estimate_insert_one();
     if constexpr (FIELD_TYPE == field_type_t::N2) {
-      size += key.p_ns_oid->size();
+      size += ns_oid_view_t::estimate_size<KeyT::VIEW>(key);
     }
     return size;
   }
 
   template <typename T = node_offset_t>
   static std::enable_if_t<_NODE_TYPE == node_type_t::LEAF, T>
-  estimate_insert(const onode_key_t& key, const ns_oid_view_t::Type& type, const onode_t& value) {
+  estimate_insert(const full_key_t<KeyT::HOBJ>& key, const ns_oid_view_t::Type& type, const onode_t& value) {
     auto size = FieldType::estimate_insert_one();
     if constexpr (FIELD_TYPE == field_type_t::N2) {
-      size += ns_oid_view_t::estimate_size(key, type);
+      size += ns_oid_view_t::estimate_size<KeyT::HOBJ>(key);
     } else if constexpr (FIELD_TYPE == field_type_t::N3) {
       size += value.size;
     }
@@ -114,12 +114,12 @@ class node_extent_t {
 
   static const value_t* insert_at(
       LogicalCachedExtent& dst, const node_extent_t&,
-      const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
+      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type, const value_t& value,
       size_t index, node_offset_t size, const char* p_left_bound);
 
   static memory_range_t insert_prefix_at(
       LogicalCachedExtent& dst, const node_extent_t&,
-      const onode_key_t& key, ns_oid_view_t::Type type,
+      const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
       size_t index, node_offset_t size, const char* p_left_bound);
 
   static void update_size_at(
@@ -153,10 +153,10 @@ class node_extent_t<FieldType, NODE_TYPE>::Appender {
     p_append_right = p_start + FieldType::SIZE;
   }
   void append(const node_extent_t& src, size_t from, size_t items);
-  void append(const onode_key_t&, const onode_t&, const onode_t*&);
+  void append(const full_key_t<KeyT::HOBJ>&, const onode_t&, const onode_t*&);
   char* wrap();
   std::tuple<LogicalCachedExtent*, char*> open_nxt(const key_get_type&);
-  std::tuple<LogicalCachedExtent*, char*> open_nxt(const onode_key_t&);
+  std::tuple<LogicalCachedExtent*, char*> open_nxt(const full_key_t<KeyT::HOBJ>&);
   void wrap_nxt(char* p_append) {
     if constexpr (FIELD_TYPE != field_type_t::N3) {
       assert(p_append < p_append_right);

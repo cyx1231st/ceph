@@ -79,7 +79,7 @@ memory_range_t NODE_T::get_nxt_container(size_t index) const {
 template <typename FieldType, node_type_t NODE_TYPE>
 const typename NODE_T::value_t* NODE_T::insert_at(
     LogicalCachedExtent& dst, const node_extent_t& node,
-    const onode_key_t& key, ns_oid_view_t::Type type, const value_t& value,
+    const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type, const value_t& value,
     size_t index, node_offset_t size, const char* p_left_bound) {
   if constexpr (FIELD_TYPE == field_type_t::N3) {
     assert(false && "not implemented");
@@ -91,7 +91,7 @@ const typename NODE_T::value_t* NODE_T::insert_at(
 template <typename FieldType, node_type_t NODE_TYPE>
 memory_range_t NODE_T::insert_prefix_at(
     LogicalCachedExtent& dst, const node_extent_t& node,
-    const onode_key_t& key, ns_oid_view_t::Type type,
+    const full_key_t<KeyT::HOBJ>& key, ns_oid_view_t::Type type,
     size_t index, node_offset_t size, const char* p_left_bound) {
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
                 FIELD_TYPE == field_type_t::N1) {
@@ -227,7 +227,7 @@ void APPEND_T::append(const node_extent_t& src, size_t from, size_t items) {
 
 template <typename FieldType, node_type_t NODE_TYPE>
 void APPEND_T::append(
-    const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
+    const full_key_t<KeyT::HOBJ>& key, const onode_t& value, const onode_t*& p_value) {
   if constexpr (FIELD_TYPE == field_type_t::N3) {
     assert(false && "not implemented");
   } else {
@@ -251,7 +251,7 @@ APPEND_T::open_nxt(const key_get_type& partial_key) {
 
 template <typename FieldType, node_type_t NODE_TYPE>
 std::tuple<LogicalCachedExtent*, char*>
-APPEND_T::open_nxt(const onode_key_t& key) {
+APPEND_T::open_nxt(const full_key_t<KeyT::HOBJ>& key) {
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
                 FIELD_TYPE == field_type_t::N1) {
     FieldType::append_key(

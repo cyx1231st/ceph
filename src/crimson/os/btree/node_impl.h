@@ -50,7 +50,7 @@ class NodeT : virtual public Node {
   field_type_t field_type() const override final { return FIELD_TYPE; }
   laddr_t laddr() const override final;
   level_t level() const override final;
-  index_view_t get_index_view(const search_position_t&) const override final;
+  full_key_t<KeyT::VIEW> get_key_view(const search_position_t&) const override final;
   const value_t* get_value_ptr(const search_position_t&);
   std::ostream& dump(std::ostream&) const override final;
   std::ostream& dump_brief(std::ostream& os) const override final;
@@ -88,7 +88,8 @@ class InternalNodeT : public InternalNode,
 
   virtual ~InternalNodeT() = default;
 
-  Node::search_result_t do_lower_bound(const onode_key_t&, MatchHistory&) override final;
+  Node::search_result_t do_lower_bound(
+      const full_key_t<KeyT::HOBJ>&, MatchHistory&) override final;
 
   Ref<tree_cursor_t> lookup_smallest() override final {
     auto position = search_position_t::begin();
@@ -104,7 +105,7 @@ class InternalNodeT : public InternalNode,
     return child->lookup_largest();
   }
 
-  void apply_child_split(const index_view_t&, Ref<Node>, Ref<Node>) override final;
+  void apply_child_split(const full_key_t<KeyT::VIEW>&, Ref<Node>, Ref<Node>) override final;
 
   void track_child(const search_position_t& pos, Ref<Node> child) {
     tracked_child_nodes[pos] = child;
@@ -141,11 +142,12 @@ class LeafNodeT: public LeafNode,
 
   virtual ~LeafNodeT() = default;
 
-  search_result_t do_lower_bound(const onode_key_t&, MatchHistory&) override final;
+  search_result_t do_lower_bound(
+      const full_key_t<KeyT::HOBJ>&, MatchHistory&) override final;
   Ref<tree_cursor_t> lookup_smallest() override final;
   Ref<tree_cursor_t> lookup_largest() override final;
   Ref<tree_cursor_t> insert_value(
-      const onode_key_t&, const onode_t&,
+      const full_key_t<KeyT::HOBJ>&, const onode_t&,
       const search_position_t&, const MatchHistory&) override final;
 
   static Ref<ConcreteType> allocate(bool is_level_tail) {

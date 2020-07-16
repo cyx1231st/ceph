@@ -40,7 +40,8 @@ class tree_cursor_t
   const onode_t* p_value;
 };
 
-struct index_view_t;
+struct key_view_t;
+struct key_hobj_t;
 class LogicalCachedExtent;
 
 class Node
@@ -61,10 +62,7 @@ class Node
   virtual level_t level() const = 0;
   virtual Ref<tree_cursor_t> lookup_smallest() = 0;
   virtual Ref<tree_cursor_t> lookup_largest() = 0;
-  search_result_t lower_bound(const onode_key_t& key) {
-    MatchHistory history;
-    return do_lower_bound(key, history);
-  }
+  search_result_t lower_bound(const onode_key_t& key);
   std::pair<Ref<tree_cursor_t>, bool> insert(const onode_key_t&, const onode_t&);
 
   virtual std::ostream& dump(std::ostream&) const = 0;
@@ -92,8 +90,8 @@ class Node
   virtual bool is_level_tail() const = 0;
   virtual field_type_t field_type() const = 0;
   virtual laddr_t laddr() const = 0;
-  virtual index_view_t get_index_view(const search_position_t&) const = 0;
-  virtual search_result_t do_lower_bound(const onode_key_t&, MatchHistory&) = 0;
+  virtual key_view_t get_key_view(const search_position_t&) const = 0;
+  virtual search_result_t do_lower_bound(const key_hobj_t&, MatchHistory&) = 0;
 };
 inline std::ostream& operator<<(std::ostream& os, const Node& node) {
   return node.dump_brief(os);
@@ -104,7 +102,7 @@ class InternalNode : virtual public Node {
   virtual ~InternalNode() = default;
 
   // TODO: async
-  virtual void apply_child_split(const index_view_t&, Ref<Node>, Ref<Node>) = 0;
+  virtual void apply_child_split(const key_view_t&, Ref<Node>, Ref<Node>) = 0;
 };
 
 class LeafNode : virtual public Node {
@@ -113,7 +111,7 @@ class LeafNode : virtual public Node {
 
  private:
   virtual Ref<tree_cursor_t> insert_value(
-      const onode_key_t&,
+      const key_hobj_t&,
       const onode_t&,
       const search_position_t&,
       const MatchHistory&) = 0;

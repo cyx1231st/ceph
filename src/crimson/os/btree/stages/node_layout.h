@@ -149,15 +149,15 @@ struct _node_fields_013_t {
 
   static node_offset_t estimate_insert_one() { return sizeof(SlotType); }
   static void insert_at(
-      LogicalCachedExtent& dst, const onode_key_t& key,
+      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key,
       const me_t& node, size_t index, node_offset_t size_right);
   static void update_size_at(
       LogicalCachedExtent& dst, const me_t& node, size_t index, int change);
   static void append_key(
       LogicalCachedExtent& dst, const key_t& key, char*& p_append);
   static void append_key(
-      LogicalCachedExtent& dst, const onode_key_t& key, char*& p_append) {
-    append_key(dst, key_t::from_key(key), p_append);
+      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key, char*& p_append) {
+    append_key(dst, key_t::template from_key<KeyT::HOBJ>(key), p_append);
   }
   static void append_offset(
       LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append);
@@ -238,7 +238,7 @@ struct node_fields_2_t {
 
   static node_offset_t estimate_insert_one() { return sizeof(node_offset_t); }
   static void insert_at(
-      LogicalCachedExtent& dst, const onode_key_t& key,
+      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key,
       const node_fields_2_t& node, size_t index, node_offset_t size_right) {
     assert(false && "not implemented");
   }
@@ -251,8 +251,8 @@ struct node_fields_2_t {
     ns_oid_view_t::append(dst, key, p_append);
   }
   static void append_key(
-      LogicalCachedExtent& dst, const onode_key_t& key, char*& p_append) {
-    ns_oid_view_t::append(dst, key, ns_oid_view_t::Type::STR, p_append);
+      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key, char*& p_append) {
+    ns_oid_view_t::append<KeyT::HOBJ>(dst, key, p_append);
   }
   static void append_offset(
       LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append);
@@ -332,7 +332,7 @@ struct _internal_fields_3_t {
     return sizeof(snap_gen_t) + sizeof(laddr_t);
   }
   static void insert_at(
-      LogicalCachedExtent& dst, const onode_key_t& key,
+      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key,
       const me_t& node, size_t index, node_offset_t size_right) {
     assert(false && "not implemented");
   }

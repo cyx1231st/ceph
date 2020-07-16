@@ -59,13 +59,13 @@ class internal_sub_items_t {
 
   static node_offset_t header_size() { return 0u; }
 
-  static node_offset_t estimate_insert(const index_view_t&) {
+  static node_offset_t estimate_insert(const full_key_t<KeyT::VIEW>&) {
     return sizeof(internal_sub_item_t);
   }
 
   static const laddr_t* insert_at(
       LogicalCachedExtent&, const internal_sub_items_t&,
-      const onode_key_t&, ns_oid_view_t::Type, const laddr_t&,
+      const full_key_t<KeyT::HOBJ>&, ns_oid_view_t::Type, const laddr_t&,
       size_t index, node_offset_t size, const char* p_left_bound) {
     assert(false && "not implemented");
   }
@@ -89,7 +89,7 @@ class internal_sub_items_t::Appender {
   void append(const internal_sub_items_t& src, size_t from, size_t items) {
     assert(false);
   }
-  void append(const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
+  void append(const full_key_t<KeyT::HOBJ>& key, const onode_t& value, const onode_t*& p_value) {
     assert(false);
   }
   char* wrap() { return nullptr; }
@@ -190,13 +190,13 @@ class leaf_sub_items_t {
   static node_offset_t header_size() { return sizeof(num_keys_t); }
 
   static node_offset_t estimate_insert(
-      const onode_key_t&, const ns_oid_view_t::Type&, const onode_t& value) {
+      const full_key_t<KeyT::HOBJ>&, const ns_oid_view_t::Type&, const onode_t& value) {
     return value.size + sizeof(snap_gen_t) + sizeof(node_offset_t);
   }
 
   static const onode_t* insert_at(
       LogicalCachedExtent&, const leaf_sub_items_t&,
-      const onode_key_t&, ns_oid_view_t::Type, const onode_t&,
+      const full_key_t<KeyT::HOBJ>&, ns_oid_view_t::Type, const onode_t&,
       size_t index, node_offset_t size, const char* p_left_bound);
 
   static size_t trim_until(LogicalCachedExtent&, leaf_sub_items_t&, size_t index);
@@ -218,7 +218,7 @@ class leaf_sub_items_t::Appender {
     size_t items;
   };
   struct kv_item_t {
-    const onode_key_t* p_key;
+    const full_key_t<KeyT::HOBJ>* p_key;
     const onode_t* p_value;
   };
   using var_t = std::variant<range_items_t, kv_item_t>;
@@ -244,7 +244,7 @@ class leaf_sub_items_t::Appender {
     appends[cnt] = range_items_t{from, items};
     ++cnt;
   }
-  void append(const onode_key_t& key, const onode_t& value, const onode_t*& p_value) {
+  void append(const full_key_t<KeyT::HOBJ>& key, const onode_t& value, const onode_t*& p_value) {
     assert(pp_value == nullptr);
     assert(cnt <= APPENDER_LIMIT);
     appends[cnt] = kv_item_t{&key, &value};
