@@ -8,13 +8,15 @@
 namespace crimson::os::seastore::onode {
 
 #define ITER_T item_iterator_t<NODE_TYPE>
-template class item_iterator_t<node_type_t::LEAF>;
-template class item_iterator_t<node_type_t::INTERNAL>;
+#define ITER_INST(NT) item_iterator_t<NT>
+#define ITER_TEMPLATE(NT) template class ITER_INST(NT)
+ITER_TEMPLATE(node_type_t::LEAF);
+ITER_TEMPLATE(node_type_t::INTERNAL);
 
 template <node_type_t NODE_TYPE>
+template <KeyT KT>
 memory_range_t ITER_T::insert_prefix(
-    LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
-    const full_key_t<KeyT::HOBJ>& key,
+    LogicalCachedExtent& dst, const ITER_T& iter, const full_key_t<KT>& key,
     bool is_end, node_offset_t size, const char* p_left_bound) {
   if constexpr (NODE_TYPE == node_type_t::LEAF) {
     // 1. insert range
@@ -38,13 +40,21 @@ memory_range_t ITER_T::insert_prefix(
     p_insert -= sizeof(node_offset_t);
     node_offset_t back_offset = (p_insert - p_insert_front);
     dst.copy_in_mem(back_offset, p_insert);
-    ns_oid_view_t::append<KeyT::HOBJ>(dst, key, p_insert);
+    ns_oid_view_t::append<KT>(dst, key, p_insert);
 
     return {p_insert_front, p_insert};
   } else {
     assert(false && "not implemented");
   }
 }
+#define IP_TEMPLATE(NT, KT)                                              \
+  template memory_range_t ITER_INST(NT)::insert_prefix<KT>(              \
+      LogicalCachedExtent&, const ITER_INST(NT)&, const full_key_t<KT>&, \
+      bool, node_offset_t, const char*)
+IP_TEMPLATE(node_type_t::LEAF, KeyT::VIEW);
+IP_TEMPLATE(node_type_t::INTERNAL, KeyT::VIEW);
+IP_TEMPLATE(node_type_t::LEAF, KeyT::HOBJ);
+IP_TEMPLATE(node_type_t::INTERNAL, KeyT::HOBJ);
 
 template <node_type_t NODE_TYPE>
 void ITER_T::update_size(
@@ -72,9 +82,14 @@ size_t ITER_T::trim_at(
   return trim_size;
 }
 
-#define APPEND_T item_iterator_t<NODE_TYPE>::Appender
+#define APPEND_T ITER_T::Appender<KT>
+template class ITER_INST(node_type_t::LEAF)::Appender<KeyT::VIEW>;
+template class ITER_INST(node_type_t::INTERNAL)::Appender<KeyT::VIEW>;
+template class ITER_INST(node_type_t::LEAF)::Appender<KeyT::HOBJ>;
+template class ITER_INST(node_type_t::INTERNAL)::Appender<KeyT::HOBJ>;
 
 template <node_type_t NODE_TYPE>
+template <KeyT KT>
 bool APPEND_T::append(const ITER_T& src, size_t& items, index_t type) {
   auto p_end = src.p_end();
   if (items != INDEX_END) {
@@ -114,6 +129,7 @@ bool APPEND_T::append(const ITER_T& src, size_t& items, index_t type) {
 }
 
 template <node_type_t NODE_TYPE>
+template <KeyT KT>
 std::tuple<LogicalCachedExtent*, char*>
 APPEND_T::open_nxt(const key_get_type& partial_key) {
   p_append -= sizeof(node_offset_t);
@@ -123,15 +139,17 @@ APPEND_T::open_nxt(const key_get_type& partial_key) {
 }
 
 template <node_type_t NODE_TYPE>
+template <KeyT KT>
 std::tuple<LogicalCachedExtent*, char*>
-APPEND_T::open_nxt(const full_key_t<KeyT::HOBJ>& key) {
+APPEND_T::open_nxt(const full_key_t<KT>& key) {
   p_append -= sizeof(node_offset_t);
   p_offset_while_open = p_append;
-  ns_oid_view_t::append<KeyT::HOBJ>(*p_dst, key, p_append);
+  ns_oid_view_t::append<KT>(*p_dst, key, p_append);
   return {p_dst, p_append};
 }
 
 template <node_type_t NODE_TYPE>
+template <KeyT KT>
 void APPEND_T::wrap_nxt(char* _p_append) {
   assert(_p_append < p_append);
   p_dst->copy_in_mem(node_offset_t(p_offset_while_open - _p_append),

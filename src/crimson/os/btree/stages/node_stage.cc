@@ -9,14 +9,16 @@
 namespace crimson::os::seastore::onode {
 
 #define NODE_T node_extent_t<FieldType, NODE_TYPE>
-template class node_extent_t<node_fields_0_t, node_type_t::INTERNAL>;
-template class node_extent_t<node_fields_1_t, node_type_t::INTERNAL>;
-template class node_extent_t<node_fields_2_t, node_type_t::INTERNAL>;
-template class node_extent_t<internal_fields_3_t, node_type_t::INTERNAL>;
-template class node_extent_t<node_fields_0_t, node_type_t::LEAF>;
-template class node_extent_t<node_fields_1_t, node_type_t::LEAF>;
-template class node_extent_t<node_fields_2_t, node_type_t::LEAF>;
-template class node_extent_t<leaf_fields_3_t, node_type_t::LEAF>;
+#define NODE_INST(FT, NT) node_extent_t<FT, NT>
+#define NODE_TEMPLATE(FT, NT) template class NODE_INST(FT, NT)
+NODE_TEMPLATE(node_fields_0_t, node_type_t::INTERNAL);
+NODE_TEMPLATE(node_fields_1_t, node_type_t::INTERNAL);
+NODE_TEMPLATE(node_fields_2_t, node_type_t::INTERNAL);
+NODE_TEMPLATE(internal_fields_3_t, node_type_t::INTERNAL);
+NODE_TEMPLATE(node_fields_0_t, node_type_t::LEAF);
+NODE_TEMPLATE(node_fields_1_t, node_type_t::LEAF);
+NODE_TEMPLATE(node_fields_2_t, node_type_t::LEAF);
+NODE_TEMPLATE(leaf_fields_3_t, node_type_t::LEAF);
 
 template <typename FieldType, node_type_t NODE_TYPE>
 size_t NODE_T::total_size() const {
@@ -34,10 +36,15 @@ const char* NODE_T::p_left_bound() const {
     // N3 internal node doesn't have the right part
     return nullptr;
   } else {
-    return p_start() + fields().get_item_end_offset(keys());
+    auto ret = p_start() + fields().get_item_end_offset(keys());
+    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+      if (is_level_tail()) {
+        ret -= sizeof(laddr_t);
+      }
+    }
+    return ret;
   }
 }
-
 
 template <typename FieldType, node_type_t NODE_TYPE>
 size_t NODE_T::size_to_nxt_at(size_t index) const {
@@ -75,21 +82,9 @@ memory_range_t NODE_T::get_nxt_container(size_t index) const {
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>
-const typename NODE_T::value_t* NODE_T::insert_at(
-    LogicalCachedExtent& dst, const node_extent_t& node,
-    const full_key_t<KeyT::HOBJ>& key, const value_t& value,
-    size_t index, node_offset_t size, const char* p_left_bound) {
-  if constexpr (FIELD_TYPE == field_type_t::N3) {
-    assert(false && "not implemented");
-  } else {
-    assert(false && "impossible");
-  }
-}
-
-template <typename FieldType, node_type_t NODE_TYPE>
+template <KeyT KT>
 memory_range_t NODE_T::insert_prefix_at(
-    LogicalCachedExtent& dst, const node_extent_t& node,
-    const full_key_t<KeyT::HOBJ>& key,
+    LogicalCachedExtent& dst, const node_extent_t& node, const full_key_t<KT>& key,
     size_t index, node_offset_t size, const char* p_left_bound) {
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
                 FIELD_TYPE == field_type_t::N1) {
@@ -99,7 +94,7 @@ memory_range_t NODE_T::insert_prefix_at(
     auto size_right = size - FieldType::estimate_insert_one();
     const char* p_insert = node.p_start() + node.fields().get_item_end_offset(index);
     const char* p_insert_front = p_insert - size_right;
-    FieldType::insert_at(dst, key, node.fields(), index, size_right);
+    FieldType::template insert_at<KT>(dst, key, node.fields(), index, size_right);
     dst.shift_mem(p_left_bound,
                   p_insert - p_left_bound,
                   -(int)size_right);
@@ -110,6 +105,22 @@ memory_range_t NODE_T::insert_prefix_at(
     assert(false && "impossible");
   }
 }
+#define IPA_TEMPLATE(FT, NT, KT)                                         \
+  template memory_range_t NODE_INST(FT, NT)::insert_prefix_at<KT>(       \
+      LogicalCachedExtent&, const node_extent_t&, const full_key_t<KT>&, \
+      size_t, node_offset_t, const char*)
+IPA_TEMPLATE(node_fields_0_t, node_type_t::INTERNAL, KeyT::VIEW);
+IPA_TEMPLATE(node_fields_1_t, node_type_t::INTERNAL, KeyT::VIEW);
+IPA_TEMPLATE(node_fields_2_t, node_type_t::INTERNAL, KeyT::VIEW);
+IPA_TEMPLATE(node_fields_0_t, node_type_t::LEAF, KeyT::VIEW);
+IPA_TEMPLATE(node_fields_1_t, node_type_t::LEAF, KeyT::VIEW);
+IPA_TEMPLATE(node_fields_2_t, node_type_t::LEAF, KeyT::VIEW);
+IPA_TEMPLATE(node_fields_0_t, node_type_t::INTERNAL, KeyT::HOBJ);
+IPA_TEMPLATE(node_fields_1_t, node_type_t::INTERNAL, KeyT::HOBJ);
+IPA_TEMPLATE(node_fields_2_t, node_type_t::INTERNAL, KeyT::HOBJ);
+IPA_TEMPLATE(node_fields_0_t, node_type_t::LEAF, KeyT::HOBJ);
+IPA_TEMPLATE(node_fields_1_t, node_type_t::LEAF, KeyT::HOBJ);
+IPA_TEMPLATE(node_fields_2_t, node_type_t::LEAF, KeyT::HOBJ);
 
 template <typename FieldType, node_type_t NODE_TYPE>
 void NODE_T::update_size_at(
@@ -163,9 +174,27 @@ size_t NODE_T::trim_at(
   return 0;
 }
 
-#define APPEND_T node_extent_t<FieldType, NODE_TYPE>::Appender
+#define APPEND_T node_extent_t<FieldType, NODE_TYPE>::Appender<KT>
+#define APPEND_TEMPLATE(FT, NT, KT) template class node_extent_t<FT, NT>::Appender<KT>
+APPEND_TEMPLATE(node_fields_0_t, node_type_t::INTERNAL, KeyT::VIEW);
+APPEND_TEMPLATE(node_fields_1_t, node_type_t::INTERNAL, KeyT::VIEW);
+APPEND_TEMPLATE(node_fields_2_t, node_type_t::INTERNAL, KeyT::VIEW);
+APPEND_TEMPLATE(internal_fields_3_t, node_type_t::INTERNAL, KeyT::VIEW);
+APPEND_TEMPLATE(node_fields_0_t, node_type_t::LEAF, KeyT::VIEW);
+APPEND_TEMPLATE(node_fields_1_t, node_type_t::LEAF, KeyT::VIEW);
+APPEND_TEMPLATE(node_fields_2_t, node_type_t::LEAF, KeyT::VIEW);
+APPEND_TEMPLATE(leaf_fields_3_t, node_type_t::LEAF, KeyT::VIEW);
+APPEND_TEMPLATE(node_fields_0_t, node_type_t::INTERNAL, KeyT::HOBJ);
+APPEND_TEMPLATE(node_fields_1_t, node_type_t::INTERNAL, KeyT::HOBJ);
+APPEND_TEMPLATE(node_fields_2_t, node_type_t::INTERNAL, KeyT::HOBJ);
+APPEND_TEMPLATE(internal_fields_3_t, node_type_t::INTERNAL, KeyT::HOBJ);
+APPEND_TEMPLATE(node_fields_0_t, node_type_t::LEAF, KeyT::HOBJ);
+APPEND_TEMPLATE(node_fields_1_t, node_type_t::LEAF, KeyT::HOBJ);
+APPEND_TEMPLATE(node_fields_2_t, node_type_t::LEAF, KeyT::HOBJ);
+APPEND_TEMPLATE(leaf_fields_3_t, node_type_t::LEAF, KeyT::HOBJ);
 
 template <typename FieldType, node_type_t NODE_TYPE>
+template <KeyT KT>
 void APPEND_T::append(const node_extent_t& src, size_t from, size_t items) {
   assert(from <= src.keys());
   if (items == 0) {
@@ -224,8 +253,9 @@ void APPEND_T::append(const node_extent_t& src, size_t from, size_t items) {
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>
+template <KeyT KT>
 void APPEND_T::append(
-    const full_key_t<KeyT::HOBJ>& key, const onode_t& value, const onode_t*& p_value) {
+    const full_key_t<KT>& key, const onode_t& value, const onode_t*& p_value) {
   if constexpr (FIELD_TYPE == field_type_t::N3) {
     assert(false && "not implemented");
   } else {
@@ -234,6 +264,7 @@ void APPEND_T::append(
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>
+template <KeyT KT>
 std::tuple<LogicalCachedExtent*, char*>
 APPEND_T::open_nxt(const key_get_type& partial_key) {
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
@@ -242,28 +273,28 @@ APPEND_T::open_nxt(const key_get_type& partial_key) {
   } else if constexpr (FIELD_TYPE == field_type_t::N2) {
     FieldType::append_key(*p_dst, partial_key, p_append_right);
   } else {
-    assert(false);
+    assert(false && "impossible path");
   }
   return {p_dst, p_append_right};
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>
+template <KeyT KT>
 std::tuple<LogicalCachedExtent*, char*>
-APPEND_T::open_nxt(const full_key_t<KeyT::HOBJ>& key) {
+APPEND_T::open_nxt(const full_key_t<KT>& key) {
   if constexpr (FIELD_TYPE == field_type_t::N0 ||
                 FIELD_TYPE == field_type_t::N1) {
-    FieldType::append_key(
-        *p_dst, key, p_append_left);
+    FieldType::template append_key<KT>(*p_dst, key, p_append_left);
   } else if constexpr (FIELD_TYPE == field_type_t::N2) {
-    FieldType::append_key(
-        *p_dst, key, p_append_right);
+    FieldType::template append_key<KT>(*p_dst, key, p_append_right);
   } else {
-    assert(false);
+    assert(false && "impossible path");
   }
   return {p_dst, p_append_right};
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>
+template <KeyT KT>
 char* APPEND_T::wrap() {
   assert(p_append_left <= p_append_right);
   p_dst->copy_in_mem(num_keys, p_start + offsetof(FieldType, num_keys));

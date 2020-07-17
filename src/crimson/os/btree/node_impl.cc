@@ -213,6 +213,13 @@ void I_NODE_T::apply_child_split(
   // TODO: common part
   auto free_size = stage.free_size();
   if (free_size >= insert_size) {
+    auto p_value = STAGE_T::template proceed_insert<KeyT::VIEW, false>(
+        this->extent(), stage, l_key, l_node->laddr(),
+        insert_pos, insert_stage, insert_size);
+    assert(stage.free_size() == free_size - insert_size);
+    auto insert_pos_normalized = normalize(std::move(insert_pos));
+    track_child(insert_pos_normalized, l_node);
+    return;
   }
 
   // TODO track the left node
@@ -326,7 +333,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   auto stage = this->stage();
   auto free_size = stage.free_size();
   if (free_size >= i_estimated_size) {
-    auto p_value = STAGE_T::template proceed_insert<false>(
+    auto p_value = STAGE_T::template proceed_insert<KeyT::HOBJ, false>(
         this->extent(), stage, key, value,
         i_position, i_stage, i_estimated_size);
     assert(stage.free_size() == free_size - i_estimated_size);
@@ -354,7 +361,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   auto append_at = split_at;
   auto right_node = ConcreteType::allocate(this->is_level_tail());
   // TODO: identify conditions for cross-node string deduplication
-  typename STAGE_T::StagedAppender appender;
+  typename STAGE_T::template StagedAppender<KeyT::HOBJ> appender;
   appender.init(&right_node->extent(),
                 const_cast<char*>(right_node->stage().p_start()));
   const onode_t* p_value = nullptr;
@@ -381,7 +388,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
 
   if (i_to_left) {
     // left node: insert
-    p_value = STAGE_T::template proceed_insert<true>(
+    p_value = STAGE_T::template proceed_insert<KeyT::HOBJ, true>(
         this->extent(), stage, key, value,
         i_position, i_stage, i_estimated_size);
     std::cout << "insert to left: " << i_position

@@ -103,14 +103,22 @@ class node_extent_t {
     return size;
   }
 
+  template <KeyT KT>
   static const value_t* insert_at(
       LogicalCachedExtent& dst, const node_extent_t&,
-      const full_key_t<KeyT::HOBJ>& key, const value_t& value,
-      size_t index, node_offset_t size, const char* p_left_bound);
+      const full_key_t<KT>& key, const value_t& value,
+      size_t index, node_offset_t size, const char* p_left_bound) {
+    if constexpr (FIELD_TYPE == field_type_t::N3) {
+      assert(false && "not implemented");
+    } else {
+      assert(false && "impossible");
+    }
+  }
 
+  template <KeyT KT>
   static memory_range_t insert_prefix_at(
       LogicalCachedExtent& dst, const node_extent_t&,
-      const full_key_t<KeyT::HOBJ>& key,
+      const full_key_t<KT>& key,
       size_t index, node_offset_t size, const char* p_left_bound);
 
   static void update_size_at(
@@ -120,6 +128,7 @@ class node_extent_t {
   static size_t trim_at(LogicalCachedExtent&, const node_extent_t&,
                         size_t index, size_t trimmed);
 
+  template <KeyT KT>
   class Appender;
 
  private:
@@ -130,6 +139,7 @@ class node_extent_t {
 };
 
 template <typename FieldType, node_type_t NODE_TYPE>
+template <KeyT KT>
 class node_extent_t<FieldType, NODE_TYPE>::Appender {
  public:
   Appender(LogicalCachedExtent* p_dst, char* p_append)
@@ -144,10 +154,10 @@ class node_extent_t<FieldType, NODE_TYPE>::Appender {
     p_append_right = p_start + FieldType::SIZE;
   }
   void append(const node_extent_t& src, size_t from, size_t items);
-  void append(const full_key_t<KeyT::HOBJ>&, const onode_t&, const onode_t*&);
+  void append(const full_key_t<KT>&, const onode_t&, const onode_t*&);
   char* wrap();
   std::tuple<LogicalCachedExtent*, char*> open_nxt(const key_get_type&);
-  std::tuple<LogicalCachedExtent*, char*> open_nxt(const full_key_t<KeyT::HOBJ>&);
+  std::tuple<LogicalCachedExtent*, char*> open_nxt(const full_key_t<KT>&);
   void wrap_nxt(char* p_append) {
     if constexpr (FIELD_TYPE != field_type_t::N3) {
       assert(p_append < p_append_right);

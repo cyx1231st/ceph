@@ -148,16 +148,18 @@ struct _node_fields_013_t {
 #endif
 
   static node_offset_t estimate_insert_one() { return sizeof(SlotType); }
+  template <KeyT KT>
   static void insert_at(
-      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key,
+      LogicalCachedExtent& dst, const full_key_t<KT>& key,
       const me_t& node, size_t index, node_offset_t size_right);
   static void update_size_at(
       LogicalCachedExtent& dst, const me_t& node, size_t index, int change);
   static void append_key(
       LogicalCachedExtent& dst, const key_t& key, char*& p_append);
+  template <KeyT KT>
   static void append_key(
-      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key, char*& p_append) {
-    append_key(dst, key_t::template from_key<KeyT::HOBJ>(key), p_append);
+      LogicalCachedExtent& dst, const full_key_t<KT>& key, char*& p_append) {
+    append_key(dst, key_t::template from_key<KT>(key), p_append);
   }
   static void append_offset(
       LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append);
@@ -237,8 +239,9 @@ struct node_fields_2_t {
 #endif
 
   static node_offset_t estimate_insert_one() { return sizeof(node_offset_t); }
+  template <KeyT KT>
   static void insert_at(
-      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key,
+      LogicalCachedExtent& dst, const full_key_t<KT>& key,
       const node_fields_2_t& node, size_t index, node_offset_t size_right) {
     assert(false && "not implemented");
   }
@@ -250,9 +253,10 @@ struct node_fields_2_t {
       LogicalCachedExtent& dst, const key_t& key, char*& p_append) {
     ns_oid_view_t::append(dst, key, p_append);
   }
+  template <KeyT KT>
   static void append_key(
-      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key, char*& p_append) {
-    ns_oid_view_t::append<KeyT::HOBJ>(dst, key, p_append);
+      LogicalCachedExtent& dst, const full_key_t<KT>& key, char*& p_append) {
+    ns_oid_view_t::append<KT>(dst, key, p_append);
   }
   static void append_offset(
       LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append);
@@ -331,8 +335,9 @@ struct _internal_fields_3_t {
   static node_offset_t estimate_insert_one() {
     return sizeof(snap_gen_t) + sizeof(laddr_t);
   }
+  template <KeyT KT>
   static void insert_at(
-      LogicalCachedExtent& dst, const full_key_t<KeyT::HOBJ>& key,
+      LogicalCachedExtent& dst, const full_key_t<KT>& key,
       const me_t& node, size_t index, node_offset_t size_right) {
     assert(false && "not implemented");
   }

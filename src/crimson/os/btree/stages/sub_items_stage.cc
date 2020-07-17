@@ -7,9 +7,21 @@
 
 namespace crimson::os::seastore::onode {
 
+template <KeyT KT>
+const laddr_t* internal_sub_items_t::insert_at(
+    LogicalCachedExtent& dst, const internal_sub_items_t& sub_items,
+    const full_key_t<KT>& key, const laddr_t& value,
+    size_t index, node_offset_t size, const char* p_left_bound) {
+  assert(false && "not implemented");
+}
+template const laddr_t* internal_sub_items_t::insert_at<KeyT::VIEW>(
+    LogicalCachedExtent&, const internal_sub_items_t&, const full_key_t<KeyT::VIEW>&,
+    const laddr_t&, size_t, node_offset_t, const char*);
+
+template <KeyT KT>
 const onode_t* leaf_sub_items_t::insert_at(
     LogicalCachedExtent& dst, const leaf_sub_items_t& sub_items,
-    const full_key_t<KeyT::HOBJ>& key, const onode_t& value,
+    const full_key_t<KT>& key, const onode_t& value,
     size_t index, node_offset_t size, const char* p_left_bound) {
   // a. [... item(index)] << size
   const char* p_shift_start = p_left_bound;
@@ -21,7 +33,7 @@ const onode_t* leaf_sub_items_t::insert_at(
   auto p_value = reinterpret_cast<const onode_t*>(p_insert);
   dst.copy_in_mem(&value, p_insert, value.size);
   p_insert += value.size;
-  dst.copy_in_mem(snap_gen_t::from_key<KeyT::HOBJ>(key), p_insert);
+  dst.copy_in_mem(snap_gen_t::template from_key<KT>(key), p_insert);
   assert(p_insert + sizeof(snap_gen_t) + sizeof(node_offset_t) == p_shift_end);
 
   // c. compensate affected offsets
@@ -49,6 +61,9 @@ const onode_t* leaf_sub_items_t::insert_at(
 
   return p_value;
 }
+template const onode_t* leaf_sub_items_t::insert_at<KeyT::HOBJ>(
+    LogicalCachedExtent&, const leaf_sub_items_t&, const full_key_t<KeyT::HOBJ>&,
+    const onode_t&, size_t, node_offset_t, const char*);
 
 size_t leaf_sub_items_t::trim_until(
     LogicalCachedExtent& extent, leaf_sub_items_t& items, size_t index) {
@@ -74,7 +89,8 @@ template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 // explicit deduction guide
 template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
-char* leaf_sub_items_t::Appender::wrap() {
+template <KeyT KT>
+char* leaf_sub_items_t::Appender<KT>::wrap() {
   auto p_cur = p_append;
   num_keys_t num_keys = 0;
   for (auto i = 0u; i < cnt; ++i) {
@@ -122,7 +138,7 @@ char* leaf_sub_items_t::Appender::wrap() {
       [&] (const kv_item_t& arg) {
         assert(pp_value);
         p_cur -= sizeof(snap_gen_t);
-        p_dst->copy_in_mem(snap_gen_t::template from_key<KeyT::HOBJ>(*arg.p_key), p_cur);
+        p_dst->copy_in_mem(snap_gen_t::template from_key<KT>(*arg.p_key), p_cur);
         p_cur -= arg.p_value->size;
         p_dst->copy_in_mem(arg.p_value, p_cur, arg.p_value->size);
         *pp_value = reinterpret_cast<const onode_t*>(p_cur);
@@ -131,5 +147,7 @@ char* leaf_sub_items_t::Appender::wrap() {
   }
   return p_cur;
 }
+template class leaf_sub_items_t::Appender<KeyT::VIEW>;
+template class leaf_sub_items_t::Appender<KeyT::HOBJ>;
 
 }
