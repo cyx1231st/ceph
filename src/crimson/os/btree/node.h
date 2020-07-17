@@ -69,7 +69,7 @@ class Node
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
 
 #ifndef NDEBUG
-  virtual Ref<Node> test_clone() const = 0;
+  virtual Ref<Node> test_clone(Ref<Node>&) const = 0;
 #endif
 
   static void allocate_root(Ref<Node>&);

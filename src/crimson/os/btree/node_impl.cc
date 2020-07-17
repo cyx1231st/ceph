@@ -44,13 +44,30 @@ template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 std::ostream& NODE_T::dump(std::ostream& os) const {
   auto _stage = stage();
   os << *this << ":";
+  os << "\n  header: " << node_stage_t::header_size() << "B";
+  size_t size = 0u;
   if (_stage.keys()) {
-    os << "\nheader: " << _stage.size_before(0u) << "B";
-    size_t size = 0u;
-    return STAGE_T::dump(_stage, os, "", size);
+    STAGE_T::dump(_stage, os, "  ", size);
   } else {
-    return os << " empty!";
+    if constexpr (NODE_TYPE == node_type_t::LEAF) {
+      return os << " empty!";
+    } else { // internal node
+      if (!is_level_tail()) {
+        return os << " empty!";
+      } else {
+        size += node_stage_t::header_size();
+      }
+    }
   }
+  if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+    if (is_level_tail()) {
+      size += sizeof(laddr_t);
+      os << "\n  tail value: 0x"
+         << std::hex << *_stage.get_end_p_laddr() << std::dec
+         << " " << size << "B";
+    }
+  }
+  return os;
 }
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
@@ -69,10 +86,9 @@ std::ostream& NODE_T::dump_brief(std::ostream& os) const {
 
 #ifndef NDEBUG
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-Ref<Node> NODE_T::test_clone() const {
-  static Ref<Node> dummy_root_ref;
+Ref<Node> NODE_T::test_clone(Ref<Node>& dummy_root) const {
   auto ret = ConcreteType::_allocate(level(), is_level_tail());
-  ret->as_root(dummy_root_ref);
+  ret->as_root(dummy_root);
   ret->extent().copy_in(_extent->get_ptr<void>(0u), 0u, node_stage_t::EXTENT_SIZE);
   return ret;
 }
@@ -94,6 +110,7 @@ const value_type_t<NODE_TYPE>* NODE_T::get_value_ptr(
   auto _stage = stage();
   if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
     if (position.is_end()) {
+      assert(is_level_tail());
       return _stage.get_end_p_laddr();
     }
   } else {
@@ -193,7 +210,11 @@ void I_NODE_T::apply_child_split(
   auto [insert_stage, insert_size] =
     STAGE_T::evaluate_insert(stage, l_key, l_node->laddr(), insert_pos);
 
-  // ...
+  // TODO: common part
+  auto free_size = stage.free_size();
+  if (free_size >= insert_size) {
+  }
+
   // TODO track the left node
 }
 
@@ -366,7 +387,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
     std::cout << "insert to left: " << i_position
               << ", i_stage=" << (int)i_stage << std::endl;
   }
-  this->dump(std::cout) << std::endl << std::endl;
+  this->dump(std::cout) << std::endl;
   assert(p_value);
 
   // propagate index to parent

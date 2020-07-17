@@ -1346,7 +1346,13 @@ struct staged {
       } else {
         auto value_ptr = iter.get_p_value();
         size += iter.size();
-        os << "\n" << i_prefix << *value_ptr << " " << size << "B";
+        os << "\n" << i_prefix;
+        if constexpr (NODE_TYPE == node_type_t::LEAF) {
+          os << *value_ptr;
+        } else {
+          os << "0x" << std::hex << *value_ptr << std::dec;
+        }
+        os << " " << size << "B";
       }
       if (iter.is_last()) {
         break;

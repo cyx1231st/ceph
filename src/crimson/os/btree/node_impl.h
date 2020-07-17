@@ -32,6 +32,7 @@ class NodeT : virtual public Node {
   void as_root(Ref<Node>& ref) override final {
     assert(!p_root_ref);
     assert(!_parent_info);
+    ref = this;
     p_root_ref = &ref;
   }
   void handover_root(Ref<InternalNode> new_root) override final {
@@ -56,7 +57,7 @@ class NodeT : virtual public Node {
   std::ostream& dump_brief(std::ostream& os) const override final;
 
 #ifndef NDEBUG
-  Ref<Node> test_clone() const override final;
+  Ref<Node> test_clone(Ref<Node>& dummy_root) const override final;
 
   void validate_unused() const {
     // node.fields().template validate_unused<NODE_TYPE>(is_level_tail());
@@ -166,8 +167,8 @@ class LeafNodeT: public LeafNode,
 class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {
  public:
   static void allocate_root(Ref<Node>& ref) {
-    ref = allocate(true);
-    ref->as_root(ref);
+    auto root = allocate(true);
+    root->as_root(ref);
   }
 };
 class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {};

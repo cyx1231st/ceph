@@ -386,7 +386,8 @@ int main(int argc, char* argv[])
     root->dump(std::cout) << std::endl << std::endl;
 
     auto f_split = [&root] (const onode_key_t& key, const onode_t& value) {
-      auto node = root->test_clone();
+      Ref<Node> dummy_root;
+      auto node = root->test_clone(dummy_root);
       std::cout << "insert " << key << ":" << std::endl;
       auto [p_cursor, success] = node->insert(key, value);
       assert(success);
@@ -394,6 +395,8 @@ int main(int argc, char* argv[])
       assert(p_cursor->get_p_value() != &value);
       assert(p_cursor->get_p_value()->size == value.size);
       Onodes::validate(*p_cursor->get_p_value());
+      dummy_root->dump(std::cout) << std::endl;
+      std::cout << std::endl;
     };
     auto& onode = onodes.create(1280);
 
