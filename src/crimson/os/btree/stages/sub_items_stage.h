@@ -39,6 +39,8 @@ class internal_sub_items_t {
     assert((range.p_end - range.p_start) % sizeof(internal_sub_item_t) == 0);
     num_items = (range.p_end - range.p_start) / sizeof(internal_sub_item_t);
     assert(num_items > 0);
+    auto _p_first_item = range.p_end - sizeof(internal_sub_item_t);
+    p_first_item = reinterpret_cast<const internal_sub_item_t*>(_p_first_item);
   }
 
   // container type system
@@ -50,7 +52,7 @@ class internal_sub_items_t {
     return (p_first_item - index)->get_key();
   }
   size_t size_before(size_t index) const {
-    assert(false && "not implemented");
+    return index * sizeof(internal_sub_item_t);
   }
   const laddr_t* get_p_value(size_t index) const {
     assert(index < num_items);
@@ -85,20 +87,15 @@ class internal_sub_items_t {
 template <KeyT KT>
 class internal_sub_items_t::Appender {
  public:
-  Appender(LogicalCachedExtent* p_dst, char* p_append) {
-    assert(false && "not implemented");
-  }
-  void append(const internal_sub_items_t& src, size_t from, size_t items) {
-    assert(false && "not implemented");
-  }
-  void append(const full_key_t<KT>& key,
-              const laddr_t& value, const laddr_t*& p_value) {
-    assert(false && "not implemented");
-  }
-  char* wrap() {
-    assert(false && "not implemented");
-    return nullptr;
-  }
+  Appender(LogicalCachedExtent* p_dst, char* p_append)
+    : p_dst{p_dst}, p_append{p_append} {}
+  void append(const internal_sub_items_t& src, size_t from, size_t items);
+  void append(const full_key_t<KT>&, const laddr_t&, const laddr_t*&);
+  char* wrap() { return p_append; }
+ private:
+  const laddr_t** pp_value = nullptr;
+  LogicalCachedExtent* p_dst;
+  char* p_append;
 };
 
 /*

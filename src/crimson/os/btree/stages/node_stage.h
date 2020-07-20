@@ -32,7 +32,6 @@ class node_extent_t {
 #endif
   }
 
-  // TODO: hide
   const char* p_start() const { return fields_start(*p_fields); }
   const FieldType& fields() const { return *p_fields; }
 

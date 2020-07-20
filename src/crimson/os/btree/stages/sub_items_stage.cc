@@ -18,6 +18,33 @@ template const laddr_t* internal_sub_items_t::insert_at<KeyT::VIEW>(
     LogicalCachedExtent&, const internal_sub_items_t&, const full_key_t<KeyT::VIEW>&,
     const laddr_t&, size_t, node_offset_t, const char*);
 
+template class internal_sub_items_t::Appender<KeyT::VIEW>;
+template class internal_sub_items_t::Appender<KeyT::HOBJ>;
+
+template <KeyT KT>
+void internal_sub_items_t::Appender<KT>::append(
+    const internal_sub_items_t& src, size_t from, size_t items) {
+  assert(from <= src.keys());
+  if (items == 0) {
+    return;
+  }
+  assert(from < src.keys());
+  assert(from + items <= src.keys());
+  node_offset_t size = sizeof(internal_sub_item_t) * items;
+  p_append -= size;
+  p_dst->copy_in_mem(src.p_first_item - from - items, p_append, size);
+}
+
+template <KeyT KT>
+void internal_sub_items_t::Appender<KT>::append(
+    const full_key_t<KT>& key, const laddr_t& value, const laddr_t*& p_value) {
+  assert(pp_value == nullptr);
+  p_append -= sizeof(internal_sub_item_t);
+  auto item = internal_sub_item_t{snap_gen_t::from_key<KT>(key), value};
+  p_dst->copy_in_mem(item, p_append);
+  p_value = reinterpret_cast<laddr_t*>(p_append + sizeof(snap_gen_t));
+}
+
 template <KeyT KT>
 const onode_t* leaf_sub_items_t::insert_at(
     LogicalCachedExtent& dst, const leaf_sub_items_t& sub_items,
@@ -89,6 +116,9 @@ template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 // explicit deduction guide
 template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
+template class leaf_sub_items_t::Appender<KeyT::VIEW>;
+template class leaf_sub_items_t::Appender<KeyT::HOBJ>;
+
 template <KeyT KT>
 char* leaf_sub_items_t::Appender<KT>::wrap() {
   auto p_cur = p_append;
@@ -147,7 +177,5 @@ char* leaf_sub_items_t::Appender<KT>::wrap() {
   }
   return p_cur;
 }
-template class leaf_sub_items_t::Appender<KeyT::VIEW>;
-template class leaf_sub_items_t::Appender<KeyT::HOBJ>;
 
 }

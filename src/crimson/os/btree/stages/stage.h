@@ -1240,7 +1240,6 @@ struct staged {
     if (unlikely(!container.keys())) {
       assert(position == position_t::end());
       assert(stage == STAGE);
-      assert(NODE_TYPE == node_type_t::LEAF);
       position = position_t::begin();
       if constexpr (IS_BOTTOM) {
         return container_t::template insert_at<KT>(
@@ -1323,7 +1322,8 @@ struct staged {
   static std::ostream& dump(const container_t& container,
                             std::ostream& os,
                             const std::string& prefix,
-                            size_t& size) {
+                            size_t& size,
+                            const char* p_start) {
     auto iter = iterator_t(container);
     assert(!iter.is_end());
     std::string prefix_blank(prefix.size(), ' ');
@@ -1336,9 +1336,10 @@ struct staged {
       if constexpr (!IS_BOTTOM) {
         auto nxt_container = iter.get_nxt_container();
         size += iter.size_to_nxt();
-        NXT_STAGE_T::dump(nxt_container, os, i_prefix, size);
+        NXT_STAGE_T::dump(nxt_container, os, i_prefix, size, p_start);
       } else {
         auto value_ptr = iter.get_p_value();
+        int offset = reinterpret_cast<const char*>(value_ptr) - p_start;
         size += iter.size();
         os << "\n" << i_prefix;
         if constexpr (NODE_TYPE == node_type_t::LEAF) {
@@ -1346,7 +1347,8 @@ struct staged {
         } else {
           os << "0x" << std::hex << *value_ptr << std::dec;
         }
-        os << " " << size << "B";
+        os << " " << size << "B"
+           << "  @" << offset << "B";
       }
       if (iter.is_last()) {
         break;

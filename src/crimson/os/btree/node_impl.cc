@@ -43,11 +43,12 @@ full_key_t<KeyT::VIEW> NODE_T::get_key_view(
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 std::ostream& NODE_T::dump(std::ostream& os) const {
   auto _stage = stage();
+  auto p_start = _stage.p_start();
   os << *this << ":";
   os << "\n  header: " << node_stage_t::header_size() << "B";
   size_t size = 0u;
   if (_stage.keys()) {
-    STAGE_T::dump(_stage, os, "  ", size);
+    STAGE_T::dump(_stage, os, "  ", size, p_start);
   } else {
     if constexpr (NODE_TYPE == node_type_t::LEAF) {
       return os << " empty!";
@@ -62,9 +63,12 @@ std::ostream& NODE_T::dump(std::ostream& os) const {
   if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
     if (is_level_tail()) {
       size += sizeof(laddr_t);
+      auto value_ptr = _stage.get_end_p_laddr();
+      int offset = reinterpret_cast<const char*>(value_ptr) - p_start;
       os << "\n  tail value: 0x"
-         << std::hex << *_stage.get_end_p_laddr() << std::dec
-         << " " << size << "B";
+         << std::hex << *value_ptr << std::dec
+         << " " << size << "B"
+         << "  @" << offset << "B";
     }
   }
   return os;
@@ -192,29 +196,34 @@ void I_NODE_T::apply_child_split(
 
   // update r_pos => l_addr to r_addr
   const laddr_t* p_rvalue = this->get_value_ptr(r_pos);
-  assert(*p_rvalue == l_node->laddr());
-  this->extent().copy_in_mem(r_node->laddr(), const_cast<laddr_t*>(p_rvalue));
+  auto left_laddr = l_node->laddr();
+  auto right_laddr = r_node->laddr();
+  assert(*p_rvalue == left_laddr);
+  this->extent().copy_in_mem(right_laddr, const_cast<laddr_t*>(p_rvalue));
 
   // track the right node
   assert(tracked_child_nodes[r_pos] == l_node);
   track_child(r_pos, r_node);
 
-  auto stage = this->stage();
-  if (unlikely(!stage.keys())) {
-    // TODO: special case
-    return;
-  }
-
   // evaluate insertion
   typename STAGE_T::position_t insert_pos = cast_down<STAGE_T::STAGE>(r_pos);
-  auto [insert_stage, insert_size] =
-    STAGE_T::evaluate_insert(stage, l_key, l_node->laddr(), insert_pos);
+  match_stage_t insert_stage;
+  node_offset_t insert_size;
+  auto stage = this->stage();
+  if (unlikely(!stage.keys())) {
+    assert(insert_pos.is_end());
+    insert_stage = STAGE_T::STAGE;
+    insert_size = STAGE_T::template insert_size<KeyT::VIEW>(l_key, left_laddr);
+  } else {
+    std::tie(insert_stage, insert_size) =
+      STAGE_T::evaluate_insert(stage, l_key, left_laddr, insert_pos);
+  }
 
   // TODO: common part
   auto free_size = stage.free_size();
   if (free_size >= insert_size) {
     auto p_value = STAGE_T::template proceed_insert<KeyT::VIEW, false>(
-        this->extent(), stage, l_key, l_node->laddr(),
+        this->extent(), stage, l_key, left_laddr,
         insert_pos, insert_stage, insert_size);
     assert(stage.free_size() == free_size - insert_size);
     auto insert_pos_normalized = normalize(std::move(insert_pos));
