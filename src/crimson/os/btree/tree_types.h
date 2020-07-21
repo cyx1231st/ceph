@@ -25,6 +25,7 @@ using crush_hash_t = uint32_t;
 using snap_t = uint64_t;
 using gen_t = uint64_t;
 
+// TODO: replace with ghobject_t
 struct onode_key_t {
   shard_t shard;
   pool_t pool;
@@ -33,6 +34,24 @@ struct onode_key_t {
   std::string oid;
   snap_t snap;
   gen_t gen;
+
+  int cmp(const onode_key_t& o) const {
+    auto l = std::tie(shard, pool, crush, nspace, oid, snap, gen);
+    auto r = std::tie(o.shard, o.pool, o.crush, o.nspace, o.oid, o.snap, o.gen);
+    if (l < r) {
+      return -1;
+    } else if (l > r) {
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+  bool operator>(const onode_key_t& o) const { return cmp(o) > 0; }
+  bool operator>=(const onode_key_t& o) const { return cmp(o) >= 0; }
+  bool operator<(const onode_key_t& o) const { return cmp(o) < 0; }
+  bool operator<=(const onode_key_t& o) const { return cmp(o) <= 0; }
+  bool operator==(const onode_key_t& o) const { return cmp(o) == 0; }
+  bool operator!=(const onode_key_t& o) const { return cmp(o) != 0; }
 };
 inline std::ostream& operator<<(std::ostream& os, const onode_key_t& key) {
   return os << "key("

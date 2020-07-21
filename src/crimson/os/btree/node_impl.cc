@@ -191,7 +191,12 @@ void I_NODE_T::apply_child_split(
 #ifndef NDEBUG
   if (r_pos.is_end()) {
     assert(this->is_level_tail());
+    assert(r_node->is_level_tail());
+  } else {
+    assert(!r_node->is_level_tail());
+    // TODO: assert(get_key_view(r_pos) == r_node->get_largest_key_view());
   }
+  // TODO: assert(l_key == l_node->get_largest_key_view());
 #endif
 
   // update r_pos => l_addr to r_addr
