@@ -91,6 +91,7 @@ class Node
   virtual field_type_t field_type() const = 0;
   virtual laddr_t laddr() const = 0;
   virtual key_view_t get_key_view(const search_position_t&) const = 0;
+  virtual key_view_t get_largest_key_view() const = 0;
   virtual search_result_t do_lower_bound(const key_hobj_t&, MatchHistory&) = 0;
 };
 inline std::ostream& operator<<(std::ostream& os, const Node& node) {

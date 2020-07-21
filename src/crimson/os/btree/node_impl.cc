@@ -41,6 +41,14 @@ full_key_t<KeyT::VIEW> NODE_T::get_key_view(
 }
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
+full_key_t<KeyT::VIEW> NODE_T::get_largest_key_view() const {
+  auto _stage = stage();
+  full_key_t<KeyT::VIEW> key_view;
+  STAGE_T::lookup_largest_index(_stage, key_view);
+  return key_view;
+}
+
+template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 std::ostream& NODE_T::dump(std::ostream& os) const {
   auto _stage = stage();
   auto p_start = _stage.p_start();
@@ -194,9 +202,9 @@ void I_NODE_T::apply_child_split(
     assert(r_node->is_level_tail());
   } else {
     assert(!r_node->is_level_tail());
-    // TODO: assert(get_key_view(r_pos) == r_node->get_largest_key_view());
+    assert(get_key_view(r_pos) == r_node->get_largest_key_view());
   }
-  // TODO: assert(l_key == l_node->get_largest_key_view());
+  assert(l_key == l_node->get_largest_key_view());
 #endif
 
   // update r_pos => l_addr to r_addr
@@ -417,8 +425,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   }
   auto parent_node = this->parent_info().ptr;
   // TODO: cross-node string dedup
-  full_key_t<KeyT::VIEW> key_view;
-  STAGE_T::lookup_largest_index(stage, key_view);
+  auto key_view = get_largest_key_view();
   parent_node->apply_child_split(key_view, this, right_node);
   auto i_position_normalized = normalize(std::move(i_position));
 

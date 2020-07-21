@@ -52,6 +52,7 @@ class NodeT : virtual public Node {
   laddr_t laddr() const override final;
   level_t level() const override final;
   full_key_t<KeyT::VIEW> get_key_view(const search_position_t&) const override final;
+  full_key_t<KeyT::VIEW> get_largest_key_view() const override final;
   const value_t* get_value_ptr(const search_position_t&);
   std::ostream& dump(std::ostream&) const override final;
   std::ostream& dump_brief(std::ostream& os) const override final;

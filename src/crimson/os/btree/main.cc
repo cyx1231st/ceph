@@ -380,19 +380,38 @@ int main(int argc, char* argv[])
         p_root_ref = &root_ref;
       }
 
-      bool can_split() const { return kvs.size() > 1; }
+      bool can_split() const { return keys.size() > 1; }
 
       Ref<DummyChild> populate_split() {
         assert(can_split());
-        auto index = rd() & (kvs.size() - 1);
-        ///////
+        size_t index;
+        if (keys.size() == 2) {
+          index = 1;
+        } else {
+          index = rd() % (keys.size() - 2) + 1;
+        }
+        auto iter = keys.begin();
+        std::advance(iter, index);
 
+        std::set<onode_key_t> left_keys(keys.begin(), iter);
+        std::set<onode_key_t> right_keys(iter, keys.end());
+
+        keys = left_keys;
+        bool right_is_tail = _is_level_tail;
+        _is_level_tail = false;
+        auto right_child = DummyChild::create(right_keys, right_is_tail);
+
+        parent_info().ptr->apply_child_split(get_largest_key_view(), this, right_child);
+        parent_info().ptr->dump(std::cout) << std::endl;
+
+        return right_child;
       }
 
       static Ref<DummyChild> create(
-          const std::map<onode_key_t, laddr_t>& kvs,
+          const std::set<onode_key_t>& keys,
           bool is_level_tail) {
-        return new DummyChild(kvs, is_level_tail);
+        static laddr_t seed = 0;
+        return new DummyChild(keys, is_level_tail, seed++);
       }
 
      protected:
@@ -410,9 +429,12 @@ int main(int argc, char* argv[])
       const parent_info_t& parent_info() const override { return *_parent_info; }
       bool is_level_tail() const override { return _is_level_tail; }
       field_type_t field_type() const override { return field_type_t::N0; }
-      laddr_t laddr() const override { return kvs.crbegin()->second; }
+      laddr_t laddr() const override { return _laddr; }
       level_t level() const override { return 0u; }
       key_view_t get_key_view(const search_position_t&) const override { assert(false); }
+      key_view_t get_largest_key_view() const override {
+        return build_key_view(*keys.crbegin());
+      }
       std::ostream& dump(std::ostream&) const override { assert(false); }
       std::ostream& dump_brief(std::ostream&) const override { assert(false); }
       Ref<Node> test_clone(Ref<Node>&) const override { assert(false); }
@@ -423,15 +445,16 @@ int main(int argc, char* argv[])
       Ref<tree_cursor_t> lookup_largest() override { assert(false); }
 
      private:
-      DummyChild(const std::map<onode_key_t, laddr_t>& kvs,
-                 bool is_level_tail)
-        : kvs{kvs}, _is_level_tail{is_level_tail} {}
+      DummyChild(const std::set<onode_key_t>& keys,
+                 bool is_level_tail, laddr_t laddr)
+        : keys{keys}, _is_level_tail{is_level_tail}, _laddr{laddr} {}
 
       mutable std::random_device rd;
       std::optional<parent_info_t> _parent_info;
       Ref<Node>* p_root_ref = nullptr;
-      std::map<onode_key_t, laddr_t> kvs;
+      std::set<onode_key_t> keys;
       bool _is_level_tail;
+      laddr_t _laddr;
 
      friend class ChildPool;
     };
@@ -445,13 +468,15 @@ int main(int argc, char* argv[])
 
       bool can_split() const { return splitable_children.size(); }
       void populate_split() {
-        auto index = rd() & splitable_children.size();
-        auto child = splitable_children[index];
-        auto new_child = child.populate_split();
-        if (!child.can_split()) {
+        auto index = rd() % splitable_children.size();
+        auto iter = splitable_children.begin();
+        std::advance(iter, index);
+        Ref<DummyChild> child = *iter;
+        auto new_child = child->populate_split();
+        if (!child->can_split()) {
           splitable_children.erase(child);
         }
-        if (new_child.can_split()) {
+        if (new_child->can_split()) {
           splitable_children.insert(new_child);
         }
       }
@@ -462,45 +487,47 @@ int main(int argc, char* argv[])
     };
 
     // TODO: build the combination by parameters
-    std::map<onode_key_t, laddr_t> kvs{
-      {onode_key_t{2, 2, 2, "ns2", "oid2", 2, 2}, 1},
-      {onode_key_t{2, 2, 2, "ns2", "oid2", 3, 3}, 2},
-      {onode_key_t{2, 2, 2, "ns2", "oid2", 4, 4}, 3},
-      {onode_key_t{2, 2, 2, "ns3", "oid3", 2, 2}, 4},
-      {onode_key_t{2, 2, 2, "ns3", "oid3", 3, 3}, 5},
-      {onode_key_t{2, 2, 2, "ns3", "oid3", 4, 4}, 6},
-      {onode_key_t{2, 2, 2, "ns4", "oid4", 2, 2}, 7},
-      {onode_key_t{2, 2, 2, "ns4", "oid4", 3, 3}, 8},
-      {onode_key_t{2, 2, 2, "ns4", "oid4", 4, 4}, 9},
-      {onode_key_t{3, 3, 3, "ns2", "oid2", 2, 2}, 10},
-      {onode_key_t{3, 3, 3, "ns2", "oid2", 3, 3}, 11},
-      {onode_key_t{3, 3, 3, "ns2", "oid2", 4, 4}, 12},
-      {onode_key_t{3, 3, 3, "ns3", "oid3", 2, 2}, 13},
-      {onode_key_t{3, 3, 3, "ns3", "oid3", 3, 3}, 14},
-      {onode_key_t{3, 3, 3, "ns3", "oid3", 4, 4}, 15},
-      {onode_key_t{3, 3, 3, "ns4", "oid4", 2, 2}, 16},
-      {onode_key_t{3, 3, 3, "ns4", "oid4", 3, 3}, 17},
-      {onode_key_t{3, 3, 3, "ns4", "oid4", 4, 4}, 18},
-      {onode_key_t{4, 4, 4, "ns2", "oid2", 2, 2}, 19},
-      {onode_key_t{4, 4, 4, "ns2", "oid2", 3, 3}, 20},
-      {onode_key_t{4, 4, 4, "ns2", "oid2", 4, 4}, 21},
-      {onode_key_t{4, 4, 4, "ns3", "oid3", 2, 2}, 22},
-      {onode_key_t{4, 4, 4, "ns3", "oid3", 3, 3}, 23},
-      {onode_key_t{4, 4, 4, "ns3", "oid3", 4, 4}, 24},
-      {onode_key_t{4, 4, 4, "ns4", "oid4", 2, 2}, 25},
-      {onode_key_t{4, 4, 4, "ns4", "oid4", 3, 3}, 26},
-      {onode_key_t{4, 4, 4, "ns4", "oid4", 4, 4}, 27},
-      {onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9}, 28},
+    std::set<onode_key_t> keys{
+      onode_key_t{2, 2, 2, "ns2", "oid2", 2, 2},
+      onode_key_t{2, 2, 2, "ns2", "oid2", 3, 3},
+      onode_key_t{2, 2, 2, "ns2", "oid2", 4, 4},
+      onode_key_t{2, 2, 2, "ns3", "oid3", 2, 2},
+      onode_key_t{2, 2, 2, "ns3", "oid3", 3, 3},
+      onode_key_t{2, 2, 2, "ns3", "oid3", 4, 4},
+      onode_key_t{2, 2, 2, "ns4", "oid4", 2, 2},
+      onode_key_t{2, 2, 2, "ns4", "oid4", 3, 3},
+      onode_key_t{2, 2, 2, "ns4", "oid4", 4, 4},
+      onode_key_t{3, 3, 3, "ns2", "oid2", 2, 2},
+      onode_key_t{3, 3, 3, "ns2", "oid2", 3, 3},
+      onode_key_t{3, 3, 3, "ns2", "oid2", 4, 4},
+      onode_key_t{3, 3, 3, "ns3", "oid3", 2, 2},
+      onode_key_t{3, 3, 3, "ns3", "oid3", 3, 3},
+      onode_key_t{3, 3, 3, "ns3", "oid3", 4, 4},
+      onode_key_t{3, 3, 3, "ns4", "oid4", 2, 2},
+      onode_key_t{3, 3, 3, "ns4", "oid4", 3, 3},
+      onode_key_t{3, 3, 3, "ns4", "oid4", 4, 4},
+      onode_key_t{4, 4, 4, "ns2", "oid2", 2, 2},
+      onode_key_t{4, 4, 4, "ns2", "oid2", 3, 3},
+      onode_key_t{4, 4, 4, "ns2", "oid2", 4, 4},
+      onode_key_t{4, 4, 4, "ns3", "oid3", 2, 2},
+      onode_key_t{4, 4, 4, "ns3", "oid3", 3, 3},
+      onode_key_t{4, 4, 4, "ns3", "oid3", 4, 4},
+      onode_key_t{4, 4, 4, "ns4", "oid4", 2, 2},
+      onode_key_t{4, 4, 4, "ns4", "oid4", 3, 3},
+      onode_key_t{4, 4, 4, "ns4", "oid4", 4, 4},
+      onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9}
     };
 
     Ref<Node> root_ref;
-    auto initial_child = DummyChild::create(kvs, true);
+    auto initial_child = DummyChild::create(keys, true);
     initial_child->set_root_ref(root_ref);
     InternalNode0::upgrade_root(root_ref);
     ChildPool pool(initial_child);
     while (pool.can_split()) {
       pool.populate_split();
     }
+
+    return 0;
   }
 
   // in-node split

@@ -55,7 +55,7 @@ struct onode_key_t {
 };
 inline std::ostream& operator<<(std::ostream& os, const onode_key_t& key) {
   return os << "key("
-            << (unsigned)key.shard << "," << key.pool << "," << key.crush << ";\" "
+            << (unsigned)key.shard << "," << key.pool << "," << key.crush << "; \""
             << key.nspace << "\",\"" << key.oid << "\"; "
             << key.snap << "," << key.gen << ")";
 }

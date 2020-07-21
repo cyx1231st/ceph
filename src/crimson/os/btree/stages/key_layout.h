@@ -397,6 +397,28 @@ class key_view_t {
   }
 
   bool match(const full_key_t<KeyT::HOBJ>& key) const;
+  bool operator==(const full_key_t<KeyT::VIEW>& o) const {
+    if (has_shard_pool() != o.has_shard_pool())
+      return false;
+    if (has_shard_pool() && *p_shard_pool != *o.p_shard_pool)
+      return false;
+    if (has_crush() != o.has_crush())
+      return false;
+    if (has_crush() && *p_crush != *o.p_crush)
+      return false;
+    if (has_ns_oid() != o.has_ns_oid())
+      return false;
+    if (has_ns_oid() && *p_ns_oid != *o.p_ns_oid)
+      return false;
+    if (has_snap_gen() != o.has_snap_gen())
+      return false;
+    if (has_snap_gen() && *p_snap_gen != *o.p_snap_gen)
+      return false;
+    return true;
+  }
+  bool operator!=(const full_key_t<KeyT::VIEW>& o) const {
+    return !operator==(o);
+  }
 
  private:
   const shard_pool_t* p_shard_pool = nullptr;
