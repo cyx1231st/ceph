@@ -282,6 +282,13 @@ class key_hobj_t {
   ns_oid_view_t::Type _dedup_type = ns_oid_view_t::Type::STR;
   onode_key_t key;
 };
+inline std::ostream& operator<<(std::ostream& os, const key_hobj_t& key) {
+  return os << "key_hobj("
+            << (unsigned)key.shard() << ","
+            << key.pool() << "," << key.crush() << "; \""
+            << key.nspace() << "\",\"" << key.oid() << "\"; "
+            << key.snap() << "," << key.gen() << ")";
+}
 
 class key_view_t {
  public:
@@ -426,6 +433,30 @@ class key_view_t {
   std::optional<ns_oid_view_t> p_ns_oid;
   const snap_gen_t* p_snap_gen = nullptr;
 };
+inline std::ostream& operator<<(std::ostream& os, const key_view_t& key) {
+  os << "key_view(";
+  if (key.has_shard_pool()) {
+    os << (unsigned)key.shard() << "," << key.pool() << ",";
+  } else {
+    os << "X,X,";
+  }
+  if (key.has_crush()) {
+    os << key.crush() << "; ";
+  } else {
+    os << "X; ";
+  }
+  if (key.has_ns_oid()) {
+    os << key.nspace() << "," << key.oid() << "; ";
+  } else {
+    os << "X,X; ";
+  }
+  if (key.has_snap_gen()) {
+    os << key.snap() << "," << key.gen() << ")";
+  } else {
+    os << "X,X)";
+  }
+  return os;
+}
 
 template <KeyT Type>
 MatchKindCMP compare_to(const full_key_t<Type>& key, const shard_pool_t& target) {

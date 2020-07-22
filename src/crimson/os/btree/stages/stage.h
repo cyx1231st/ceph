@@ -1033,11 +1033,15 @@ struct staged {
   template <typename T = std::tuple<match_stage_t, node_offset_t>>
   static std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, T> evaluate_insert(
       const container_t& container, const full_key_t<KeyT::VIEW>& key,
-      const value_t& value, position_t& position) {
+      const value_t& value, position_t& position, bool is_current) {
     auto iter = iterator_t(container);
     auto& index = position.index;
+    if (!is_current) {
+      index = INDEX_END;
+    }
     if (index == INDEX_END) {
       iter.seek_last();
+      index = iter.index();
       // evaluate the previous index
     } else {
       // evaluate the current index
@@ -1050,10 +1054,10 @@ struct staged {
         } else {
           // insert into the current index
           auto nxt_container = iter.get_nxt_container();
-          return NXT_STAGE_T::evaluate_insert(nxt_container, key, value, position.nxt);
+          return NXT_STAGE_T::evaluate_insert(nxt_container, key, value, position.nxt, true);
         }
       } else {
-        assert(match == MatchKindCMP::NE);
+        assert(is_current && match == MatchKindCMP::NE);
         if (index == 0) {
           // already the first index, so insert at the current index
           return {STAGE, insert_size<KeyT::VIEW>(key, value)};
@@ -1079,7 +1083,7 @@ struct staged {
       } else {
         // insert into the previous index
         auto nxt_container = iter.get_nxt_container();
-        return NXT_STAGE_T::evaluate_insert(nxt_container, key, value, position.nxt);
+        return NXT_STAGE_T::evaluate_insert(nxt_container, key, value, position.nxt, false);
       }
     }
   }

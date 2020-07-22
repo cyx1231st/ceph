@@ -110,9 +110,13 @@ class InternalNodeT : public InternalNode,
   void apply_child_split(const full_key_t<KeyT::VIEW>&, Ref<Node>, Ref<Node>) override final;
 
   void track_child(const search_position_t& pos, Ref<Node> child) {
+    assert(tracked_child_nodes.find(pos) == tracked_child_nodes.end());
     tracked_child_nodes[pos] = child;
     child->as_child({pos, this});
   }
+
+  void track_split(const search_position_t& pos, const search_position_t& insert_pos,
+                   match_stage_t insert_stage, Ref<Node> left_child, Ref<Node> right_child);
 
   static Ref<ConcreteType> allocate(level_t level, bool level_tail) {
     assert(level != 0u);

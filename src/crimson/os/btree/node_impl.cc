@@ -193,58 +193,97 @@ Node::search_result_t I_NODE_T::do_lower_bound(
 template <typename FieldType, typename ConcreteType>
 void I_NODE_T::apply_child_split(
     // TODO: cross-node string dedup
-    const full_key_t<KeyT::VIEW>& l_key, Ref<Node> l_node, Ref<Node> r_node) {
-  auto [r_pos, ptr] = l_node->parent_info();
+    const full_key_t<KeyT::VIEW>& left_key,
+    Ref<Node> left_child, Ref<Node> right_child) {
+  auto [pos, ptr] = left_child->parent_info();
   assert(ptr.get() == this);
 #ifndef NDEBUG
-  if (r_pos.is_end()) {
+  if (pos.is_end()) {
     assert(this->is_level_tail());
-    assert(r_node->is_level_tail());
+    assert(right_child->is_level_tail());
   } else {
-    assert(!r_node->is_level_tail());
-    assert(get_key_view(r_pos) == r_node->get_largest_key_view());
+    assert(!right_child->is_level_tail());
+    assert(get_key_view(pos) == right_child->get_largest_key_view());
   }
-  assert(l_key == l_node->get_largest_key_view());
+  assert(left_key == left_child->get_largest_key_view());
 #endif
 
-  // update r_pos => l_addr to r_addr
-  const laddr_t* p_rvalue = this->get_value_ptr(r_pos);
-  auto left_laddr = l_node->laddr();
-  auto right_laddr = r_node->laddr();
+  // update pos => l_addr to r_addr
+  const laddr_t* p_rvalue = this->get_value_ptr(pos);
+  auto left_laddr = left_child->laddr();
+  auto right_laddr = right_child->laddr();
   assert(*p_rvalue == left_laddr);
   this->extent().copy_in_mem(right_laddr, const_cast<laddr_t*>(p_rvalue));
 
-  // track the right node
-  assert(tracked_child_nodes[r_pos] == l_node);
-  track_child(r_pos, r_node);
-
   // evaluate insertion
-  typename STAGE_T::position_t insert_pos = cast_down<STAGE_T::STAGE>(r_pos);
+  typename STAGE_T::position_t insert_pos = cast_down<STAGE_T::STAGE>(pos);
   match_stage_t insert_stage;
   node_offset_t insert_size;
   auto stage = this->stage();
   if (unlikely(!stage.keys())) {
     assert(insert_pos.is_end());
     insert_stage = STAGE_T::STAGE;
-    insert_size = STAGE_T::template insert_size<KeyT::VIEW>(l_key, left_laddr);
+    insert_size = STAGE_T::template insert_size<KeyT::VIEW>(left_key, left_laddr);
   } else {
     std::tie(insert_stage, insert_size) =
-      STAGE_T::evaluate_insert(stage, l_key, left_laddr, insert_pos);
+      STAGE_T::evaluate_insert(stage, left_key, left_laddr, insert_pos, true);
   }
 
   // TODO: common part
   auto free_size = stage.free_size();
   if (free_size >= insert_size) {
     auto p_value = STAGE_T::template proceed_insert<KeyT::VIEW, false>(
-        this->extent(), stage, l_key, left_laddr,
+        this->extent(), stage, left_key, left_laddr,
         insert_pos, insert_stage, insert_size);
     assert(stage.free_size() == free_size - insert_size);
     auto insert_pos_normalized = normalize(std::move(insert_pos));
-    track_child(insert_pos_normalized, l_node);
+    track_split(pos, insert_pos_normalized, insert_stage, left_child, right_child);
     return;
   }
 
-  // TODO track the left node
+  assert(false && "not implemented");
+}
+
+template <typename FieldType, typename ConcreteType>
+void I_NODE_T::track_split(
+    const search_position_t& pos, const search_position_t& insert_pos,
+    match_stage_t insert_stage, Ref<Node> left_child, Ref<Node> right_child) {
+  assert(insert_pos <= pos);
+  assert(tracked_child_nodes[pos] == left_child);
+  tracked_child_nodes.erase(pos);
+  track_child(pos, right_child);
+
+  // update tracks
+  auto pos_upper_bound = insert_pos;
+  pos_upper_bound.index_by_stage(insert_stage) = INDEX_END;
+  auto first = tracked_child_nodes.lower_bound(insert_pos);
+  auto last = tracked_child_nodes.lower_bound(pos_upper_bound);
+  std::vector<Ref<Node>> nodes;
+  std::for_each(first, last, [&nodes](auto& kv) {
+    nodes.push_back(kv.second);
+  });
+  tracked_child_nodes.erase(first, last);
+  for (auto& node : nodes) {
+    auto _pos = node->parent_info().position;
+    ++_pos.index_by_stage(insert_stage);
+    assert(!node->is_level_tail());
+    assert(get_key_view(_pos) == node->get_largest_key_view());
+    track_child(_pos, node);
+  }
+
+  track_child(insert_pos, left_child);
+#ifndef NDEBUG
+  auto iter = tracked_child_nodes.find(insert_pos);
+  ++iter;
+  assert(iter->second == right_child);
+  assert(get_key_view(insert_pos) == left_child->get_largest_key_view());
+  if (!right_child->is_level_tail()) {
+    assert(!iter->first.is_end());
+    assert(get_key_view(iter->first) == right_child->get_largest_key_view());
+  } else {
+    assert(iter->first.is_end());
+  }
+#endif
 }
 
 template <typename FieldType, typename ConcreteType>

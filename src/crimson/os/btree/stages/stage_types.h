@@ -103,14 +103,30 @@ struct staged_position_t {
   using me_t = staged_position_t<STAGE>;
   using nxt_t = staged_position_t<STAGE - 1>;
   bool is_end() const { return index == INDEX_END; }
-  bool operator==(const me_t& x) const {
-    return index == x.index && nxt == x.nxt;
+  size_t& index_by_stage(match_stage_t stage) {
+    assert(stage <= STAGE);
+    if (STAGE == stage) {
+      return index;
+    } else {
+      return nxt.index_by_stage(stage);
+    }
   }
-  bool operator!=(const me_t& x) const { return !(*this == x); }
-  bool operator<(const me_t& x) const {
-    return std::make_pair(index, nxt) <
-           std::make_pair(x.index, x.nxt);
+
+  int cmp(const me_t& o) const {
+    if (index > o.index) {
+      return 1;
+    } else if (index < o.index) {
+      return -1;
+    } else {
+      return nxt.cmp(o.nxt);
+    }
   }
+  bool operator>(const me_t& o) const { return cmp(o) > 0; }
+  bool operator>=(const me_t& o) const { return cmp(o) >= 0; }
+  bool operator<(const me_t& o) const { return cmp(o) < 0; }
+  bool operator<=(const me_t& o) const { return cmp(o) <= 0; }
+  bool operator==(const me_t& o) const { return cmp(o) == 0; }
+  bool operator!=(const me_t& o) const { return cmp(o) != 0; }
 
   static me_t begin() { return {0u, nxt_t::begin()}; }
   static me_t end() {
@@ -134,9 +150,26 @@ template <>
 struct staged_position_t<STAGE_BOTTOM> {
   using me_t = staged_position_t<STAGE_BOTTOM>;
   bool is_end() const { return index == INDEX_END; }
-  bool operator==(const me_t& x) const { return index == x.index; }
-  bool operator!=(const me_t& x) const { return !(*this == x); }
-  bool operator<(const me_t& x) const { return index < x.index; }
+  size_t& index_by_stage(match_stage_t stage) {
+    assert(stage == STAGE_BOTTOM);
+    return index;
+  }
+
+  int cmp(const staged_position_t<STAGE_BOTTOM>& o) const {
+    if (index > o.index) {
+      return 1;
+    } else if (index < o.index) {
+      return -1;
+    } else {
+      return 0;
+    }
+  }
+  bool operator>(const me_t& o) const { return cmp(o) > 0; }
+  bool operator>=(const me_t& o) const { return cmp(o) >= 0; }
+  bool operator<(const me_t& o) const { return cmp(o) < 0; }
+  bool operator<=(const me_t& o) const { return cmp(o) <= 0; }
+  bool operator==(const me_t& o) const { return cmp(o) == 0; }
+  bool operator!=(const me_t& o) const { return cmp(o) != 0; }
 
   static me_t begin() { return {0u}; }
   static me_t end() { return {INDEX_END}; }
