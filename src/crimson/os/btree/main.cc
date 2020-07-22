@@ -72,6 +72,34 @@ class Onodes {
   std::vector<onode_t*> tracked_onodes;
 };
 
+static std::set<onode_key_t> build_key_set(
+    std::pair<unsigned, unsigned> range_2,
+    std::pair<unsigned, unsigned> range_1,
+    std::pair<unsigned, unsigned> range_0,
+    std::string padding = "") {
+  std::set<onode_key_t> ret;
+  onode_key_t key;
+  for (unsigned i = range_2.first; i < range_2.second; ++i) {
+    for (unsigned j = range_1.first; j < range_1.second; ++j) {
+      for (unsigned k = range_0.first; k < range_0.second; ++k) {
+        key.shard = i;
+        key.pool = i;
+        key.crush = i;
+        std::ostringstream os_ns;
+        os_ns << "ns" << padding << j;
+        key.nspace = os_ns.str();
+        std::ostringstream os_oid;
+        os_oid << "oid" << padding << j;
+        key.oid = os_oid.str();
+        key.snap = k;
+        key.gen = k;
+        ret.insert(key);
+      }
+    }
+  }
+  return ret;
+}
+
 // key view will be valid until the next build
 static key_view_t build_key_view(const onode_key_t& hobj) {
   key_hobj_t key_hobj(hobj);
@@ -380,30 +408,13 @@ int main(int argc, char* argv[])
     std::cout << "---------------------------------------------\n"
               << "before leaf node split:"
               << std::endl << std::endl;
-    // insert key, value randomly until a perfect 3-ary tree is formed
-    onode_key_t key;
-    for (unsigned i = 2; i <= 4; ++i) {
-      for (unsigned j = 2; j <= 4; ++j) {
-        for (unsigned k = 2; k <= 4; ++k) {
-          key.shard = i;
-          key.pool = i;
-          key.crush = i;
-          std::ostringstream os_ns;
-          os_ns << "ns" << j;
-          key.nspace = os_ns.str();
-          std::ostringstream os_oid;
-          os_oid << "oid" << j;
-          key.oid = os_oid.str();
-          key.snap = k;
-          key.gen = k;
-
-          auto [p_cursor, success] = root->insert(key, onodes.pick_largest());
-          assert(success == true);
-          assert(p_cursor->get_leaf_node() == root);
-          assert(p_cursor->get_p_value());
-          Onodes::validate(*p_cursor->get_p_value());
-        }
-      }
+    auto keys = build_key_set({2, 5}, {2, 5}, {2, 5});
+    for (auto& key : keys) {
+      auto [p_cursor, success] = root->insert(key, onodes.pick_largest());
+      assert(success == true);
+      assert(p_cursor->get_leaf_node() == root);
+      assert(p_cursor->get_p_value());
+      Onodes::validate(*p_cursor->get_p_value());
     }
     root->dump(std::cout) << std::endl << std::endl;
 
@@ -522,157 +533,146 @@ int main(int argc, char* argv[])
     // TODO: test split at {0, 0, 0}
   }
 
+  class DummyChild final : public Node {
+   public:
+    virtual ~DummyChild() = default;
+
+    void set_root_ref(Ref<Node>& root_ref) {
+      root_ref = this;
+      p_root_ref = &root_ref;
+    }
+
+    bool can_split() const { return keys.size() > 1; }
+
+    Ref<DummyChild> populate_split() {
+      assert(can_split());
+      size_t index;
+      if (keys.size() == 2) {
+        index = 1;
+      } else {
+        index = rd() % (keys.size() - 2) + 1;
+      }
+      auto iter = keys.begin();
+      std::advance(iter, index);
+
+      std::set<onode_key_t> left_keys(keys.begin(), iter);
+      std::set<onode_key_t> right_keys(iter, keys.end());
+
+      keys = left_keys;
+      bool right_is_tail = _is_level_tail;
+      _is_level_tail = false;
+      auto right_child = DummyChild::create(right_keys, right_is_tail);
+
+      parent_info().ptr->apply_child_split(get_largest_key_view(), this, right_child);
+
+      return right_child;
+    }
+
+    static Ref<DummyChild> create(
+        const std::set<onode_key_t>& keys,
+        bool is_level_tail) {
+      static laddr_t seed = 0;
+      return new DummyChild(keys, is_level_tail, seed++);
+    }
+
+   protected:
+    void as_child(const parent_info_t& info) override {
+      assert(!p_root_ref);
+      _parent_info = info;
+    }
+    void as_root(Ref<Node>& ref) override { assert(false); }
+    void handover_root(Ref<InternalNode> root) override {
+      assert(p_root_ref);
+      root->as_root(*p_root_ref);
+      p_root_ref = nullptr;
+    }
+    bool is_root() const override { return p_root_ref != nullptr; }
+    const parent_info_t& parent_info() const override { return *_parent_info; }
+    bool is_level_tail() const override { return _is_level_tail; }
+    field_type_t field_type() const override { return field_type_t::N0; }
+    laddr_t laddr() const override { return _laddr; }
+    level_t level() const override { return 0u; }
+    key_view_t get_key_view(const search_position_t&) const override { assert(false); }
+    key_view_t get_largest_key_view() const override {
+      return build_key_view(*keys.crbegin());
+    }
+    std::ostream& dump(std::ostream&) const override { assert(false); }
+    std::ostream& dump_brief(std::ostream&) const override { assert(false); }
+    Ref<Node> test_clone(Ref<Node>&) const override { assert(false); }
+    void init(Ref<LogicalCachedExtent>, bool) override { assert(false); }
+    Node::search_result_t do_lower_bound(
+        const key_hobj_t&, MatchHistory&) override { assert(false); }
+    Ref<tree_cursor_t> lookup_smallest() override { assert(false); }
+    Ref<tree_cursor_t> lookup_largest() override { assert(false); }
+
+   private:
+    DummyChild(const std::set<onode_key_t>& keys,
+               bool is_level_tail, laddr_t laddr)
+      : keys{keys}, _is_level_tail{is_level_tail}, _laddr{laddr} {}
+
+    mutable std::random_device rd;
+    std::optional<parent_info_t> _parent_info;
+    Ref<Node>* p_root_ref = nullptr;
+    std::set<onode_key_t> keys;
+    bool _is_level_tail;
+    laddr_t _laddr;
+
+   friend class ChildPool;
+  };
+
+  class ChildPool {
+   public:
+    ChildPool(Ref<DummyChild> initial) {
+      assert(initial->can_split());
+      splitable_children.insert(initial);
+    }
+
+    bool can_split() const { return splitable_children.size(); }
+    void populate_split() {
+      auto index = rd() % splitable_children.size();
+      auto iter = splitable_children.begin();
+      std::advance(iter, index);
+      Ref<DummyChild> child = *iter;
+      auto new_child = child->populate_split();
+      if (!child->can_split()) {
+        splitable_children.erase(child);
+      }
+      if (new_child->can_split()) {
+        splitable_children.insert(new_child);
+      }
+    }
+
+   private:
+    mutable std::random_device rd;
+    std::set<Ref<DummyChild>> splitable_children;
+  };
+
   // internal node insert
   {
     std::cout << "---------------------------------------------\n"
               << "randomized internal node insert:"
               << std::endl << std::endl;
-    class DummyChild final : public Node {
-     public:
-      virtual ~DummyChild() = default;
 
-      void set_root_ref(Ref<Node>& root_ref) {
-        root_ref = this;
-        p_root_ref = &root_ref;
-      }
+    auto keys = build_key_set({2, 5}, {2, 5}, {2, 5});
+    keys.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
+    Ref<Node> root_ref;
+    auto initial_child = DummyChild::create(keys, true);
+    initial_child->set_root_ref(root_ref);
+    InternalNode0::upgrade_root(root_ref);
+    ChildPool pool(initial_child);
+    while (pool.can_split()) {
+      pool.populate_split();
+    }
+    root_ref->dump(std::cout) << std::endl << std::endl;
+  }
 
-      bool can_split() const { return keys.size() > 1; }
-
-      Ref<DummyChild> populate_split() {
-        assert(can_split());
-        size_t index;
-        if (keys.size() == 2) {
-          index = 1;
-        } else {
-          index = rd() % (keys.size() - 2) + 1;
-        }
-        auto iter = keys.begin();
-        std::advance(iter, index);
-
-        std::set<onode_key_t> left_keys(keys.begin(), iter);
-        std::set<onode_key_t> right_keys(iter, keys.end());
-
-        keys = left_keys;
-        bool right_is_tail = _is_level_tail;
-        _is_level_tail = false;
-        auto right_child = DummyChild::create(right_keys, right_is_tail);
-
-        parent_info().ptr->apply_child_split(get_largest_key_view(), this, right_child);
-
-        return right_child;
-      }
-
-      static Ref<DummyChild> create(
-          const std::set<onode_key_t>& keys,
-          bool is_level_tail) {
-        static laddr_t seed = 0;
-        return new DummyChild(keys, is_level_tail, seed++);
-      }
-
-     protected:
-      void as_child(const parent_info_t& info) override {
-        assert(!p_root_ref);
-        _parent_info = info;
-      }
-      void as_root(Ref<Node>& ref) override { assert(false); }
-      void handover_root(Ref<InternalNode> root) override {
-        assert(p_root_ref);
-        root->as_root(*p_root_ref);
-        p_root_ref = nullptr;
-      }
-      bool is_root() const override { return p_root_ref != nullptr; }
-      const parent_info_t& parent_info() const override { return *_parent_info; }
-      bool is_level_tail() const override { return _is_level_tail; }
-      field_type_t field_type() const override { return field_type_t::N0; }
-      laddr_t laddr() const override { return _laddr; }
-      level_t level() const override { return 0u; }
-      key_view_t get_key_view(const search_position_t&) const override { assert(false); }
-      key_view_t get_largest_key_view() const override {
-        return build_key_view(*keys.crbegin());
-      }
-      std::ostream& dump(std::ostream&) const override { assert(false); }
-      std::ostream& dump_brief(std::ostream&) const override { assert(false); }
-      Ref<Node> test_clone(Ref<Node>&) const override { assert(false); }
-      void init(Ref<LogicalCachedExtent>, bool) override { assert(false); }
-      Node::search_result_t do_lower_bound(
-          const key_hobj_t&, MatchHistory&) override { assert(false); }
-      Ref<tree_cursor_t> lookup_smallest() override { assert(false); }
-      Ref<tree_cursor_t> lookup_largest() override { assert(false); }
-
-     private:
-      DummyChild(const std::set<onode_key_t>& keys,
-                 bool is_level_tail, laddr_t laddr)
-        : keys{keys}, _is_level_tail{is_level_tail}, _laddr{laddr} {}
-
-      mutable std::random_device rd;
-      std::optional<parent_info_t> _parent_info;
-      Ref<Node>* p_root_ref = nullptr;
-      std::set<onode_key_t> keys;
-      bool _is_level_tail;
-      laddr_t _laddr;
-
-     friend class ChildPool;
-    };
-
-    class ChildPool {
-     public:
-      ChildPool(Ref<DummyChild> initial) {
-        assert(initial->can_split());
-        splitable_children.insert(initial);
-      }
-
-      bool can_split() const { return splitable_children.size(); }
-      void populate_split() {
-        auto index = rd() % splitable_children.size();
-        auto iter = splitable_children.begin();
-        std::advance(iter, index);
-        Ref<DummyChild> child = *iter;
-        auto new_child = child->populate_split();
-        if (!child->can_split()) {
-          splitable_children.erase(child);
-        }
-        if (new_child->can_split()) {
-          splitable_children.insert(new_child);
-        }
-      }
-
-     private:
-      mutable std::random_device rd;
-      std::set<Ref<DummyChild>> splitable_children;
-    };
-
-    // TODO: build the combination by parameters
-    std::set<onode_key_t> keys{
-      onode_key_t{2, 2, 2, "ns2", "oid2", 2, 2},
-      onode_key_t{2, 2, 2, "ns2", "oid2", 3, 3},
-      onode_key_t{2, 2, 2, "ns2", "oid2", 4, 4},
-      onode_key_t{2, 2, 2, "ns3", "oid3", 2, 2},
-      onode_key_t{2, 2, 2, "ns3", "oid3", 3, 3},
-      onode_key_t{2, 2, 2, "ns3", "oid3", 4, 4},
-      onode_key_t{2, 2, 2, "ns4", "oid4", 2, 2},
-      onode_key_t{2, 2, 2, "ns4", "oid4", 3, 3},
-      onode_key_t{2, 2, 2, "ns4", "oid4", 4, 4},
-      onode_key_t{3, 3, 3, "ns2", "oid2", 2, 2},
-      onode_key_t{3, 3, 3, "ns2", "oid2", 3, 3},
-      onode_key_t{3, 3, 3, "ns2", "oid2", 4, 4},
-      onode_key_t{3, 3, 3, "ns3", "oid3", 2, 2},
-      onode_key_t{3, 3, 3, "ns3", "oid3", 3, 3},
-      onode_key_t{3, 3, 3, "ns3", "oid3", 4, 4},
-      onode_key_t{3, 3, 3, "ns4", "oid4", 2, 2},
-      onode_key_t{3, 3, 3, "ns4", "oid4", 3, 3},
-      onode_key_t{3, 3, 3, "ns4", "oid4", 4, 4},
-      onode_key_t{4, 4, 4, "ns2", "oid2", 2, 2},
-      onode_key_t{4, 4, 4, "ns2", "oid2", 3, 3},
-      onode_key_t{4, 4, 4, "ns2", "oid2", 4, 4},
-      onode_key_t{4, 4, 4, "ns3", "oid3", 2, 2},
-      onode_key_t{4, 4, 4, "ns3", "oid3", 3, 3},
-      onode_key_t{4, 4, 4, "ns3", "oid3", 4, 4},
-      onode_key_t{4, 4, 4, "ns4", "oid4", 2, 2},
-      onode_key_t{4, 4, 4, "ns4", "oid4", 3, 3},
-      onode_key_t{4, 4, 4, "ns4", "oid4", 4, 4},
-      onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9}
-    };
-
+  // internal node split
+  {
+    std::cout << "---------------------------------------------\n"
+              << "before internal node insert:"
+              << std::endl << std::endl;
+    auto keys = build_key_set({2, 5}, {2, 5}, {2, 5}, std::string(181, '_'));
+    keys.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
     Ref<Node> root_ref;
     auto initial_child = DummyChild::create(keys, true);
     initial_child->set_root_ref(root_ref);
