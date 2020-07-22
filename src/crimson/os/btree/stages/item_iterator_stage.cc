@@ -18,34 +18,30 @@ template <KeyT KT>
 memory_range_t ITER_T::insert_prefix(
     LogicalCachedExtent& dst, const ITER_T& iter, const full_key_t<KT>& key,
     bool is_end, node_offset_t size, const char* p_left_bound) {
-  if constexpr (NODE_TYPE == node_type_t::LEAF) {
-    // 1. insert range
-    char* p_insert;
-    if (is_end) {
-      assert(!iter.has_next());
-      p_insert = const_cast<char*>(iter.p_start());
-    } else {
-      p_insert = const_cast<char*>(iter.p_end());
-    }
-    char* p_insert_front = p_insert - size;
-
-    // 2. shift memory
-    const char* p_shift_start = p_left_bound;
-    const char* p_shift_end = p_insert;
-    dst.shift_mem(p_shift_start,
-                  p_shift_end - p_shift_start,
-                  -(int)size);
-
-    // 3. append header
-    p_insert -= sizeof(node_offset_t);
-    node_offset_t back_offset = (p_insert - p_insert_front);
-    dst.copy_in_mem(back_offset, p_insert);
-    ns_oid_view_t::append<KT>(dst, key, p_insert);
-
-    return {p_insert_front, p_insert};
+  // 1. insert range
+  char* p_insert;
+  if (is_end) {
+    assert(!iter.has_next());
+    p_insert = const_cast<char*>(iter.p_start());
   } else {
-    assert(false && "not implemented");
+    p_insert = const_cast<char*>(iter.p_end());
   }
+  char* p_insert_front = p_insert - size;
+
+  // 2. shift memory
+  const char* p_shift_start = p_left_bound;
+  const char* p_shift_end = p_insert;
+  dst.shift_mem(p_shift_start,
+                p_shift_end - p_shift_start,
+                -(int)size);
+
+  // 3. append header
+  p_insert -= sizeof(node_offset_t);
+  node_offset_t back_offset = (p_insert - p_insert_front);
+  dst.copy_in_mem(back_offset, p_insert);
+  ns_oid_view_t::append<KT>(dst, key, p_insert);
+
+  return {p_insert_front, p_insert};
 }
 #define IP_TEMPLATE(NT, KT)                                              \
   template memory_range_t ITER_INST(NT)::insert_prefix<KT>(              \

@@ -12,7 +12,17 @@ const laddr_t* internal_sub_items_t::insert_at(
     LogicalCachedExtent& dst, const internal_sub_items_t& sub_items,
     const full_key_t<KT>& key, const laddr_t& value,
     size_t index, node_offset_t size, const char* p_left_bound) {
-  assert(false && "not implemented");
+  assert(index <= sub_items.keys());
+  assert(size == estimate_insert<KT>(key, value));
+  const char* p_shift_start = p_left_bound;
+  const char* p_shift_end = reinterpret_cast<const char*>(
+      sub_items.p_first_item + 1 - index);
+  dst.shift_mem(p_shift_start, p_shift_end - p_shift_start, -(int)size);
+
+  auto p_insert = const_cast<char*>(p_shift_end) - size;
+  auto item = internal_sub_item_t{snap_gen_t::from_key<KT>(key), value};
+  dst.copy_in_mem(item, p_insert);
+  return &reinterpret_cast<internal_sub_item_t*>(p_insert)->value;
 }
 template const laddr_t* internal_sub_items_t::insert_at<KeyT::VIEW>(
     LogicalCachedExtent&, const internal_sub_items_t&, const full_key_t<KeyT::VIEW>&,
@@ -42,7 +52,7 @@ void internal_sub_items_t::Appender<KT>::append(
   p_append -= sizeof(internal_sub_item_t);
   auto item = internal_sub_item_t{snap_gen_t::from_key<KT>(key), value};
   p_dst->copy_in_mem(item, p_append);
-  p_value = reinterpret_cast<laddr_t*>(p_append + sizeof(snap_gen_t));
+  p_value = &reinterpret_cast<internal_sub_item_t*>(p_append)->value;
 }
 
 template <KeyT KT>
@@ -50,6 +60,8 @@ const onode_t* leaf_sub_items_t::insert_at(
     LogicalCachedExtent& dst, const leaf_sub_items_t& sub_items,
     const full_key_t<KT>& key, const onode_t& value,
     size_t index, node_offset_t size, const char* p_left_bound) {
+  assert(index <= sub_items.keys());
+  assert(size == estimate_insert<KT>(key, value));
   // a. [... item(index)] << size
   const char* p_shift_start = p_left_bound;
   const char* p_shift_end = sub_items.get_item_end(index);
