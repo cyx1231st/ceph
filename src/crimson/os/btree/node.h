@@ -102,6 +102,7 @@ class InternalNode : virtual public Node {
  public:
   virtual ~InternalNode() = default;
 
+  virtual Ref<Node> get_tracked_child(const search_position_t& pos) = 0;
   // TODO: async
   virtual void apply_child_split(const key_view_t&, Ref<Node>, Ref<Node>) = 0;
 };

@@ -252,6 +252,7 @@ struct staged {
   static void _left_or_right(size_t& s_index, size_t i_index,
                              std::optional<bool>& i_to_left) {
     assert(!i_to_left.has_value());
+    assert(s_index != INDEX_END);
     if constexpr (is_exclusive) {
       if (s_index <= i_index) {
         // ...[s_index-1] |!| (i_index) [s_index]...
@@ -412,10 +413,13 @@ struct staged {
                                std::optional<bool>& i_to_left) {
       assert(!is_end());
       assert(index() == 0);
-      assert(i_index < container.keys() || i_index == INDEX_END);
-      if constexpr (!is_exclusive) {
-        if (i_index == INDEX_END) {
+      assert(i_index <= container.keys() || i_index == INDEX_END);
+      // replace the unknown INDEX_END value
+      if (i_index == INDEX_END) {
+        if constexpr (!is_exclusive) {
           i_index = container.keys() - 1;
+        } else {
+          i_index = container.keys();
         }
       }
       auto start_size_1 = start_size + extra_size;
@@ -677,9 +681,11 @@ struct staged {
       do {
         if constexpr (!is_exclusive) {
           if (is_last()) {
+            assert(s_index == index());
             if (i_index == INDEX_END) {
               i_index = index();
             }
+            assert(i_index <= index());
             break;
           }
         }
@@ -706,9 +712,13 @@ struct staged {
 
         if constexpr (is_exclusive) {
           if (is_last()) {
+            assert(s_index == index());
             set_end();
-            s_index = INDEX_END;
-            assert(i_index == INDEX_END);
+            s_index = index();
+            if (i_index == INDEX_END) {
+              i_index = index();
+            }
+            assert(i_index == index());
             break;
           } else {
             ++(*this);
@@ -722,12 +732,7 @@ struct staged {
       assert(current_size <= target_size);
 
       _left_or_right<is_exclusive>(s_index, i_index, i_to_left);
-
-#ifndef NDEBUG
-      if (!is_end()) {
-        assert(s_index == index());
-      }
-#endif
+      assert(s_index == index());
       return current_size;
     }
 
@@ -1494,9 +1499,7 @@ struct staged {
           current_size, extra_size, target_size,
           i_index, i_size, i_to_left);
       assert(i_to_left.has_value());
-      if (*i_to_left == false &&
-          ((iter.is_end() && i_index == INDEX_END) ||
-           iter.index() == i_index)) {
+      if (*i_to_left == false && iter.index() == i_index) {
         // ...[s_index-1] |!| (i_index) [s_index]...
         return;
       }
@@ -1527,7 +1530,7 @@ struct staged {
           return;
         }
       } else {
-        assert(false);
+        assert(false && "impossible path");
       }
     }
     if constexpr (!IS_BOTTOM) {

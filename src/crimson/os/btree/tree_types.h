@@ -54,10 +54,23 @@ struct onode_key_t {
   bool operator!=(const onode_key_t& o) const { return cmp(o) != 0; }
 };
 inline std::ostream& operator<<(std::ostream& os, const onode_key_t& key) {
-  return os << "key("
-            << (unsigned)key.shard << "," << key.pool << "," << key.crush << "; \""
-            << key.nspace << "\",\"" << key.oid << "\"; "
-            << key.snap << "," << key.gen << ")";
+  os << "key(" << (unsigned)key.shard << "," << key.pool << "," << key.crush << "; ";
+  if (key.nspace.size() <= 12) {
+    os << "\"" << key.nspace << "\",";
+  } else {
+    os << "\"" << key.nspace.substr(0, 4) << ".."
+       << key.nspace.substr(key.nspace.size() - 2, 2)
+       << "/" << key.nspace.size() << "B\",";
+  }
+  if (key.oid.size() <= 12) {
+    os << "\"" << key.oid << "\"; ";
+  } else {
+    os << "\"" << key.oid.substr(0, 4) << ".."
+       << key.oid.substr(key.oid.size() - 2, 2)
+       << "/" << key.oid.size() << "B\"; ";
+  }
+  os << key.snap << "," << key.gen << ")";
+  return os;
 }
 
 }

@@ -71,7 +71,7 @@ node_range_t fields_free_range_before(
     (index == 0 ? FieldType::SIZE
                    : node.get_item_start_offset(index - 1));
   if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-    if (is_level_tail) {
+    if (is_level_tail && index == node.num_keys) {
       offset_end -= sizeof(laddr_t);
     }
   }
@@ -288,8 +288,11 @@ struct _internal_fields_3_t {
   free_size_before(bool is_level_tail, size_t index) const {
     assert(index <= num_keys);
     auto allowed_num_keys = is_level_tail ? MAX_NUM_KEYS - 1 : MAX_NUM_KEYS;
-    assert(index <= allowed_num_keys);
-    auto free = (allowed_num_keys - index) * (sizeof(snap_gen_t) + sizeof(laddr_t));
+    assert(num_keys <= allowed_num_keys);
+    auto free = (MAX_NUM_KEYS - index) * (sizeof(snap_gen_t) + sizeof(laddr_t));
+    if (is_level_tail && index == num_keys) {
+      free -= (sizeof(snap_gen_t) + sizeof(laddr_t));
+    }
     assert(free < SIZE);
     return free;
   }

@@ -96,16 +96,6 @@ std::ostream& NODE_T::dump_brief(std::ostream& os) const {
   return os;
 }
 
-#ifndef NDEBUG
-template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-Ref<Node> NODE_T::test_clone(Ref<Node>& dummy_root) const {
-  auto ret = ConcreteType::_allocate(level(), is_level_tail());
-  ret->as_root(dummy_root);
-  ret->extent().copy_in(_extent->get_ptr<void>(0u), 0u, node_stage_t::EXTENT_SIZE);
-  return ret;
-}
-#endif
-
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 typename NODE_T::node_stage_t NODE_T::stage() const {
   return node_stage_t(_extent->get_ptr<FieldType>(0u), &_is_level_tail);
@@ -113,6 +103,11 @@ typename NODE_T::node_stage_t NODE_T::stage() const {
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 LogicalCachedExtent& NODE_T::extent() {
+  return *_extent;
+}
+
+template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
+const LogicalCachedExtent& NODE_T::extent() const {
   return *_extent;
 }
 
@@ -241,8 +236,45 @@ void I_NODE_T::apply_child_split(
     return;
   }
 
-  assert(false && "not implemented");
+  std::cout << "  try insert at: " << insert_pos
+            << ", i_stage=" << (int)insert_stage << ", size=" << insert_size
+            << std::endl;
+
+  size_t empty_size = stage.size_before(0);
+  size_t available_size = stage.total_size() - empty_size;
+  size_t target_split_size = empty_size + (available_size + insert_size) / 2;
+  // TODO adjust NODE_BLOCK_SIZE according to this requirement
+  assert(insert_size < available_size / 2);
+  typename STAGE_T::StagedIterator split_at;
+  bool insert_left = STAGE_T::locate_split(
+      stage, target_split_size, insert_pos, insert_stage, insert_size, split_at);
+
+  std::cout << "  split at: " << split_at << ", is_left=" << insert_left
+            << ", now insert at: " << insert_pos
+            << std::endl;
 }
+
+#ifndef NDEBUG
+template <typename FieldType, typename ConcreteType>
+Ref<Node> I_NODE_T::test_clone(Ref<Node>& parent) const {
+  Ref<ConcreteType> ret = ConcreteType::allocate(level(), is_level_tail());
+  if (this->is_root()) {
+    assert(!parent);
+    ret->as_root(parent);
+  } else {
+    assert(parent);
+    auto _parent = boost::dynamic_pointer_cast<InternalNode>(parent);
+    ret->as_child({this->parent_info().position, _parent});
+  }
+  ret->extent().copy_from(this->extent());
+  for (auto& kv : tracked_child_nodes) {
+    Ref<Node> _ret = ret;
+    Ref<Node> child = kv.second->test_clone(_ret);
+    ret->tracked_child_nodes[kv.first] = child;
+  }
+  return ret;
+}
+#endif
 
 template <typename FieldType, typename ConcreteType>
 void I_NODE_T::track_split(
@@ -479,6 +511,23 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   // TODO (optimize)
   // try to acquire space from siblings before split... see btrfs
 }
+
+#ifndef NDEBUG
+template <typename FieldType, typename ConcreteType>
+Ref<Node> L_NODE_T::test_clone(Ref<Node>& parent) const {
+  auto ret = ConcreteType::allocate(is_level_tail());
+  if (this->is_root()) {
+    assert(!parent);
+    ret->as_root(parent);
+  } else {
+    assert(parent);
+    auto _parent = boost::dynamic_pointer_cast<InternalNode>(parent);
+    ret->as_child({this->parent_info().position, _parent});
+  }
+  ret->extent().copy_from(this->extent());
+  return ret;
+}
+#endif
 
 template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::get_or_create_cursor(

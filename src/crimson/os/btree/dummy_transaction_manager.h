@@ -63,6 +63,10 @@ class LogicalCachedExtent
     auto ret = copy_in(&from, to_block_offset, sizeof(from));
     return (const T*)ret;
   }
+  void copy_from(const LogicalCachedExtent& from) {
+    assert(length == from.length);
+    std::memcpy(ptr, from.ptr, length);
+  }
   void shift_mem(const char* from, loff_t len, int shift_offset) {
     assert(valid);
     assert(from + len <= (const char*)ptr + length);

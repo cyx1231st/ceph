@@ -76,7 +76,8 @@ static std::set<onode_key_t> build_key_set(
     std::pair<unsigned, unsigned> range_2,
     std::pair<unsigned, unsigned> range_1,
     std::pair<unsigned, unsigned> range_0,
-    std::string padding = "") {
+    std::string padding = "",
+    bool is_internal = false) {
   std::set<onode_key_t> ret;
   onode_key_t key;
   for (unsigned i = range_2.first; i < range_2.second; ++i) {
@@ -86,16 +87,19 @@ static std::set<onode_key_t> build_key_set(
         key.pool = i;
         key.crush = i;
         std::ostringstream os_ns;
-        os_ns << "ns" << padding << j;
+        os_ns << "ns" << j;
         key.nspace = os_ns.str();
         std::ostringstream os_oid;
-        os_oid << "oid" << padding << j;
+        os_oid << "oid" << j << padding;
         key.oid = os_oid.str();
         key.snap = k;
         key.gen = k;
         ret.insert(key);
       }
     }
+  }
+  if (is_internal) {
+    keys.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
   }
   return ret;
 }
@@ -416,6 +420,7 @@ int main(int argc, char* argv[])
       assert(p_cursor->get_p_value());
       Onodes::validate(*p_cursor->get_p_value());
     }
+    assert(root->level() == 0);
     root->dump(std::cout) << std::endl << std::endl;
 
     auto f_split = [&root] (const onode_key_t& key, const onode_t& value) {
@@ -531,11 +536,19 @@ int main(int argc, char* argv[])
     std::cout << std::endl;
 
     // TODO: test split at {0, 0, 0}
+    // TODO: test split at {END, END, END}
   }
 
   class DummyChild final : public Node {
    public:
     virtual ~DummyChild() = default;
+
+    std::set<onode_key_t> get_keys() const { return keys; }
+
+    void reset(const std::set<onode_key_t>& _keys, bool level_tail) {
+      keys = _keys;
+      _is_level_tail = level_tail;
+    }
 
     void set_root_ref(Ref<Node>& root_ref) {
       root_ref = this;
@@ -575,6 +588,9 @@ int main(int argc, char* argv[])
       return new DummyChild(keys, is_level_tail, seed++);
     }
 
+   public:
+    bool is_level_tail() const override { return _is_level_tail; }
+
    protected:
     void as_child(const parent_info_t& info) override {
       assert(!p_root_ref);
@@ -588,7 +604,6 @@ int main(int argc, char* argv[])
     }
     bool is_root() const override { return p_root_ref != nullptr; }
     const parent_info_t& parent_info() const override { return *_parent_info; }
-    bool is_level_tail() const override { return _is_level_tail; }
     field_type_t field_type() const override { return field_type_t::N0; }
     laddr_t laddr() const override { return _laddr; }
     level_t level() const override { return 0u; }
@@ -598,7 +613,16 @@ int main(int argc, char* argv[])
     }
     std::ostream& dump(std::ostream&) const override { assert(false); }
     std::ostream& dump_brief(std::ostream&) const override { assert(false); }
-    Ref<Node> test_clone(Ref<Node>&) const override { assert(false); }
+    Ref<Node> test_clone(Ref<Node>& parent) const override {
+      assert(parent);
+      assert(!p_root_ref);
+      assert(_parent_info);
+      auto _parent = boost::dynamic_pointer_cast<InternalNode>(parent);
+      auto ret = create(keys, _is_level_tail);
+      ret->as_child({_parent_info->position, _parent});
+      ret->_laddr = _laddr;
+      return ret;
+    }
     void init(Ref<LogicalCachedExtent>, bool) override { assert(false); }
     Node::search_result_t do_lower_bound(
         const key_hobj_t&, MatchHistory&) override { assert(false); }
@@ -622,11 +646,25 @@ int main(int argc, char* argv[])
 
   class ChildPool {
    public:
+    static Ref<Node> build_root_by_keys(const std::set<onode_key_t>& keys) {
+      Ref<Node> root_ref;
+      auto initial_child = DummyChild::create(keys, true);
+      initial_child->set_root_ref(root_ref);
+      InternalNode0::upgrade_root(root_ref);
+      ChildPool pool(initial_child);
+      while (pool.can_split()) {
+        pool.populate_split();
+      }
+      assert(root_ref->level() == 1);
+      root_ref->dump(std::cout) << std::endl << std::endl;
+      return root_ref;
+    }
+
+   private:
     ChildPool(Ref<DummyChild> initial) {
       assert(initial->can_split());
       splitable_children.insert(initial);
     }
-
     bool can_split() const { return splitable_children.size(); }
     void populate_split() {
       auto index = rd() % splitable_children.size();
@@ -642,46 +680,194 @@ int main(int argc, char* argv[])
       }
     }
 
-   private:
     mutable std::random_device rd;
     std::set<Ref<DummyChild>> splitable_children;
   };
 
-  // internal node insert
+  // internal node insert & split
   {
-    std::cout << "---------------------------------------------\n"
-              << "randomized internal node insert:"
-              << std::endl << std::endl;
+    auto f_split = [] (Ref<Node> root, const onode_key_t& key, search_position_t pos) {
+      std::cout << "insert " << key << " at " << pos << ":" << std::endl;
+      Ref<Node> dummy_root;
+      auto dup_node = root->test_clone(dummy_root);
+      auto node_to_split = boost::dynamic_pointer_cast<InternalNode0>(dup_node);
+      Ref<Node> left_node = node_to_split->get_tracked_child(pos);
+      Ref<DummyChild> left_dnode = boost::static_pointer_cast<DummyChild>(left_node);
+      Ref<Node> right_node = DummyChild::create(left_dnode->get_keys(),
+                                                left_dnode->is_level_tail());
+      left_dnode->reset({key}, false);
+      node_to_split->apply_child_split(left_node->get_largest_key_view(),
+                                       left_node, right_node);
+      std::cout << std::endl;
+    };
 
-    auto keys = build_key_set({2, 5}, {2, 5}, {2, 5});
-    keys.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
-    Ref<Node> root_ref;
-    auto initial_child = DummyChild::create(keys, true);
-    initial_child->set_root_ref(root_ref);
-    InternalNode0::upgrade_root(root_ref);
-    ChildPool pool(initial_child);
-    while (pool.can_split()) {
-      pool.populate_split();
-    }
-    root_ref->dump(std::cout) << std::endl << std::endl;
-  }
-
-  // internal node split
-  {
     std::cout << "---------------------------------------------\n"
               << "before internal node insert:"
               << std::endl << std::endl;
-    auto keys = build_key_set({2, 5}, {2, 5}, {2, 5}, std::string(181, '_'));
-    keys.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
-    Ref<Node> root_ref;
-    auto initial_child = DummyChild::create(keys, true);
-    initial_child->set_root_ref(root_ref);
-    InternalNode0::upgrade_root(root_ref);
-    ChildPool pool(initial_child);
-    while (pool.can_split()) {
-      pool.populate_split();
-    }
-    root_ref->dump(std::cout) << std::endl << std::endl;
+    auto padding = std::string(250, '_');
+    auto keys = build_key_set({2, 6}, {2, 5}, {2, 5}, padding, true);
+    auto root_ref = ChildPool::build_root_by_keys(keys);
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to right front at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
+    f_split(root_ref, onode_key_t{3, 3, 3, "ns4", "oid4" + padding, 5, 5}, {2, {0, {0}}});
+    f_split(root_ref, onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, {2, {0, {0}}});
+    f_split(root_ref, onode_key_t{3, 4, 4, "ns3", "oid3", 3, 3}, {2, {0, {0}}});
+    f_split(root_ref, onode_key_t{4, 4, 4, "ns1", "oid1", 3, 3}, {2, {0, {0}}});
+    f_split(root_ref, onode_key_t{4, 4, 4, "ns2", "oid2" + padding, 1, 1}, {2, {0, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to right middle at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
+    f_split(root_ref, onode_key_t{4, 4, 4, "ns4", "oid4" + padding, 5, 5}, {3, {0, {0}}});
+    f_split(root_ref, onode_key_t{4, 4, 4, "ns5", "oid5", 3, 3}, {3, {0, {0}}});
+    f_split(root_ref, onode_key_t{4, 4, 5, "ns3", "oid3", 3, 3}, {3, {0, {0}}});
+    f_split(root_ref, onode_key_t{5, 5, 5, "ns1", "oid1", 3, 3}, {3, {0, {0}}});
+    f_split(root_ref, onode_key_t{5, 5, 5, "ns2", "oid2" + padding, 1, 1}, {3, {0, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to right back at stage 0, 1, 2"
+              << std::endl << std::endl;
+    f_split(root_ref, onode_key_t{5, 5, 5, "ns4", "oid4" + padding, 5, 5}, search_position_t::end());
+    f_split(root_ref, onode_key_t{5, 5, 5, "ns5", "oid5", 3, 3}, search_position_t::end());
+    f_split(root_ref, onode_key_t{6, 6, 6, "ns3", "oid3", 3, 3}, search_position_t::end());
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 0; insert to left front at stage 2, 1, 0"
+              << std::endl << std::endl;
+    f_split(root_ref, onode_key_t{1, 1, 1, "ns3", "oid3", 3, 3}, {0, {0, {0}}});
+    f_split(root_ref, onode_key_t{2, 2, 2, "ns1", "oid1", 3, 3}, {0, {0, {0}}});
+    f_split(root_ref, onode_key_t{2, 2, 2, "ns2", "oid2" + padding, 1, 1}, {0, {0, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 0/1; insert to left middle at stage 0, 1, 2, 1, 0"
+              << std::endl << std::endl;
+    f_split(root_ref, onode_key_t{2, 2, 2, "ns4", "oid4" + padding, 5, 5}, {1, {0, {0}}});
+    f_split(root_ref, onode_key_t{2, 2, 2, "ns5", "oid5", 3, 3}, {1, {0, {0}}});
+    f_split(root_ref, onode_key_t{2, 2, 3, "ns3", "oid3" + std::string(80, '_'), 3, 3}, {1, {0, {0}}});
+    f_split(root_ref, onode_key_t{3, 3, 3, "ns1", "oid1", 3, 3}, {1, {0, {0}}});
+    f_split(root_ref, onode_key_t{3, 3, 3, "ns2", "oid2" + padding, 1, 1}, {1, {0, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 0; insert to left back at stage 0"
+              << std::endl << std::endl;
+    f_split(root_ref, onode_key_t{3, 3, 3, "ns4", "oid4" + padding, 3, 4}, {1, {2, {2}}});
+
+    std::cout << "---------------------------------------------\n"
+              << "before internal node insert (1):"
+              << std::endl << std::endl;
+    auto padding1 = std::string(245, '_');
+    auto keys1 = build_key_set({2, 6}, {2, 5}, {2, 5}, padding1, true);
+    keys1.insert(onode_key_t{5, 5, 5, "ns4", "oid4" + padding1, 5, 5});
+    keys1.insert(onode_key_t{5, 5, 5, "ns4", "oid4" + padding1, 6, 6});
+    auto root_ref1 = ChildPool::build_root_by_keys(keys1);
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to left back at stage 0, 1, 2, 1"
+              << std::endl << std::endl;
+    f_split(root_ref1, onode_key_t{3, 3, 3, "ns4", "oid4" + padding1, 5, 5}, {2, {0, {0}}});
+    f_split(root_ref1, onode_key_t{3, 3, 3, "ns5", "oid5", 3, 3}, {2, {0, {0}}});
+    f_split(root_ref1, onode_key_t{3, 4, 4, "n", "o", 3, 3}, {2, {0, {0}}});
+    f_split(root_ref1, onode_key_t{4, 4, 4, "n", "o", 3, 3}, {2, {0, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to left middle at stage 2"
+              << std::endl << std::endl;
+    f_split(root_ref1, onode_key_t{2, 3, 3, "n", "o", 3, 3}, {1, {0, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "before internal node insert (2):"
+              << std::endl << std::endl;
+    auto padding2 = std::string(245, '_');
+    auto keys2 = build_key_set({2, 6}, {2, 5}, {2, 5}, padding2, true);
+    keys2.insert(onode_key_t{4, 4, 4, "n", "o", 3, 3});
+    keys2.insert(onode_key_t{5, 5, 5, "ns4", "oid4" + padding2, 5, 5});
+    auto root_ref2 = ChildPool::build_root_by_keys(keys2);
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 2; insert to left back at stage (0, 1, 2, 1,) 0"
+              << std::endl << std::endl;
+    f_split(root_ref2, onode_key_t{4, 4, 4, "n", "o", 2, 2}, {2, {0, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "before internal node insert (3):"
+              << std::endl << std::endl;
+    auto padding3 = std::string(417, '_');
+    auto keys3 = build_key_set({2, 5}, {2, 5}, {2, 5}, padding3, true);
+    keys3.insert(onode_key_t{4, 4, 4, "ns3", "oid3" + padding3, 5, 5});
+    keys3.erase(onode_key_t{4, 4, 4, "ns4", "oid4" + padding3, 2, 2});
+    keys3.erase(onode_key_t{4, 4, 4, "ns4", "oid4" + padding3, 3, 3});
+    keys3.erase(onode_key_t{4, 4, 4, "ns4", "oid4" + padding3, 4, 4});
+    auto root_ref3 = ChildPool::build_root_by_keys(keys3);
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 1; insert to right front at stage 0, 1, 0"
+              << std::endl << std::endl;
+    f_split(root_ref3, onode_key_t{3, 3, 3, "ns2", "oid2" + padding3, 5, 5}, {1, {1, {0}}});
+    f_split(root_ref3, onode_key_t{3, 3, 3, "ns2", "oid3", 3, 3}, {1, {1, {0}}});
+    f_split(root_ref3, onode_key_t{3, 3, 3, "ns3", "oid3" + padding3, 1, 1}, {1, {1, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "before internal node insert (4):"
+              << std::endl << std::endl;
+    auto padding4 = std::string(360, '_');
+    auto keys4 = build_key_set({2, 5}, {2, 5}, {2, 5}, padding4, true);
+    keys4.insert(onode_key_t{4, 4, 4, "ns4", "oid4" + padding4, 5, 5});
+    auto root_ref4 = ChildPool::build_root_by_keys(keys4);
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 1; insert to left back at stage 0, 1"
+              << std::endl << std::endl;
+    f_split(root_ref4, onode_key_t{3, 3, 3, "ns2", "oid2" + padding4, 5, 5}, {1, {1, {0}}});
+    f_split(root_ref4, onode_key_t{3, 3, 3, "ns2", "oid3", 3, 3}, {1, {1, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "before internal node insert (5):"
+              << std::endl << std::endl;
+    auto padding5 = std::string(412, '_');
+    auto keys5 = build_key_set({2, 5}, {2, 5}, {2, 5}, padding5);
+    keys5.insert(onode_key_t{3, 3, 3, "ns2", "oid3", 3, 3});
+    keys5.insert(onode_key_t{4, 4, 4, "ns3", "oid3" + padding5, 5, 5});
+    keys5.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
+    keys5.erase(onode_key_t{4, 4, 4, "ns4", "oid4" + padding5, 2, 2});
+    keys5.erase(onode_key_t{4, 4, 4, "ns4", "oid4" + padding5, 3, 3});
+    keys5.erase(onode_key_t{4, 4, 4, "ns4", "oid4" + padding5, 4, 4});
+    auto root_ref5 = ChildPool::build_root_by_keys(keys5);
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 1; insert to left back at stage (0, 1,) 0"
+              << std::endl << std::endl;
+    f_split(root_ref5, onode_key_t{3, 3, 3, "ns2", "oid3", 2, 2}, {1, {1, {0}}});
+    std::cout << std::endl;
+
+    std::cout << "---------------------------------------------\n"
+              << "before internal node insert (6):"
+              << std::endl << std::endl;
+    auto padding6 = std::string(328, '_');
+    auto keys6 = build_key_set({2, 5}, {2, 5}, {2, 5}, padding6);
+    keys6.insert(onode_key_t{5, 5, 5, "ns3", "oid3" + std::string(271, '_'), 3, 3});
+    keys6.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
+    auto root_ref6 = ChildPool::build_root_by_keys(keys6);
+
+    std::cout << "---------------------------------------------\n"
+              << "split at stage 0; insert to right front at stage 0"
+              << std::endl << std::endl;
+    f_split(root_ref6, onode_key_t{3, 3, 3, "ns3", "oid3" + padding6, 2, 3}, {1, {1, {1}}});
+    std::cout << std::endl;
+
+    // TODO: test split at {0, 0, 0}
+    // TODO: test split at {END, END, END}
   }
 
   get_transaction_manager().free_all();

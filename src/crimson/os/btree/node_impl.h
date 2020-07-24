@@ -58,8 +58,6 @@ class NodeT : virtual public Node {
   std::ostream& dump_brief(std::ostream& os) const override final;
 
 #ifndef NDEBUG
-  Ref<Node> test_clone(Ref<Node>& dummy_root) const override final;
-
   void validate_unused() const {
     // node.fields().template validate_unused<NODE_TYPE>(is_level_tail());
   }
@@ -68,6 +66,7 @@ class NodeT : virtual public Node {
  protected:
   node_stage_t stage() const;
   LogicalCachedExtent& extent();
+  const LogicalCachedExtent& extent() const;
   void set_level_tail(bool value) { _is_level_tail = value; }
   static Ref<ConcreteType> _allocate(level_t level, bool level_tail);
 
@@ -107,7 +106,17 @@ class InternalNodeT : public InternalNode,
     return child->lookup_largest();
   }
 
-  void apply_child_split(const full_key_t<KeyT::VIEW>&, Ref<Node>, Ref<Node>) override final;
+  Ref<Node> get_tracked_child(const search_position_t& pos) override final {
+    assert(tracked_child_nodes.find(pos) != tracked_child_nodes.end());
+    return tracked_child_nodes[pos];
+  }
+
+  void apply_child_split(const full_key_t<KeyT::VIEW>&,
+                         Ref<Node>, Ref<Node>) override final;
+
+#ifndef NDEBUG
+  Ref<Node> test_clone(Ref<Node>&) const override final;
+#endif
 
   void track_child(const search_position_t& pos, Ref<Node> child) {
     assert(tracked_child_nodes.find(pos) == tracked_child_nodes.end());
@@ -155,6 +164,10 @@ class LeafNodeT: public LeafNode,
   Ref<tree_cursor_t> insert_value(
       const full_key_t<KeyT::HOBJ>&, const onode_t&,
       const search_position_t&, const MatchHistory&) override final;
+
+#ifndef NDEBUG
+  Ref<Node> test_clone(Ref<Node>&) const override final;
+#endif
 
   static Ref<ConcreteType> allocate(bool is_level_tail) {
     return ConcreteType::_allocate(0u, is_level_tail);

@@ -200,8 +200,8 @@ inline std::ostream& operator<<(std::ostream& os, const string_key_view_t& view)
     if (view.length <= 12) {
       os << "\"" << std::string(view.p_key, 0, view.length) << "\"";
     } else {
-      os << "\"" << std::string(view.p_key, 0, 3) << ".."
-         << std::string(view.p_key + view.length - 3, 0, 3)
+      os << "\"" << std::string(view.p_key, 0, 4) << ".."
+         << std::string(view.p_key + view.length - 2, 0, 2)
          << "/" << view.length << "B\"";
     }
     return os;
