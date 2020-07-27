@@ -99,7 +99,7 @@ static std::set<onode_key_t> build_key_set(
     }
   }
   if (is_internal) {
-    keys.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
+    ret.insert(onode_key_t{9, 9, 9, "ns~last", "oid~last", 9, 9});
   }
   return ret;
 }

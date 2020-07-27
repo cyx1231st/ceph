@@ -1604,7 +1604,15 @@ struct staged {
       assert(to_stage <= STAGE);
       auto s_index = src_iter.index();
       src_iter.get().template copy_out_until<KT>(*appender, to_index, to_stage);
-      _index += (to_index - s_index);
+      assert(src_iter.index() == to_index);
+      assert(to_index >= s_index);
+      auto increment = (to_index - s_index);
+      if (increment) {
+        _index += increment;
+        if constexpr (!IS_BOTTOM) {
+          src_iter.get_nxt().reset();
+        }
+      }
     }
     void append(const full_key_t<KT>& key, const value_t& value, const value_t*& p_value) {
       assert(!require_wrap_nxt);
@@ -1678,19 +1686,18 @@ struct staged {
     bool require_wrap_nxt = false;
   };
 
-  static void _append_range(StagedIterator& src_iter, StagedAppender<KeyT::HOBJ>& appender,
+  template <KeyT KT>
+  static void _append_range(StagedIterator& src_iter, StagedAppender<KT>& appender,
                             size_t& to_index, match_stage_t stage) {
     if (src_iter.is_end()) {
       assert(to_index == INDEX_END);
       assert(stage == STAGE);
       to_index = src_iter.index();
-      return;
-    }
-    if constexpr (!IS_BOTTOM) {
+    } else if constexpr (!IS_BOTTOM) {
       if (appender.in_progress()) {
         // we are in the progress of appending
         auto to_index_nxt = INDEX_END;
-        NXT_STAGE_T::_append_range(
+        NXT_STAGE_T::template _append_range<KT>(
             src_iter.nxt(), appender.get_nxt(),
             to_index_nxt, STAGE - 1);
         ++src_iter;
@@ -1698,7 +1705,7 @@ struct staged {
       } else if (src_iter.in_progress()) {
         // cannot append the current item as-a-whole
         auto to_index_nxt = INDEX_END;
-        NXT_STAGE_T::_append_range(
+        NXT_STAGE_T::template _append_range<KT>(
             src_iter.nxt(), appender.open_nxt(src_iter.get_key()),
             to_index_nxt, STAGE - 1);
         ++src_iter;
@@ -1708,7 +1715,8 @@ struct staged {
     appender.append_until(src_iter, to_index, stage);
   }
 
-  static void _append_into(StagedIterator& src_iter, StagedAppender<KeyT::HOBJ>& appender,
+  template <KeyT KT>
+  static void _append_into(StagedIterator& src_iter, StagedAppender<KT>& appender,
                            position_t& position, match_stage_t stage) {
     // reaches the last item
     if (stage == STAGE) {
@@ -1719,13 +1727,14 @@ struct staged {
     } else {
       assert(stage < STAGE);
       // process append in the next stage
-      NXT_STAGE_T::append_until(
+      NXT_STAGE_T::template append_until<KT>(
           src_iter.nxt(), appender.open_nxt(src_iter.get_key()),
           position.nxt, stage);
     }
   }
 
-  static void append_until(StagedIterator& src_iter, StagedAppender<KeyT::HOBJ>& appender,
+  template <KeyT KT>
+  static void append_until(StagedIterator& src_iter, StagedAppender<KT>& appender,
                            position_t& position, match_stage_t stage) {
     size_t from_index = src_iter.index();
     size_t& to_index = position.index;
@@ -1736,17 +1745,18 @@ struct staged {
     } else {
       assert(stage <= STAGE);
       if (src_iter.index() == to_index) {
-        _append_into(src_iter, appender, position, stage);
+        _append_into<KT>(src_iter, appender, position, stage);
       } else {
-        _append_range(src_iter, appender, to_index, stage);
-        _append_into(src_iter, appender, position, stage);
+        _append_range<KT>(src_iter, appender, to_index, stage);
+        _append_into<KT>(src_iter, appender, position, stage);
       }
     }
     to_index -= from_index;
   }
 
-  static bool append_insert(const full_key_t<KeyT::HOBJ>& key, const value_t& value,
-                            StagedIterator& src_iter, StagedAppender<KeyT::HOBJ>& appender,
+  template <KeyT KT>
+  static bool append_insert(const full_key_t<KT>& key, const value_t& value,
+                            StagedIterator& src_iter, StagedAppender<KT>& appender,
                             match_stage_t stage, const value_t*& p_value) {
     assert(src_iter.valid());
     if (stage == STAGE) {
@@ -1759,7 +1769,7 @@ struct staged {
     } else {
       assert(stage < STAGE);
       if constexpr (!IS_BOTTOM) {
-        auto nxt_is_end = NXT_STAGE_T::append_insert(
+        auto nxt_is_end = NXT_STAGE_T::template append_insert<KT>(
             key, value, src_iter.get_nxt(), appender.get_nxt(), stage, p_value);
         if (nxt_is_end) {
           appender.wrap_nxt();
@@ -1770,7 +1780,7 @@ struct staged {
         }
         return false;
       } else {
-        assert(false);
+        assert(false && "impossible path");
       }
     }
   }

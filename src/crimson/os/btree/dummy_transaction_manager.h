@@ -123,17 +123,12 @@ class DummyTransactionManager {
     allocate_map.insert({extent->get_laddr(), extent});
     return extent;
   }
-  void free_extent(Ref<LogicalCachedExtent> extent) {
-    auto size = allocate_map.erase(extent->get_laddr());
-    assert(size == 1u);
-    std::free(extent->ptr);
-    extent->invalidate();
-  }
   void free_all() {
     for (auto& [addr, extent] : allocate_map) {
-      free_extent(extent);
+      std::free(extent->ptr);
+      extent->invalidate();
     }
-    assert(allocate_map.empty());
+    allocate_map.clear();
   }
   Ref<LogicalCachedExtent> read_extent(laddr_t addr) {
     auto iter = allocate_map.find(addr);

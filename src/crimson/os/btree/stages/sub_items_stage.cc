@@ -42,7 +42,7 @@ void internal_sub_items_t::Appender<KT>::append(
   assert(from + items <= src.keys());
   node_offset_t size = sizeof(internal_sub_item_t) * items;
   p_append -= size;
-  p_dst->copy_in_mem(src.p_first_item - from - items, p_append, size);
+  p_dst->copy_in_mem(src.p_first_item + 1 - from - items, p_append, size);
 }
 
 template <KeyT KT>

@@ -231,6 +231,7 @@ void I_NODE_T::apply_child_split(
         this->extent(), stage, left_key, left_laddr,
         insert_pos, insert_stage, insert_size);
     assert(stage.free_size() == free_size - insert_size);
+    assert(*p_value == left_laddr);
     auto insert_pos_normalized = normalize(std::move(insert_pos));
     track_split(pos, insert_pos_normalized, insert_stage, left_child, right_child);
     return;
@@ -238,6 +239,8 @@ void I_NODE_T::apply_child_split(
 
   std::cout << "  try insert at: " << insert_pos
             << ", i_stage=" << (int)insert_stage << ", size=" << insert_size
+            << ", addrs=0x" << std::hex << left_laddr
+            << ",0x" << right_laddr << std::dec
             << std::endl;
 
   size_t empty_size = stage.size_before(0);
@@ -252,6 +255,36 @@ void I_NODE_T::apply_child_split(
   std::cout << "  split at: " << split_at << ", is_left=" << insert_left
             << ", now insert at: " << insert_pos
             << std::endl;
+
+  auto append_at = split_at;
+  auto right_node = ConcreteType::allocate(this->level(), this->is_level_tail());
+  typename STAGE_T::template StagedAppender<KeyT::VIEW> appender;
+  appender.init(&right_node->extent(),
+                const_cast<char*>(right_node->stage().p_start()));
+  const laddr_t* p_value = nullptr;
+  if (!insert_left) {
+    // right node: append [start(append_at), i_position)
+    STAGE_T::template append_until<KeyT::VIEW>(
+        append_at, appender, insert_pos, insert_stage);
+    std::cout << "insert to right: " << insert_pos
+              << ", i_stage=" << (int)insert_stage << std::endl;
+    // right node: append [i_position(key, value)]
+    bool is_end = STAGE_T::template append_insert<KeyT::VIEW>(
+        left_key, left_laddr, append_at, appender, insert_stage, p_value);
+    assert(append_at.is_end() == is_end);
+  }
+
+  // right node: append (i_position, end)
+  auto pos_end = STAGE_T::position_t::end();
+  STAGE_T::template append_until<KeyT::VIEW>(
+      append_at, appender, pos_end, STAGE_T::STAGE);
+  assert(append_at.is_end());
+  appender.wrap();
+
+  right_node->dump(std::cout) << std::endl;
+
+  // TODO: left node: trim
+
 }
 
 #ifndef NDEBUG
@@ -460,17 +493,20 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   const onode_t* p_value = nullptr;
   if (!i_to_left) {
     // right node: append [start(append_at), i_position)
-    STAGE_T::append_until(append_at, appender, i_position, i_stage);
+    STAGE_T::template append_until<KeyT::HOBJ>(
+        append_at, appender, i_position, i_stage);
     std::cout << "insert to right: " << i_position
               << ", i_stage=" << (int)i_stage << std::endl;
     // right node: append [i_position(key, value)]
-    bool is_end = STAGE_T::append_insert(key, value, append_at, appender, i_stage, p_value);
+    bool is_end = STAGE_T::template append_insert<KeyT::HOBJ>(
+        key, value, append_at, appender, i_stage, p_value);
     assert(append_at.is_end() == is_end);
   }
 
   // right node: append (i_position, end)
   auto pos_end = STAGE_T::position_t::end();
-  STAGE_T::append_until(append_at, appender, pos_end, STAGE_T::STAGE);
+  STAGE_T::template append_until<KeyT::HOBJ>(
+      append_at, appender, pos_end, STAGE_T::STAGE);
   assert(append_at.is_end());
   appender.wrap();
   right_node->dump(std::cout) << std::endl;

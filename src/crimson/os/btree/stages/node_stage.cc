@@ -197,6 +197,11 @@ template <typename FieldType, node_type_t NODE_TYPE>
 template <KeyT KT>
 void APPEND_T::append(const node_extent_t& src, size_t from, size_t items) {
   assert(from <= src.keys());
+  if (p_src == nullptr) {
+    p_src = &src;
+  } else {
+    assert(p_src == &src);
+  }
   if (items == 0) {
     return;
   }
@@ -204,12 +209,8 @@ void APPEND_T::append(const node_extent_t& src, size_t from, size_t items) {
   assert(from + items <= src.keys());
   num_keys += items;
   if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-    assert(false);
+    assert(false && "impossible path");
   } else {
-    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-      assert(false);
-    }
-
     // append left part forwards
     node_offset_t offset_left_start = src.fields().get_key_start_offset(from);
     node_offset_t offset_left_end = src.fields().get_key_start_offset(from + items);
@@ -255,7 +256,7 @@ void APPEND_T::append(const node_extent_t& src, size_t from, size_t items) {
 template <typename FieldType, node_type_t NODE_TYPE>
 template <KeyT KT>
 void APPEND_T::append(
-    const full_key_t<KT>& key, const onode_t& value, const onode_t*& p_value) {
+    const full_key_t<KT>& key, const value_t& value, const value_t*& p_value) {
   if constexpr (FIELD_TYPE == field_type_t::N3) {
     assert(false && "not implemented");
   } else {
@@ -297,6 +298,15 @@ template <typename FieldType, node_type_t NODE_TYPE>
 template <KeyT KT>
 char* APPEND_T::wrap() {
   assert(p_append_left <= p_append_right);
+  assert(p_src);
+  if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+    if (p_src->is_level_tail()) {
+      laddr_t tail_value = *p_src->get_end_p_laddr();
+      p_append_right -= sizeof(laddr_t);
+      assert(p_append_left <= p_append_right);
+      p_dst->copy_in_mem(tail_value, p_append_right);
+    }
+  }
   p_dst->copy_in_mem(num_keys, p_start + offsetof(FieldType, num_keys));
   return p_append_left;
 }

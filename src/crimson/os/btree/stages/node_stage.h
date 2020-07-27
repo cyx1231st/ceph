@@ -44,7 +44,7 @@ class node_extent_t {
   const char* p_left_bound() const;
   template <node_type_t T = NODE_TYPE>
   std::enable_if_t<T == node_type_t::INTERNAL, const laddr_t*>
-  get_end_p_laddr() {
+  get_end_p_laddr() const {
     assert(is_level_tail());
     if constexpr (FIELD_TYPE == field_type_t::N3) {
       #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
@@ -153,7 +153,7 @@ class node_extent_t<FieldType, NODE_TYPE>::Appender {
     p_append_right = p_start + FieldType::SIZE;
   }
   void append(const node_extent_t& src, size_t from, size_t items);
-  void append(const full_key_t<KT>&, const onode_t&, const onode_t*&);
+  void append(const full_key_t<KT>&, const value_t&, const value_t*&);
   char* wrap();
   std::tuple<LogicalCachedExtent*, char*> open_nxt(const key_get_type&);
   std::tuple<LogicalCachedExtent*, char*> open_nxt(const full_key_t<KT>&);
@@ -168,7 +168,9 @@ class node_extent_t<FieldType, NODE_TYPE>::Appender {
       assert(false);
     }
   }
+
  private:
+  const node_extent_t* p_src = nullptr;
   LogicalCachedExtent* p_dst;
   char* p_start;
   char* p_append_left;
