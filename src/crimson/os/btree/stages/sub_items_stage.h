@@ -72,9 +72,7 @@ class internal_sub_items_t {
       const full_key_t<KT>&, const laddr_t&,
       size_t index, node_offset_t size, const char* p_left_bound);
 
-  static const size_t trim_until(LogicalCachedExtent&, internal_sub_items_t&, size_t) {
-    assert(false && "not implemented");
-  }
+  static size_t trim_until(LogicalCachedExtent&, internal_sub_items_t&, size_t);
 
   template <KeyT KT>
   class Appender;

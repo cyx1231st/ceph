@@ -132,6 +132,7 @@ void NODE_T::update_size_at(
 template <typename FieldType, node_type_t NODE_TYPE>
 size_t NODE_T::trim_until(
     LogicalCachedExtent& extent, const node_extent_t& node, size_t index) {
+  assert(!node.is_level_tail());
   auto keys = node.keys();
   assert(index <= keys);
   if (index == keys) {
@@ -140,11 +141,6 @@ size_t NODE_T::trim_until(
   if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
     assert(false && "not implemented");
   } else {
-    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-      if (node.is_level_tail()) {
-        assert(false && "not implemented");
-      }
-    }
     extent.copy_in_mem(num_keys_t(index), (void*)&node.p_fields->num_keys);
   }
   // no need to calculate trim size for node
@@ -154,16 +150,12 @@ size_t NODE_T::trim_until(
 template <typename FieldType, node_type_t NODE_TYPE>
 size_t NODE_T::trim_at(
     LogicalCachedExtent& extent, const node_extent_t& node, size_t index, size_t trimmed) {
+  assert(!node.is_level_tail());
   auto keys = node.keys();
   assert(index < keys);
   if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
     assert(false && "not implemented");
   } else {
-    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-      if (node.is_level_tail()) {
-        assert(false && "not implemented");
-      }
-    }
     auto offset = node.p_fields->get_item_start_offset(index);
     assert(offset + trimmed < node.p_fields->get_item_end_offset(index));
     extent.copy_in_mem(node_offset_t(offset + trimmed),

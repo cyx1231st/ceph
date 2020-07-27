@@ -28,6 +28,14 @@ template const laddr_t* internal_sub_items_t::insert_at<KeyT::VIEW>(
     LogicalCachedExtent&, const internal_sub_items_t&, const full_key_t<KeyT::VIEW>&,
     const laddr_t&, size_t, node_offset_t, const char*);
 
+size_t internal_sub_items_t::trim_until(
+    LogicalCachedExtent& extent, internal_sub_items_t& items, size_t index) {
+  assert(index != 0);
+  auto keys = items.keys();
+  assert(index <= keys);
+  return sizeof(internal_sub_item_t) * (keys - index);
+}
+
 template class internal_sub_items_t::Appender<KeyT::VIEW>;
 template class internal_sub_items_t::Appender<KeyT::HOBJ>;
 

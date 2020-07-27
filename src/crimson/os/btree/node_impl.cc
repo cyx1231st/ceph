@@ -283,7 +283,20 @@ void I_NODE_T::apply_child_split(
 
   right_node->dump(std::cout) << std::endl;
 
-  // TODO: left node: trim
+  this->set_level_tail(false);
+  STAGE_T::trim(this->extent(), split_at);
+
+  if (insert_left) {
+    // left node: insert
+    p_value = STAGE_T::template proceed_insert<KeyT::VIEW, true>(
+        this->extent(), stage, left_key, left_laddr,
+        insert_pos, insert_stage, insert_size);
+    std::cout << "insert to left: " << insert_pos
+              << ", i_stage=" << (int)insert_stage << std::endl;
+  }
+  this->dump(std::cout) << std::endl;
+
+  // TODO: propagate index to parent
 
 }
 

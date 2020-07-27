@@ -299,6 +299,8 @@ struct staged {
     *   (!IS_BOTTOM) insert_prefix_at(extent, src, key,
     *                         index, size, p_left_bound) -> memory_range_t
     *   (!IS_BOTTOM) update_size_at(extent, src, index, size)
+    *   trim_until(extent, container, index) -> trim_size
+    *   (!IS_BOTTOM) trim_at(extent, container, index, trimmed) -> trim_size
     *
     * Appender::append(const container_t& src, from, items)
     */
@@ -541,11 +543,13 @@ struct staged {
      *   get_nxt_container() const
      *   has_next() const -> bool
      *   operator++()
-    * static:
-    *   header_size() -> node_offset_t
-    *   estimate_insert(key, value) -> node_offset_t
-    *   insert_prefix(extent, src, key, is_end, size, p_left_bound) -> memory_range_t
-    *   update_size(extent, src, size)
+     * static:
+     *   header_size() -> node_offset_t
+     *   estimate_insert(key, value) -> node_offset_t
+     *   insert_prefix(extent, src, key, is_end, size, p_left_bound) -> memory_range_t
+     *   update_size(extent, src, size)
+     *   trim_until(extent, container) -> trim_size
+     *   trim_at(extent, container, trimmed) -> trim_size
      */
     // currently the iterative iterator is only implemented with STAGE_STRING
     // for in-node space efficiency
