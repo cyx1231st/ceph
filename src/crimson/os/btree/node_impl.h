@@ -135,7 +135,7 @@ class InternalNodeT : public InternalNode,
 
   void track_insert(const search_position_t&, match_stage_t, Ref<Node>);
 
-  void track_split(const search_position_t&, Ref<Node>);
+  void track_split(const search_position_t&, Ref<ConcreteType>);
 
   static Ref<ConcreteType> allocate(level_t level, bool level_tail) {
     assert(level != 0u);

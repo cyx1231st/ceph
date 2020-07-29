@@ -1771,9 +1771,10 @@ struct staged {
   }
 
   template <KeyT KT>
-  static bool append_insert(const full_key_t<KT>& key, const value_t& value,
-                            StagedIterator& src_iter, StagedAppender<KT>& appender,
-                            match_stage_t stage, const value_t*& p_value) {
+  static bool append_insert(
+      const full_key_t<KT>& key, const value_t& value,
+      StagedIterator& src_iter, StagedAppender<KT>& appender,
+      bool is_front_insert, match_stage_t& stage, const value_t*& p_value) {
     assert(src_iter.valid());
     if (stage == STAGE) {
       appender.append(key, value, p_value);
@@ -1786,10 +1787,14 @@ struct staged {
       assert(stage < STAGE);
       if constexpr (!IS_BOTTOM) {
         auto nxt_is_end = NXT_STAGE_T::template append_insert<KT>(
-            key, value, src_iter.get_nxt(), appender.get_nxt(), stage, p_value);
+            key, value, src_iter.get_nxt(), appender.get_nxt(),
+            is_front_insert, stage, p_value);
         if (nxt_is_end) {
           appender.wrap_nxt();
           ++src_iter;
+          if (is_front_insert) {
+            stage = STAGE;
+          }
           if (src_iter.is_end()) {
             return true;
           }

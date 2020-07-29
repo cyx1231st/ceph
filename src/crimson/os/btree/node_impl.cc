@@ -220,15 +220,16 @@ void I_NODE_T::apply_child_split(
       STAGE_T::evaluate_insert(stage, left_key, left_laddr, insert_pos, true);
   }
 
-  // TODO: common part
+  // TODO: common part begin, move to NodeT
   auto free_size = stage.free_size();
   if (free_size >= insert_size) {
     auto p_value = STAGE_T::template proceed_insert<KeyT::VIEW, false>(
         this->extent(), stage, left_key, left_laddr,
         insert_pos, insert_stage, insert_size);
     assert(stage.free_size() == free_size - insert_size);
-    assert(*p_value == left_laddr);
+    // TODO: common part end, move to NodeT
 
+    assert(*p_value == left_laddr);
     auto insert_pos_normalized = normalize(std::move(insert_pos));
     assert(insert_pos_normalized <= pos);
     assert(get_key_view(insert_pos_normalized) == left_key);
@@ -249,10 +250,9 @@ void I_NODE_T::apply_child_split(
   }
 
   std::cout << "  try insert at: " << insert_pos
-            << ", i_stage=" << (int)insert_stage << ", size=" << insert_size
-            << ", addrs=0x" << std::hex << left_laddr
-            << ",0x" << right_laddr << std::dec
-            << std::endl;
+            << ", insert_stage=" << (int)insert_stage << ", insert_size=" << insert_size
+            << ", values=0x" << std::hex << left_laddr
+            << ",0x" << right_laddr << std::dec << std::endl;
 
   size_t empty_size = stage.size_before(0);
   size_t available_size = stage.total_size() - empty_size;
@@ -263,7 +263,7 @@ void I_NODE_T::apply_child_split(
   bool insert_left = STAGE_T::locate_split(
       stage, target_split_size, insert_pos, insert_stage, insert_size, split_at);
 
-  std::cout << "  split at: " << split_at << ", is_left=" << insert_left
+  std::cout << "  split at: " << split_at << ", insert_left=" << insert_left
             << ", now insert at: " << insert_pos
             << std::endl;
 
@@ -273,48 +273,56 @@ void I_NODE_T::apply_child_split(
   auto right_node = ConcreteType::allocate(this->level(), this->is_level_tail());
 
   auto append_at = split_at;
+  // TODO: identify conditions for cross-node string deduplication
   typename STAGE_T::template StagedAppender<KeyT::VIEW> appender;
   appender.init(&right_node->extent(),
                 const_cast<char*>(right_node->stage().p_start()));
   const laddr_t* p_value = nullptr;
   if (!insert_left) {
-    // right node: append [start(append_at), i_position)
+    // right node: append [start(append_at), insert_pos)
     STAGE_T::template append_until<KeyT::VIEW>(
         append_at, appender, insert_pos, insert_stage);
     std::cout << "insert to right: " << insert_pos
-              << ", i_stage=" << (int)insert_stage << std::endl;
-    // right node: append [i_position(key, value)]
+              << ", insert_stage=" << (int)insert_stage << std::endl;
+    // right node: append [insert_pos(key, value)]
+    bool is_front_insert = (insert_pos == STAGE_T::position_t::begin());
     bool is_end = STAGE_T::template append_insert<KeyT::VIEW>(
-        left_key, left_laddr, append_at, appender, insert_stage, p_value);
+        left_key, left_laddr, append_at, appender,
+        is_front_insert, insert_stage, p_value);
     assert(append_at.is_end() == is_end);
   }
 
-  // right node: append (i_position, end)
+  // right node: append (insert_pos, end)
   auto pos_end = STAGE_T::position_t::end();
   STAGE_T::template append_until<KeyT::VIEW>(
       append_at, appender, pos_end, STAGE_T::STAGE);
   assert(append_at.is_end());
   appender.wrap();
-
   right_node->dump(std::cout) << std::endl;
 
+  // left node: trim
   this->set_level_tail(false);
   STAGE_T::trim(this->extent(), split_at);
 
   if (insert_left) {
     // left node: insert
+    std::cout << "insert to left: " << insert_pos
+              << ", insert_stage=" << (int)insert_stage << std::endl;
     p_value = STAGE_T::template proceed_insert<KeyT::VIEW, true>(
         this->extent(), stage, left_key, left_laddr,
         insert_pos, insert_stage, insert_size);
-    std::cout << "insert to left: " << insert_pos
-              << ", i_stage=" << (int)insert_stage << std::endl;
   }
   this->dump(std::cout) << std::endl;
   assert(p_value);
+  // TODO: common part end, move to NodeT
 
   auto split_pos_normalized = normalize(split_at.get_pos());
-  track_split(split_pos_normalized, right_node);
   auto insert_pos_normalized = normalize(std::move(insert_pos));
+  std::cout << "split at " << split_pos_normalized
+            << ", insert at " << insert_pos_normalized
+            << ", insert_left=" << insert_left
+            << ", insert_stage=" << (int)insert_stage << std::endl;
+  track_split(split_pos_normalized, right_node);
   if (insert_left) {
     track_insert(insert_pos_normalized, insert_stage, left_child);
   } else {
@@ -335,8 +343,13 @@ void I_NODE_T::apply_child_split(
   }
 #endif
 
-  // TODO: propagate index to parent
+  // propagate index to parent
+  // TODO: cross-node string dedup
+  auto key_view = get_largest_key_view();
+  this->parent_info().ptr->apply_child_split(key_view, this, right_node);
 
+  // TODO (optimize)
+  // try to acquire space from siblings before split... see btrfs
 }
 
 #ifndef NDEBUG
@@ -387,8 +400,18 @@ void I_NODE_T::track_insert(
 
 template <typename FieldType, typename ConcreteType>
 void I_NODE_T::track_split(
-    const search_position_t& split_pos, Ref<Node> right_node) {
-  // TODO
+    const search_position_t& split_pos, Ref<ConcreteType> right_node) {
+  auto first = tracked_child_nodes.lower_bound(split_pos);
+  auto iter = first;
+  while (iter != tracked_child_nodes.end()) {
+    search_position_t pos = iter->first;
+    pos -= split_pos;
+    // right_node->track_child(pos, iter->second);
+    right_node->tracked_child_nodes[pos] = iter->second;
+    iter->second->as_child({pos, right_node});
+    ++iter;
+  }
+  tracked_child_nodes.erase(first, tracked_child_nodes.end());
 }
 
 template <typename FieldType, typename ConcreteType>
@@ -420,7 +443,7 @@ Ref<Node> I_NODE_T::get_or_load_child(
 
 void InternalNode0::upgrade_root(Ref<Node> root) {
   assert(root->is_root());
-  auto new_root = allocate(true, root->level() + 1);
+  auto new_root = allocate(root->level() + 1, true);
   auto pos = search_position_t::end();
   const laddr_t* p_value = new_root->get_value_ptr(pos);
   new_root->extent().copy_in_mem(root->laddr(), const_cast<laddr_t*>(p_value));
@@ -485,43 +508,47 @@ Ref<tree_cursor_t> L_NODE_T::lookup_largest() {
 template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::insert_value(
     const full_key_t<KeyT::HOBJ>& key, const onode_t& value,
-    const search_position_t& position, const MatchHistory& history) {
+    const search_position_t& pos, const MatchHistory& history) {
 #ifndef NDEBUG
-  if (position.is_end()) {
+  if (pos.is_end()) {
     assert(this->is_level_tail());
   }
 #endif
 
-  typename STAGE_T::position_t i_position = cast_down<STAGE_T::STAGE>(position);
-  auto [i_stage, i_estimated_size] = STAGE_T::evaluate_insert(
-      key, value, history, i_position);
+  typename STAGE_T::position_t insert_pos = cast_down<STAGE_T::STAGE>(pos);
+  auto [insert_stage, insert_size] =
+    STAGE_T::evaluate_insert(key, value, history, insert_pos);
 
   auto stage = this->stage();
+
+  // TODO: common part begin, move to NodeT
   auto free_size = stage.free_size();
-  if (free_size >= i_estimated_size) {
+  if (free_size >= insert_size) {
     auto p_value = STAGE_T::template proceed_insert<KeyT::HOBJ, false>(
         this->extent(), stage, key, value,
-        i_position, i_stage, i_estimated_size);
-    assert(stage.free_size() == free_size - i_estimated_size);
-    auto i_position_normalized = normalize(std::move(i_position));
-    return get_or_create_cursor(i_position_normalized, p_value);
+        insert_pos, insert_stage, insert_size);
+    assert(stage.free_size() == free_size - insert_size);
+    // TODO: common part end, move to NodeT
+
+    auto insert_pos_normalized = normalize(std::move(insert_pos));
+    return get_or_create_cursor(insert_pos_normalized, p_value);
   }
 
-  std::cout << "  try insert at: " << i_position
-            << ", i_stage=" << (int)i_stage << ", size=" << i_estimated_size
+  std::cout << "  try insert at: " << insert_pos
+            << ", insert_stage=" << (int)insert_stage << ", insert_size=" << insert_size
             << std::endl;
 
   size_t empty_size = stage.size_before(0);
   size_t available_size = stage.total_size() - empty_size;
-  size_t target_split_size = empty_size + (available_size + i_estimated_size) / 2;
+  size_t target_split_size = empty_size + (available_size + insert_size) / 2;
   // TODO adjust NODE_BLOCK_SIZE according to this requirement
-  assert(i_estimated_size < available_size / 2);
+  assert(insert_size < available_size / 2);
   typename STAGE_T::StagedIterator split_at;
-  bool i_to_left = STAGE_T::locate_split(
-      stage, target_split_size, i_position, i_stage, i_estimated_size, split_at);
+  bool insert_left = STAGE_T::locate_split(
+      stage, target_split_size, insert_pos, insert_stage, insert_size, split_at);
 
-  std::cout << "  split at: " << split_at << ", is_left=" << i_to_left
-            << ", now insert at: " << i_position
+  std::cout << "  split at: " << split_at << ", insert_left=" << insert_left
+            << ", now insert at: " << insert_pos
             << std::endl;
 
   if (is_root()) {
@@ -535,19 +562,21 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   appender.init(&right_node->extent(),
                 const_cast<char*>(right_node->stage().p_start()));
   const onode_t* p_value = nullptr;
-  if (!i_to_left) {
-    // right node: append [start(append_at), i_position)
+  if (!insert_left) {
+    // right node: append [start(append_at), insert_pos)
     STAGE_T::template append_until<KeyT::HOBJ>(
-        append_at, appender, i_position, i_stage);
-    std::cout << "insert to right: " << i_position
-              << ", i_stage=" << (int)i_stage << std::endl;
-    // right node: append [i_position(key, value)]
+        append_at, appender, insert_pos, insert_stage);
+    std::cout << "insert to right: " << insert_pos
+              << ", insert_stage=" << (int)insert_stage << std::endl;
+    // right node: append [insert_pos(key, value)]
+    bool is_front_insert = (insert_pos == STAGE_T::position_t::begin());
     bool is_end = STAGE_T::template append_insert<KeyT::HOBJ>(
-        key, value, append_at, appender, i_stage, p_value);
+        key, value, append_at, appender,
+        is_front_insert, insert_stage, p_value);
     assert(append_at.is_end() == is_end);
   }
 
-  // right node: append (i_position, end)
+  // right node: append (insert_pos, end)
   auto pos_end = STAGE_T::position_t::end();
   STAGE_T::template append_until<KeyT::HOBJ>(
       append_at, appender, pos_end, STAGE_T::STAGE);
@@ -559,25 +588,26 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   this->set_level_tail(false);
   STAGE_T::trim(this->extent(), split_at);
 
-  if (i_to_left) {
+  if (insert_left) {
     // left node: insert
+    std::cout << "insert to left: " << insert_pos
+              << ", insert_stage=" << (int)insert_stage << std::endl;
     p_value = STAGE_T::template proceed_insert<KeyT::HOBJ, true>(
         this->extent(), stage, key, value,
-        i_position, i_stage, i_estimated_size);
-    std::cout << "insert to left: " << i_position
-              << ", i_stage=" << (int)i_stage << std::endl;
+        insert_pos, insert_stage, insert_size);
   }
   this->dump(std::cout) << std::endl;
   assert(p_value);
+  // TODO: common part end, move to NodeT
 
   Ref<tree_cursor_t> ret;
-  auto i_position_normalized = normalize(std::move(i_position));
-  if (i_to_left) {
-    assert(this->get_key_view(i_position_normalized).match(key));
-    ret = get_or_create_cursor(i_position_normalized, p_value);
+  auto insert_pos_normalized = normalize(std::move(insert_pos));
+  if (insert_left) {
+    assert(this->get_key_view(insert_pos_normalized).match(key));
+    ret = get_or_create_cursor(insert_pos_normalized, p_value);
   } else {
-    assert(right_node->get_key_view(i_position_normalized).match(key));
-    ret = right_node->get_or_create_cursor(i_position_normalized, p_value);
+    assert(right_node->get_key_view(insert_pos_normalized).match(key));
+    ret = right_node->get_or_create_cursor(insert_pos_normalized, p_value);
   }
 
   // propagate index to parent

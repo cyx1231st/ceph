@@ -706,6 +706,7 @@ int main(int argc, char* argv[])
       left_dnode->reset({key}, false);
       node_to_split->apply_child_split(left_node->get_largest_key_view(),
                                        left_node, right_node);
+      dummy_root->dump(std::cout) << std::endl;
       std::cout << std::endl;
     };
 

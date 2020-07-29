@@ -128,6 +128,18 @@ struct staged_position_t {
   bool operator==(const me_t& o) const { return cmp(o) == 0; }
   bool operator!=(const me_t& o) const { return cmp(o) != 0; }
 
+  me_t& operator-=(const me_t& o) {
+    assert(o.index != INDEX_END);
+    assert(index >= o.index);
+    if (index != INDEX_END) {
+      index -= o.index;
+      if (index == 0) {
+        nxt -= o.nxt;
+      }
+    }
+    return *this;
+  }
+
   static me_t begin() { return {0u, nxt_t::begin()}; }
   static me_t end() {
     return {INDEX_END, nxt_t::end()};
@@ -170,6 +182,15 @@ struct staged_position_t<STAGE_BOTTOM> {
   bool operator<=(const me_t& o) const { return cmp(o) <= 0; }
   bool operator==(const me_t& o) const { return cmp(o) == 0; }
   bool operator!=(const me_t& o) const { return cmp(o) != 0; }
+
+  me_t& operator-=(const me_t& o) {
+    assert(o.index != INDEX_END);
+    assert(index >= o.index);
+    if (index != INDEX_END) {
+      index -= o.index;
+    }
+    return *this;
+  }
 
   static me_t begin() { return {0u}; }
   static me_t end() { return {INDEX_END}; }
