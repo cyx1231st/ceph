@@ -143,6 +143,15 @@ struct string_key_view_t {
   static void append_str(
       LogicalCachedExtent&, const char* data, size_t len, char*& p_append);
 
+  static void append_str(const char* data, size_t len, char*& p_append) {
+    p_append -= sizeof(string_size_t);
+    assert(len < std::numeric_limits<string_size_t>::max());
+    string_size_t _len = len;
+    std::memcpy(p_append, &_len, sizeof(string_size_t));
+    p_append -= len;
+    std::memcpy(p_append, data, len);
+  }
+
   static void append_str(LogicalCachedExtent& dst,
                          const std::string& str,
                          char*& p_append) {
@@ -156,8 +165,25 @@ struct string_key_view_t {
     append_str(dst, view.p_key, view.length, p_append);
   }
 
+  static void append_str(const std::string& str, char*& p_append) {
+    append_str(str.data(), str.length(), p_append);
+  }
+
   static void append_dedup(
       LogicalCachedExtent& dst, const Type& dedup_type, char*& p_append);
+
+  static void append_dedup(const Type& dedup_type, char*& p_append) {
+    p_append -= sizeof(string_size_t);
+    string_size_t len;
+    if (dedup_type == Type::MIN) {
+      len = 0u;
+    } else if (dedup_type == Type::MAX) {
+      len = std::numeric_limits<string_size_t>::max();
+    } else {
+      assert(false);
+    }
+    std::memcpy(p_append, &len, sizeof(string_size_t));
+  }
 
   const char* p_key;
   const char* p_length;
@@ -245,6 +271,9 @@ struct ns_oid_view_t {
       string_key_view_t::append_dedup(dst, view.type(), p_append);
     }
   }
+
+  template <KeyT KT>
+  static void append(const full_key_t<KT>& key, char*& p_append);
 
   string_key_view_t nspace;
   string_key_view_t oid;
@@ -580,6 +609,16 @@ void ns_oid_view_t::append(
     string_key_view_t::append_str(dst, key.oid(), p_append);
   } else {
     string_key_view_t::append_dedup(dst, key.dedup_type(), p_append);
+  }
+}
+
+template <KeyT KT>
+void ns_oid_view_t::append(const full_key_t<KT>& key, char*& p_append) {
+  if (key.dedup_type() == Type::STR) {
+    string_key_view_t::append_str(key.nspace(), p_append);
+    string_key_view_t::append_str(key.oid(), p_append);
+  } else {
+    string_key_view_t::append_dedup(key.dedup_type(), p_append);
   }
 }
 

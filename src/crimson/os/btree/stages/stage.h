@@ -1184,7 +1184,7 @@ struct staged {
   static const value_t* proceed_insert_recursively(
       LogicalCachedExtent& extent, const container_t& container,
       const full_key_t<KT>& key, const value_t& value,
-      position_t& position, match_stage_t stage,
+      position_t& position, match_stage_t& stage,
       node_offset_t& _insert_size, const char* p_left_bound) {
     // proceed insert from right to left
     assert(stage <= STAGE);
@@ -1208,6 +1208,7 @@ struct staged {
           // insert at the higher stage due to split
           do_insert = true;
           _insert_size = insert_size<KT>(key, value);
+          stage = STAGE;
         }
       } else {
         assert(!iter.is_end());
@@ -1248,7 +1249,7 @@ struct staged {
   static const value_t* proceed_insert(
       LogicalCachedExtent& extent, const container_t& container,
       const full_key_t<KT>& key, const value_t& value,
-      position_t& position, match_stage_t stage, node_offset_t& _insert_size) {
+      position_t& position, match_stage_t& stage, node_offset_t& _insert_size) {
     auto p_left_bound = container.p_left_bound();
     if (unlikely(!container.keys())) {
       assert(position == position_t::end());
@@ -1467,6 +1468,17 @@ struct staged {
         return this->_nxt.print(os, false);
       } else {
         return os;
+      }
+    }
+    position_t get_pos() const {
+      if (valid()) {
+        if constexpr (IS_BOTTOM) {
+          return position_t{index()};
+        } else {
+          return position_t{index(), this->_nxt.get_pos()};
+        }
+      } else {
+        return position_t::begin();
       }
     }
     friend std::ostream& operator<<(std::ostream& os, const StagedIterator& iter) {
@@ -1807,7 +1819,7 @@ struct staged {
         if (iter.is_last()) {
           return {TrimType::AFTER, 0u};
         }
-        ++iter;
+        ++trim_at;
         trim_size = iter.trim_until(extent);
       } else if (type == TrimType::BEFORE) {
         if (iter.index() == 0) {

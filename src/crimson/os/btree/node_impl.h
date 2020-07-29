@@ -120,12 +120,22 @@ class InternalNodeT : public InternalNode,
 
   void track_child(const search_position_t& pos, Ref<Node> child) {
     assert(tracked_child_nodes.find(pos) == tracked_child_nodes.end());
+#ifndef NDEBUG
+    if (pos == search_position_t::end()) {
+      assert(this->is_level_tail());
+      assert(child->is_level_tail());
+    } else {
+      assert(!child->is_level_tail());
+      assert(get_key_view(pos) == child->get_largest_key_view());
+    }
+#endif
     tracked_child_nodes[pos] = child;
     child->as_child({pos, this});
   }
 
-  void track_split(const search_position_t& pos, const search_position_t& insert_pos,
-                   match_stage_t insert_stage, Ref<Node> left_child, Ref<Node> right_child);
+  void track_insert(const search_position_t&, match_stage_t, Ref<Node>);
+
+  void track_split(const search_position_t&, Ref<Node>);
 
   static Ref<ConcreteType> allocate(level_t level, bool level_tail) {
     assert(level != 0u);

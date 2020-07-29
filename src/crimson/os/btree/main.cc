@@ -104,29 +104,32 @@ static std::set<onode_key_t> build_key_set(
   return ret;
 }
 
-// key view will be valid until the next build
-static key_view_t build_key_view(const onode_key_t& hobj) {
+static std::pair<key_view_t, void*> build_key_view(const onode_key_t& hobj) {
   key_hobj_t key_hobj(hobj);
+  size_t key_size = sizeof(shard_pool_crush_t) + sizeof(snap_gen_t) +
+                    ns_oid_view_t::estimate_size<KeyT::HOBJ>(key_hobj);
+  void* p_mem = std::malloc(key_size);
+
   key_view_t key_view;
-  static auto extent = get_transaction_manager().alloc_extent(NODE_BLOCK_SIZE);
-  char* p_fill = reinterpret_cast<char*>(extent->get_laddr() + NODE_BLOCK_SIZE);
+  char* p_fill = (char*)p_mem + key_size;
 
   auto spc = shard_pool_crush_t::from_key<KeyT::HOBJ>(key_hobj);
   p_fill -= sizeof(shard_pool_crush_t);
-  extent->copy_in_mem(spc, p_fill);
+  std::memcpy(p_fill, &spc, sizeof(shard_pool_crush_t));
   key_view.set(*reinterpret_cast<const shard_pool_crush_t*>(p_fill));
 
   auto p_ns_oid = p_fill;
-  ns_oid_view_t::append<KeyT::HOBJ>(*extent, key_hobj, p_fill);
+  ns_oid_view_t::append<KeyT::HOBJ>(key_hobj, p_fill);
   ns_oid_view_t ns_oid_view(p_ns_oid);
   key_view.set(ns_oid_view);
 
   auto sg = snap_gen_t::from_key<KeyT::HOBJ>(key_hobj);
   p_fill -= sizeof(snap_gen_t);
-  extent->copy_in_mem(sg, p_fill);
+  assert(p_fill == (char*)p_mem);
+  std::memcpy(p_fill, &sg, sizeof(snap_gen_t));
   key_view.set(*reinterpret_cast<const snap_gen_t*>(p_fill));
 
-  return key_view;
+  return {key_view, p_mem};
 }
 
 int main(int argc, char* argv[])
@@ -160,7 +163,7 @@ int main(int argc, char* argv[])
     onode_t value = {2};
 
     key_hobj_t key(hobj);
-    auto key_view = build_key_view(hobj);
+    auto [key_view, p_mem] = build_key_view(hobj);
 
 #define STAGE_T(NodeType) node_to_stage_t<typename NodeType::node_stage_t>
 #define NXT_T(StageType)  staged<typename StageType::next_param_t>
@@ -211,6 +214,8 @@ int main(int argc, char* argv[])
               << STAGE_T(LeafNode3)::template
                  insert_size<KeyT::HOBJ>(key, value) << std::endl;
     std::cout << std::endl;
+
+    std::free(p_mem);
   }
 
   // node tests
@@ -541,13 +546,15 @@ int main(int argc, char* argv[])
 
   class DummyChild final : public Node {
    public:
-    virtual ~DummyChild() = default;
+    virtual ~DummyChild() { std::free(p_mem_key_view); }
 
     std::set<onode_key_t> get_keys() const { return keys; }
 
     void reset(const std::set<onode_key_t>& _keys, bool level_tail) {
       keys = _keys;
       _is_level_tail = level_tail;
+      std::free(p_mem_key_view);
+      std::tie(key_view, p_mem_key_view) = build_key_view(*keys.crbegin());
     }
 
     void set_root_ref(Ref<Node>& root_ref) {
@@ -571,9 +578,8 @@ int main(int argc, char* argv[])
       std::set<onode_key_t> left_keys(keys.begin(), iter);
       std::set<onode_key_t> right_keys(iter, keys.end());
 
-      keys = left_keys;
       bool right_is_tail = _is_level_tail;
-      _is_level_tail = false;
+      reset(left_keys, false);
       auto right_child = DummyChild::create(right_keys, right_is_tail);
 
       parent_info().ptr->apply_child_split(get_largest_key_view(), this, right_child);
@@ -608,9 +614,7 @@ int main(int argc, char* argv[])
     laddr_t laddr() const override { return _laddr; }
     level_t level() const override { return 0u; }
     key_view_t get_key_view(const search_position_t&) const override { assert(false); }
-    key_view_t get_largest_key_view() const override {
-      return build_key_view(*keys.crbegin());
-    }
+    key_view_t get_largest_key_view() const override { return key_view; }
     std::ostream& dump(std::ostream&) const override { assert(false); }
     std::ostream& dump_brief(std::ostream&) const override { assert(false); }
     Ref<Node> test_clone(Ref<Node>& parent) const override {
@@ -632,7 +636,9 @@ int main(int argc, char* argv[])
    private:
     DummyChild(const std::set<onode_key_t>& keys,
                bool is_level_tail, laddr_t laddr)
-      : keys{keys}, _is_level_tail{is_level_tail}, _laddr{laddr} {}
+        : keys{keys}, _is_level_tail{is_level_tail}, _laddr{laddr} {
+      std::tie(key_view, p_mem_key_view) = build_key_view(*keys.crbegin());
+    }
 
     mutable std::random_device rd;
     std::optional<parent_info_t> _parent_info;
@@ -640,6 +646,8 @@ int main(int argc, char* argv[])
     std::set<onode_key_t> keys;
     bool _is_level_tail;
     laddr_t _laddr;
+    key_view_t key_view;
+    void* p_mem_key_view;
 
    friend class ChildPool;
   };
