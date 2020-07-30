@@ -162,27 +162,19 @@ template <typename FieldType, typename ConcreteType>
 Node::search_result_t I_NODE_T::do_lower_bound(
     const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
   auto stage = this->stage();
-  auto ret = STAGE_T::lower_bound_normalized(stage, key, history);
-
-  auto& position = ret.position;
+  auto result = STAGE_T::lower_bound_normalized(stage, key, history);
+  auto& position = result.position;
   laddr_t child_addr;
   if (position.is_end()) {
     assert(this->is_level_tail());
     child_addr = *this->get_value_ptr(position);
   } else {
-    assert(ret.p_value);
-    child_addr = *ret.p_value;
+    assert(result.p_value);
+    child_addr = *result.p_value;
   }
-
-  Ref<Node> child = get_or_load_child(child_addr, position);
-  match_stat_t mstat = ret.mstat;
-  if (matchable(child->field_type(), mstat)) {
-    return child->do_lower_bound(key, history);
-  } else {
-    // out of lookup range due to prefix compression
-    auto&& ret = child->lookup_smallest();
-    return {std::move(ret), MatchKindBS::NE};
-  }
+  Ref<Node> child = get_or_track_child(position, child_addr);
+  // XXX(multi-type): pass result.mstat to child
+  return child->do_lower_bound(key, history);
 }
 
 template <typename FieldType, typename ConcreteType>
@@ -415,8 +407,8 @@ void I_NODE_T::track_split(
 }
 
 template <typename FieldType, typename ConcreteType>
-Ref<Node> I_NODE_T::get_or_load_child(
-    laddr_t child_addr, const search_position_t& position) {
+Ref<Node> I_NODE_T::get_or_track_child(
+    const search_position_t& position, laddr_t child_addr) {
   Ref<Node> child;
   auto found = tracked_child_nodes.find(position);
   if (found == tracked_child_nodes.end()) {
@@ -425,19 +417,22 @@ Ref<Node> I_NODE_T::get_or_load_child(
     track_child(position, child);
   } else {
     child = found->second;
-    assert(child_addr == child->laddr());
-    assert(position == child->parent_info().position);
-    assert(this == child->parent_info().ptr);
-#ifndef NDEBUG
-    if (position.is_end()) {
-      assert(child->is_level_tail());
-    }
-#endif
   }
+  assert(child_addr == child->laddr());
+  assert(position == child->parent_info().position);
+  assert(this == child->parent_info().ptr);
   assert(this->level() - 1 == child->level());
+  // XXX(multi-type)
   assert(this->field_type() <= child->field_type());
-  assert(child->get_key_view(search_position_t::begin()).match_parent(
-        this->get_key_view(position)));
+#ifndef NDEBUG
+  if (position.is_end()) {
+    assert(this->is_level_tail());
+    assert(child->is_level_tail());
+  } else {
+    assert(!child->is_level_tail());
+    assert(get_key_view(position) == child->get_largest_key_view());
+  }
+#endif
   return child;
 }
 
@@ -464,45 +459,47 @@ Node::search_result_t L_NODE_T::do_lower_bound(
   if (unlikely(stage.keys() == 0)) {
     assert(this->is_root());
     history.set<STAGE_LEFT>(MatchKindCMP::NE);
-    auto p_cursor = get_or_create_cursor(search_position_t::end(), nullptr);
+    auto p_cursor = get_or_track_cursor(search_position_t::end(), nullptr);
     return {p_cursor, MatchKindBS::NE};
-  } else {
-    auto result = STAGE_T::lower_bound_normalized(stage, key, history);
-    if (result.is_end()) {
-      assert(this->is_level_tail());
-    }
-    auto p_cursor = get_or_create_cursor(result.position, result.p_value);
-    return {p_cursor, result.match()};
   }
+
+  auto result = STAGE_T::lower_bound_normalized(stage, key, history);
+  if (result.is_end()) {
+    assert(this->is_level_tail());
+  } else {
+    assert(result.p_value);
+  }
+  auto p_cursor = get_or_track_cursor(result.position, result.p_value);
+  return {p_cursor, result.match()};
 }
 
 template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::lookup_smallest() {
   auto stage = this->stage();
-  search_position_t pos;
-  const onode_t* p_value = nullptr;
   if (unlikely(stage.keys() == 0)) {
     assert(this->is_root());
-    pos = search_position_t::end();
-  } else {
-    pos = search_position_t::begin();
-    p_value = this->get_value_ptr(pos);
+    auto pos = search_position_t::end();
+    return get_or_track_cursor(pos, nullptr);
   }
-  return get_or_create_cursor(pos, p_value);
+
+  auto pos = search_position_t::begin();
+  const onode_t* p_value = this->get_value_ptr(pos);
+  return get_or_track_cursor(pos, p_value);
 }
 
 template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::lookup_largest() {
   auto stage = this->stage();
-  search_position_t pos;
-  const onode_t* p_value = nullptr;
   if (unlikely(stage.keys() == 0)) {
     assert(this->is_root());
-    pos = search_position_t::end();
-  } else {
-    STAGE_T::lookup_largest_normalized(stage, pos, p_value);
+    auto pos = search_position_t::end();
+    return get_or_track_cursor(pos, nullptr);
   }
-  return get_or_create_cursor(pos, p_value);
+
+  search_position_t pos;
+  const onode_t* p_value = nullptr;
+  STAGE_T::lookup_largest_normalized(stage, pos, p_value);
+  return get_or_track_cursor(pos, p_value);
 }
 
 template <typename FieldType, typename ConcreteType>
@@ -531,7 +528,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
     // TODO: common part end, move to NodeT
 
     auto insert_pos_normalized = normalize(std::move(insert_pos));
-    return get_or_create_cursor(insert_pos_normalized, p_value);
+    return get_or_track_cursor(insert_pos_normalized, p_value);
   }
 
   std::cout << "  try insert at: " << insert_pos
@@ -604,10 +601,10 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   auto insert_pos_normalized = normalize(std::move(insert_pos));
   if (insert_left) {
     assert(this->get_key_view(insert_pos_normalized).match(key));
-    ret = get_or_create_cursor(insert_pos_normalized, p_value);
+    ret = get_or_track_cursor(insert_pos_normalized, p_value);
   } else {
     assert(right_node->get_key_view(insert_pos_normalized).match(key));
-    ret = right_node->get_or_create_cursor(insert_pos_normalized, p_value);
+    ret = right_node->get_or_track_cursor(insert_pos_normalized, p_value);
   }
 
   // propagate index to parent
@@ -639,7 +636,7 @@ Ref<Node> L_NODE_T::test_clone(Ref<Node>& parent) const {
 #endif
 
 template <typename FieldType, typename ConcreteType>
-Ref<tree_cursor_t> L_NODE_T::get_or_create_cursor(
+Ref<tree_cursor_t> L_NODE_T::get_or_track_cursor(
     const search_position_t& position, const onode_t* p_value) {
   /*
   Ref<tree_cursor_t> p_cursor;

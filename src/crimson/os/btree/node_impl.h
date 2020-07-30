@@ -95,17 +95,20 @@ class InternalNodeT : public InternalNode,
   Ref<tree_cursor_t> lookup_smallest() override final {
     auto position = search_position_t::begin();
     laddr_t child_addr = *this->get_value_ptr(position);
-    auto child = get_or_load_child(child_addr, position);
+    auto child = get_or_track_child(position, child_addr);
     return child->lookup_smallest();
   }
 
   Ref<tree_cursor_t> lookup_largest() override final {
+    // NOTE: unlike L_NODE_T::lookup_largest(), this only works for the tail
+    // internal node to return the tail child address.
     auto position = search_position_t::end();
     laddr_t child_addr = *this->get_value_ptr(position);
-    auto child = get_or_load_child(child_addr, position);
+    auto child = get_or_track_child(position, child_addr);
     return child->lookup_largest();
   }
 
+  // test only
   Ref<Node> get_tracked_child(const search_position_t& pos) override final {
     assert(tracked_child_nodes.find(pos) != tracked_child_nodes.end());
     return tracked_child_nodes[pos];
@@ -121,7 +124,7 @@ class InternalNodeT : public InternalNode,
   void track_child(const search_position_t& pos, Ref<Node> child) {
     assert(tracked_child_nodes.find(pos) == tracked_child_nodes.end());
 #ifndef NDEBUG
-    if (pos == search_position_t::end()) {
+    if (pos.is_end()) {
       assert(this->is_level_tail());
       assert(child->is_level_tail());
     } else {
@@ -143,7 +146,7 @@ class InternalNodeT : public InternalNode,
   }
 
  private:
-  Ref<Node> get_or_load_child(laddr_t child_addr, const search_position_t& position);
+  Ref<Node> get_or_track_child(const search_position_t&, laddr_t);
   // TODO: intrusive
   // TODO: use weak ref
   // TODO: as transactions are isolated with each other, the in-memory tree
@@ -184,7 +187,7 @@ class LeafNodeT: public LeafNode,
   }
 
  private:
-  Ref<tree_cursor_t> get_or_create_cursor(
+  Ref<tree_cursor_t> get_or_track_cursor(
       const search_position_t& position, const onode_t* p_value);
   // TODO: intrusive
   // TODO: use weak ref
