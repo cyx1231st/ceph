@@ -113,7 +113,7 @@ const LogicalCachedExtent& NODE_T::extent() const {
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 const value_type_t<NODE_TYPE>* NODE_T::get_value_ptr(
-    const search_position_t& position) {
+    const search_position_t& position) const {
   auto _stage = stage();
   if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
     if (position.is_end()) {
@@ -179,7 +179,7 @@ Node::search_result_t I_NODE_T::do_lower_bound(
 
 template <typename FieldType, typename ConcreteType>
 void I_NODE_T::apply_child_split(
-    // TODO: cross-node string dedup
+    // TODO(cross-node string dedup)
     const full_key_t<KeyT::VIEW>& left_key,
     Ref<Node> left_child, Ref<Node> right_child) {
   auto [pos, ptr] = left_child->parent_info();
@@ -228,6 +228,21 @@ void I_NODE_T::apply_child_split(
     track_insert(insert_pos_normalized, insert_stage, left_child);
 
 #ifndef NDEBUG
+    // verify correctness of tracked children
+    for (auto& kv : tracked_child_nodes) {
+      assert(this == kv.second->parent_info().ptr);
+      assert(kv.first == kv.second->parent_info().position);
+      assert(*this->get_value_ptr(kv.first) == kv.second->laddr());
+      if (kv.first.is_end()) {
+        assert(this->is_level_tail());
+        assert(kv.second->is_level_tail());
+      } else {
+        assert(!kv.second->is_level_tail());
+        assert(get_key_view(kv.first) == kv.second->get_largest_key_view());
+      }
+    }
+
+    // validate left_child is before right_child
     auto iter = tracked_child_nodes.find(insert_pos_normalized);
     ++iter;
     assert(iter->second == right_child);
@@ -265,7 +280,7 @@ void I_NODE_T::apply_child_split(
   auto right_node = ConcreteType::allocate(this->level(), this->is_level_tail());
 
   auto append_at = split_at;
-  // TODO: identify conditions for cross-node string deduplication
+  // TODO(cross-node string dedup)
   typename STAGE_T::template StagedAppender<KeyT::VIEW> appender;
   appender.init(&right_node->extent(),
                 const_cast<char*>(right_node->stage().p_start()));
@@ -321,10 +336,17 @@ void I_NODE_T::apply_child_split(
     right_node->track_insert(insert_pos_normalized, insert_stage, left_child);
   }
 #ifndef NDEBUG
+  // verify correctness of tracked children
   for (auto& kv : tracked_child_nodes) {
+    assert(this == kv.second->parent_info().ptr);
+    assert(kv.first == kv.second->parent_info().position);
+    assert(*this->get_value_ptr(kv.first) == kv.second->laddr());
     assert(get_key_view(kv.first) == kv.second->get_largest_key_view());
   }
   for (auto& kv : right_node->tracked_child_nodes) {
+    assert(right_node == kv.second->parent_info().ptr);
+    assert(kv.first == kv.second->parent_info().position);
+    assert(*right_node->get_value_ptr(kv.first) == kv.second->laddr());
     if (kv.first.is_end()) {
       assert(right_node->is_level_tail());
       assert(kv.second->is_level_tail());
@@ -336,7 +358,7 @@ void I_NODE_T::apply_child_split(
 #endif
 
   // propagate index to parent
-  // TODO: cross-node string dedup
+  // TODO(cross-node string dedup)
   auto key_view = get_largest_key_view();
   this->parent_info().ptr->apply_child_split(key_view, this, right_node);
 
@@ -368,7 +390,8 @@ Ref<Node> I_NODE_T::test_clone(Ref<Node>& parent) const {
 
 template <typename FieldType, typename ConcreteType>
 void I_NODE_T::track_insert(
-    const search_position_t& insert_pos, match_stage_t insert_stage, Ref<Node> insert_child) {
+    const search_position_t& insert_pos, match_stage_t insert_stage,
+    Ref<Node> insert_child) {
   // update tracks
   auto pos_upper_bound = insert_pos;
   pos_upper_bound.index_by_stage(insert_stage) = INDEX_END;
@@ -386,7 +409,7 @@ void I_NODE_T::track_insert(
     assert(get_key_view(_pos) == node->get_largest_key_view());
     track_child(_pos, node);
   }
-
+  // track insert
   track_child(insert_pos, insert_child);
 }
 
@@ -396,11 +419,11 @@ void I_NODE_T::track_split(
   auto first = tracked_child_nodes.lower_bound(split_pos);
   auto iter = first;
   while (iter != tracked_child_nodes.end()) {
-    search_position_t pos = iter->first;
-    pos -= split_pos;
-    // right_node->track_child(pos, iter->second);
-    right_node->tracked_child_nodes[pos] = iter->second;
-    iter->second->as_child({pos, right_node});
+    search_position_t new_pos = iter->first;
+    new_pos -= split_pos;
+    // right_node->track_child(new_pos, iter->second);
+    right_node->tracked_child_nodes[new_pos] = iter->second;
+    iter->second->as_child({new_pos, right_node});
     ++iter;
   }
   tracked_child_nodes.erase(first, tracked_child_nodes.end());
@@ -527,8 +550,21 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
     assert(stage.free_size() == free_size - insert_size);
     // TODO: common part end, move to NodeT
 
+    assert(p_value->size == value.size);
     auto insert_pos_normalized = normalize(std::move(insert_pos));
-    return get_or_track_cursor(insert_pos_normalized, p_value);
+    assert(insert_pos_normalized <= pos);
+    assert(get_key_view(insert_pos_normalized) == key);
+    auto ret = track_insert(insert_pos_normalized, insert_stage, p_value);
+
+#ifndef NDEBUG
+    // verify correctness of tracked cursors
+    for (auto& kv : tracked_cursors) {
+      assert(this == kv.second->get_leaf_node());
+      assert(kv.first == kv.second->get_position());
+      assert(this->get_value_ptr(kv.first) == kv.second->get_p_value());
+    }
+#endif
+    return ret;
   }
 
   std::cout << "  try insert at: " << insert_pos
@@ -554,7 +590,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   auto right_node = ConcreteType::allocate(this->is_level_tail());
 
   auto append_at = split_at;
-  // TODO: identify conditions for cross-node string deduplication
+  // TODO(cross-node string dedup)
   typename STAGE_T::template StagedAppender<KeyT::HOBJ> appender;
   appender.init(&right_node->extent(),
                 const_cast<char*>(right_node->stage().p_start()));
@@ -597,18 +633,37 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   assert(p_value);
   // TODO: common part end, move to NodeT
 
-  Ref<tree_cursor_t> ret;
+  auto split_pos_normalized = normalize(split_at.get_pos());
   auto insert_pos_normalized = normalize(std::move(insert_pos));
+  std::cout << "split at " << split_pos_normalized
+            << ", insert at " << insert_pos_normalized
+            << ", insert_left=" << insert_left
+            << ", insert_stage=" << (int)insert_stage << std::endl;
+  track_split(split_pos_normalized, right_node);
+  Ref<tree_cursor_t> ret;
   if (insert_left) {
-    assert(this->get_key_view(insert_pos_normalized).match(key));
-    ret = get_or_track_cursor(insert_pos_normalized, p_value);
+    assert(this->get_key_view(insert_pos_normalized) == key);
+    ret = track_insert(insert_pos_normalized, insert_stage, p_value);
   } else {
-    assert(right_node->get_key_view(insert_pos_normalized).match(key));
-    ret = right_node->get_or_track_cursor(insert_pos_normalized, p_value);
+    assert(right_node->get_key_view(insert_pos_normalized) == key);
+    ret = right_node->track_insert(insert_pos_normalized, insert_stage, p_value);
   }
+#ifndef NDEBUG
+  // verify correctness of tracked cursors
+  for (auto& kv : tracked_cursors) {
+    assert(this == kv.second->get_leaf_node());
+    assert(kv.first == kv.second->get_position());
+    assert(this->get_value_ptr(kv.first) == kv.second->get_p_value());
+  }
+  for (auto& kv : right_node->tracked_cursors) {
+    assert(right_node == kv.second->get_leaf_node());
+    assert(kv.first == kv.second->get_position());
+    assert(right_node->get_value_ptr(kv.first) == kv.second->get_p_value());
+  }
+#endif
 
   // propagate index to parent
-  // TODO: cross-node string dedup
+  // TODO(cross-node string dedup)
   auto key_view = get_largest_key_view();
   this->parent_info().ptr->apply_child_split(key_view, this, right_node);
 
@@ -636,23 +691,99 @@ Ref<Node> L_NODE_T::test_clone(Ref<Node>& parent) const {
 #endif
 
 template <typename FieldType, typename ConcreteType>
+Ref<tree_cursor_t> L_NODE_T::track_insert(
+    const search_position_t& insert_pos, match_stage_t insert_stage,
+    const onode_t* p_onode) {
+  // invalidate cursor value
+  auto pos_invalidate_begin = insert_pos;
+  pos_invalidate_begin.index_by_stage(STAGE_RIGHT) = 0;
+  auto begin_invalidate = tracked_cursors.lower_bound(pos_invalidate_begin);
+  std::for_each(begin_invalidate, tracked_cursors.end(), [](auto& kv) {
+    kv.second->invalidate_p_value();
+  });
+
+  // update cursor position
+  auto pos_upper_bound = insert_pos;
+  pos_upper_bound.index_by_stage(insert_stage) = INDEX_END;
+  auto first = tracked_cursors.lower_bound(insert_pos);
+  auto last = tracked_cursors.lower_bound(pos_upper_bound);
+  std::vector<tree_cursor_t*> p_cursors;
+  std::for_each(first, last, [&p_cursors](auto& kv) {
+    p_cursors.push_back(kv.second);
+  });
+  tracked_cursors.erase(first, last);
+  for (auto& p_cursor : p_cursors) {
+    search_position_t new_pos = p_cursor->get_position();
+    ++new_pos.index_by_stage(insert_stage);
+    p_cursor->update_track(this, new_pos);
+  }
+
+  // track insert
+  return new tree_cursor_t(this, insert_pos, p_onode);
+}
+
+template <typename FieldType, typename ConcreteType>
+void L_NODE_T::track_split(
+    const search_position_t& split_pos, Ref<ConcreteType> right_node) {
+  // invalidate cursor value
+  auto pos_invalidate_begin = split_pos;
+  pos_invalidate_begin.index_by_stage(STAGE_RIGHT) = 0;
+  auto begin_invalidate = tracked_cursors.lower_bound(pos_invalidate_begin);
+  std::for_each(begin_invalidate, tracked_cursors.end(), [](auto& kv) {
+    kv.second->invalidate_p_value();
+  });
+
+  // update cursor ownership and position
+  auto first = tracked_cursors.lower_bound(split_pos);
+  auto iter = first;
+  while (iter != tracked_cursors.end()) {
+    search_position_t new_pos = iter->first;
+    new_pos -= split_pos;
+    iter->second->update_track(right_node, new_pos);
+    ++iter;
+  }
+  tracked_cursors.erase(first, tracked_cursors.end());
+}
+
+template <typename FieldType, typename ConcreteType>
+const onode_t* L_NODE_T::get_p_value(const search_position_t& pos) const {
+  return this->get_value_ptr(pos);
+}
+
+template <typename FieldType, typename ConcreteType>
+void L_NODE_T::do_track_cursor(tree_cursor_t& cursor) {
+  assert(!cursor.get_position().is_end());
+  assert(tracked_cursors.find(cursor.get_position()) == tracked_cursors.end());
+  tracked_cursors[cursor.get_position()] = &cursor;
+}
+
+template <typename FieldType, typename ConcreteType>
+void L_NODE_T::do_untrack_cursor(const tree_cursor_t& cursor) {
+  auto removed = tracked_cursors.erase(cursor.get_position());
+  assert(removed);
+}
+
+template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::get_or_track_cursor(
     const search_position_t& position, const onode_t* p_value) {
-  /*
+  if (position.is_end()) {
+    assert(this->is_level_tail());
+    assert(!p_value);
+    // we need to return the leaf node to insert
+    return new tree_cursor_t(this, position, p_value);
+  }
+
   Ref<tree_cursor_t> p_cursor;
   auto found = tracked_cursors.find(position);
   if (found == tracked_cursors.end()) {
     p_cursor = new tree_cursor_t(this, position, p_value);
-    tracked_cursors.insert({position, p_cursor});
   } else {
     p_cursor = found->second;
     assert(p_cursor->get_leaf_node() == this);
     assert(p_cursor->get_position() == position);
-    // TODO: set p_value
+    p_cursor->set_p_value(p_value);
   }
   return p_cursor;
-  */
-  return new tree_cursor_t(this, position, p_value);
 }
 
 }

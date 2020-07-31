@@ -44,6 +44,7 @@ class Onodes {
     auto p_onode = (onode_t*)p_mem;
     tracked_onodes.push_back(p_onode);
     p_onode->size = size;
+    p_onode->id = id++;
     p_mem += (size - sizeof(uint32_t));
     std::memcpy(p_mem, &target, sizeof(uint32_t));
     validate(*p_onode);
@@ -67,6 +68,7 @@ class Onodes {
   }
 
  private:
+  uint16_t id = 0;
   mutable std::random_device rd;
   std::vector<const onode_t*> onodes;
   std::vector<onode_t*> tracked_onodes;
@@ -254,17 +256,25 @@ int main(int argc, char* argv[])
   std::cout << std::endl;
 
   /*************** tree tests ***************/
-  auto& btree = Btree::get();
-  auto onodes = Onodes(15);
   auto f_validate_cursor = [] (const Btree::Cursor& cursor, const onode_t& onode) {
     assert(!cursor.is_end());
     assert(cursor.value());
-    assert(cursor.value()->size == onode.size);
+    assert(cursor.value() != &onode);
+    assert(*cursor.value() == onode);
     Onodes::validate(*cursor.value());
   };
+  auto f_validate_cursor_t = [] (Ref<tree_cursor_t> p_cursor, const onode_t& onode) {
+    assert(!p_cursor->is_end());
+    assert(p_cursor->get_p_value());
+    assert(p_cursor->get_p_value() != &onode);
+    assert(*p_cursor->get_p_value() == onode);
+    Onodes::validate(*p_cursor->get_p_value());
+  };
+  auto onodes = Onodes(15);
 
   // leaf node insert
   {
+    auto& btree = Btree::get();
     std::cout << "---------------------------------------------\n"
               << "randomized leaf node insert:"
               << std::endl << std::endl;
@@ -274,9 +284,13 @@ int main(int argc, char* argv[])
     assert(btree.begin().is_end());
     assert(btree.last().is_end());
 
-    auto f_validate_insert_new =
-        [&btree, &f_validate_cursor] (const onode_key_t& key, const onode_t& value) {
+    std::vector<std::tuple<onode_key_t,
+                           const onode_t*,
+                           Btree::Cursor>> insert_history;
+    auto f_validate_insert_new = [&btree, &f_validate_cursor, &insert_history] (
+        const onode_key_t& key, const onode_t& value) {
       auto [cursor, ret] = btree.insert(key, value);
+      insert_history.emplace_back(key, &value, cursor);
       assert(ret == true);
       f_validate_cursor(cursor, value);
       auto cursor_ = btree.lower_bound(key);
@@ -379,27 +393,14 @@ int main(int argc, char* argv[])
     });
     assert(btree.height() == 1);
 
-    // validate values keep intact
-    auto f_validate_kv =
-        [&btree, &f_validate_cursor] (const onode_key_t& key, const onode_t& value) {
-      auto cursor = btree.lower_bound(key);
-      f_validate_cursor(cursor, value);
-    };
-    f_validate_kv(key1, onode1);
-    f_validate_kv(key2, onode2);
-    f_validate_kv(key3, onode3);
-    f_validate_kv(key4, onode4);
-    f_validate_kv(key5, onode5);
-    f_validate_kv(key6, onode6);
-    f_validate_kv(key7, onode7);
-    f_validate_kv(key8, onode8);
-    f_validate_kv(key9, onode9);
-    f_validate_kv(key10, onode10);
-    f_validate_kv(key11, onode11);
-    std::for_each(kvs.begin(), kvs.end(), [&f_validate_kv] (auto& kv) {
-      f_validate_kv(kv.first, *kv.second);
-    });
-    f_validate_kv(key_s, smallest_value);
+    for (auto& [k, v, c] : insert_history) {
+      // validate values in tree keep intact
+      auto cursor = btree.lower_bound(k);
+      f_validate_cursor(cursor, *v);
+      // validate values in cursors keep intact
+      f_validate_cursor(c, *v);
+    }
+    f_validate_cursor(btree.lower_bound(key_s), smallest_value);
     f_validate_cursor(btree.begin(), smallest_value);
     f_validate_cursor(btree.last(), largest_value);
 
@@ -418,28 +419,37 @@ int main(int argc, char* argv[])
               << "before leaf node split:"
               << std::endl << std::endl;
     auto keys = build_key_set({2, 5}, {2, 5}, {2, 5});
+    std::vector<std::pair<onode_key_t, const onode_t*>> kvs_inserted;
     for (auto& key : keys) {
-      auto [p_cursor, success] = root->insert(key, onodes.pick_largest());
+      auto& onode = onodes.create(120);
+      auto [p_cursor, success] = root->insert(key, onode);
       assert(success == true);
       assert(p_cursor->get_leaf_node() == root);
-      assert(p_cursor->get_p_value());
-      Onodes::validate(*p_cursor->get_p_value());
+      f_validate_cursor_t(p_cursor, onode);
+      kvs_inserted.emplace_back(key, &onode);
     }
     assert(root->level() == 0);
     root->dump(std::cout) << std::endl << std::endl;
 
-    auto f_split = [&root] (const onode_key_t& key, const onode_t& value) {
+    auto f_split = [&root, &kvs_inserted, &f_validate_cursor_t] (
+        const onode_key_t& key, const onode_t& value) {
       Ref<Node> dummy_root;
       auto node = root->test_clone(dummy_root);
       std::cout << "insert " << key << ":" << std::endl;
       auto [p_cursor, success] = node->insert(key, value);
       assert(success);
-      assert(p_cursor->get_p_value());
-      assert(p_cursor->get_p_value() != &value);
-      assert(p_cursor->get_p_value()->size == value.size);
-      Onodes::validate(*p_cursor->get_p_value());
+      f_validate_cursor_t(p_cursor, value);
       dummy_root->dump(std::cout) << std::endl;
       std::cout << std::endl;
+
+      for (auto& [k, v] : kvs_inserted) {
+        auto result = dummy_root->lower_bound(k);
+        assert(result.match == MatchKindBS::EQ);
+        f_validate_cursor_t(result.p_cursor, *v);
+      }
+      auto result = dummy_root->lower_bound(key);
+      assert(result.match == MatchKindBS::EQ);
+      f_validate_cursor_t(result.p_cursor, value);
     };
     auto& onode = onodes.create(1280);
 

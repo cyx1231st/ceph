@@ -216,6 +216,13 @@ inline MatchKindCMP compare_to(const std::string& key, const string_key_view_t& 
     return toMatchKindCMP(key, target.p_key, target.length);
   }
 }
+inline MatchKindCMP compare_to(const string_key_view_t& key, const std::string& target) {
+  return reverse(compare_to(target, key));
+}
+inline MatchKindCMP compare_to(const std::string& key, const std::string& target) {
+  return toMatchKindCMP(key, target);
+}
+
 inline std::ostream& operator<<(std::ostream& os, const string_key_view_t& view) {
   auto type = view.type();
   if (type == string_key_view_t::Type::MIN) {
@@ -314,6 +321,15 @@ class key_hobj_t {
     return key.gen;
   }
 
+  bool operator==(const full_key_t<KeyT::VIEW>& o) const;
+  bool operator==(const full_key_t<KeyT::HOBJ>& o) const;
+  bool operator!=(const full_key_t<KeyT::VIEW>& o) const {
+    return !operator==(o);
+  }
+  bool operator!=(const full_key_t<KeyT::HOBJ>& o) const {
+    return !operator==(o);
+  }
+
  private:
   ns_oid_view_t::Type _dedup_type = ns_oid_view_t::Type::STR;
   onode_key_t key;
@@ -354,6 +370,15 @@ class key_view_t {
   }
   gen_t gen() const {
     return snap_gen_packed().gen;
+  }
+
+  bool operator==(const full_key_t<KeyT::VIEW>& o) const;
+  bool operator==(const full_key_t<KeyT::HOBJ>& o) const;
+  bool operator!=(const full_key_t<KeyT::VIEW>& o) const {
+    return !operator==(o);
+  }
+  bool operator!=(const full_key_t<KeyT::HOBJ>& o) const {
+    return !operator==(o);
   }
 
   /*
@@ -408,67 +433,45 @@ class key_view_t {
     p_snap_gen = &key;
   }
 
-  bool match_parent(const key_view_t& index) const {
-    assert(has_snap_gen());
-    assert(index.has_snap_gen());
-    if (*p_snap_gen != *index.p_snap_gen)
-      return false;
-
-    if (!has_ns_oid())
-      return true;
-    assert(ns_oid_view().type() != ns_oid_view_t::Type::MIN);
-    assert(index.has_ns_oid());
-    assert(index.ns_oid_view().type() != ns_oid_view_t::Type::MIN);
-    if (ns_oid_view().type() != ns_oid_view_t::Type::MAX &&
-        ns_oid_view() != index.ns_oid_view()) {
-      return false;
-    }
-
-    if (!has_crush())
-      return true;
-    assert(index.has_crush());
-    if (crush_packed() != index.crush_packed())
-      return false;
-
-    if (!has_shard_pool())
-      return true;
-    assert(index.has_shard_pool());
-    if (shard_pool_packed() != index.shard_pool_packed())
-      return false;
-
-    return true;
-  }
-
-  bool match(const full_key_t<KeyT::HOBJ>& key) const;
-  bool operator==(const full_key_t<KeyT::VIEW>& o) const {
-    if (has_shard_pool() != o.has_shard_pool())
-      return false;
-    if (has_shard_pool() && *p_shard_pool != *o.p_shard_pool)
-      return false;
-    if (has_crush() != o.has_crush())
-      return false;
-    if (has_crush() && *p_crush != *o.p_crush)
-      return false;
-    if (has_ns_oid() != o.has_ns_oid())
-      return false;
-    if (has_ns_oid() && *p_ns_oid != *o.p_ns_oid)
-      return false;
-    if (has_snap_gen() != o.has_snap_gen())
-      return false;
-    if (has_snap_gen() && *p_snap_gen != *o.p_snap_gen)
-      return false;
-    return true;
-  }
-  bool operator!=(const full_key_t<KeyT::VIEW>& o) const {
-    return !operator==(o);
-  }
-
  private:
   const shard_pool_t* p_shard_pool = nullptr;
   const crush_t* p_crush = nullptr;
   std::optional<ns_oid_view_t> p_ns_oid;
   const snap_gen_t* p_snap_gen = nullptr;
 };
+
+template <KeyT TypeL, KeyT TypeR>
+bool compare_full_key(const full_key_t<TypeL>& l, const full_key_t<TypeR>& r) {
+  if (l.shard() != r.shard())
+    return false;
+  if (l.pool() != r.pool())
+    return false;
+  if (l.crush() != r.crush())
+    return false;
+  if (compare_to(l.nspace(), r.nspace()) != MatchKindCMP::EQ)
+    return false;
+  if (compare_to(l.oid(), r.oid()) != MatchKindCMP::EQ)
+    return false;
+  if (l.snap() != r.snap())
+    return false;
+  if (l.gen() != r.gen())
+    return false;
+  return true;
+}
+
+inline bool key_hobj_t::operator==(const full_key_t<KeyT::VIEW>& o) const {
+  return compare_full_key<KeyT::HOBJ, KeyT::VIEW>(*this, o);
+}
+inline bool key_hobj_t::operator==(const full_key_t<KeyT::HOBJ>& o) const {
+  return compare_full_key<KeyT::HOBJ, KeyT::HOBJ>(*this, o);
+}
+inline bool key_view_t::operator==(const full_key_t<KeyT::VIEW>& o) const {
+  return compare_full_key<KeyT::VIEW, KeyT::VIEW>(*this, o);
+}
+inline bool key_view_t::operator==(const full_key_t<KeyT::HOBJ>& o) const {
+  return compare_full_key<KeyT::VIEW, KeyT::HOBJ>(*this, o);
+}
+
 inline std::ostream& operator<<(std::ostream& os, const key_view_t& key) {
   os << "key_view(";
   if (key.has_shard_pool()) {
@@ -529,30 +532,6 @@ MatchKindCMP compare_to(const full_key_t<Type>& key, const snap_gen_t& target) {
   if (ret != MatchKindCMP::EQ)
     return ret;
   return toMatchKindCMP(key.gen(), target.gen);
-}
-
-inline bool key_view_t::match(const full_key_t<KeyT::HOBJ>& key) const {
-  assert(has_snap_gen());
-  if (compare_to<KeyT::HOBJ>(key, snap_gen_packed()) != MatchKindCMP::EQ)
-    return false;
-
-  if (!has_ns_oid())
-    return true;
-  if (ns_oid_view().type() == ns_oid_view_t::Type::STR &&
-      compare_to<KeyT::HOBJ>(key, ns_oid_view()) != MatchKindCMP::EQ)
-    return false;
-
-  if (!has_crush())
-    return true;
-  if (compare_to<KeyT::HOBJ>(key, crush_packed()) != MatchKindCMP::EQ)
-    return false;
-
-  if (!has_shard_pool())
-    return true;
-  if (compare_to<KeyT::HOBJ>(key, shard_pool_packed()) != MatchKindCMP::EQ)
-    return false;
-
-  return true;
 }
 
 template <KeyT KT>

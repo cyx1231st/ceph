@@ -53,7 +53,7 @@ class NodeT : virtual public Node {
   level_t level() const override final;
   full_key_t<KeyT::VIEW> get_key_view(const search_position_t&) const override final;
   full_key_t<KeyT::VIEW> get_largest_key_view() const override final;
-  const value_t* get_value_ptr(const search_position_t&);
+  const value_t* get_value_ptr(const search_position_t&) const;
   std::ostream& dump(std::ostream&) const override final;
   std::ostream& dump_brief(std::ostream& os) const override final;
 
@@ -136,6 +136,8 @@ class InternalNodeT : public InternalNode,
     child->as_child({pos, this});
   }
 
+  // TODO: extract a common tracker for InternalNode and LeafNode
+  // to track Node and tree_cursor_t.
   void track_insert(const search_position_t&, match_stage_t, Ref<Node>);
 
   void track_split(const search_position_t&, Ref<ConcreteType>);
@@ -182,18 +184,31 @@ class LeafNodeT: public LeafNode,
   Ref<Node> test_clone(Ref<Node>&) const override final;
 #endif
 
+  // TODO: extract a common tracker for InternalNode and LeafNode
+  // to track Node and tree_cursor_t.
+  Ref<tree_cursor_t> track_insert(const search_position_t&, match_stage_t, const onode_t*);
+
+  void track_split(const search_position_t&, Ref<ConcreteType>);
+
   static Ref<ConcreteType> allocate(bool is_level_tail) {
     return ConcreteType::_allocate(0u, is_level_tail);
   }
 
  private:
+  const onode_t* get_p_value(const search_position_t&) const override final;
+  void do_track_cursor(tree_cursor_t&) override final;
+  void do_untrack_cursor(const tree_cursor_t&) override final;
+
   Ref<tree_cursor_t> get_or_track_cursor(
       const search_position_t& position, const onode_t* p_value);
+
   // TODO: intrusive
   // TODO: use weak ref
   // TODO: as transactions are isolated with each other, the in-memory tree
   // hierarchy needs to be attached to the specific transaction.
-  //std::map<search_position_t, Ref<tree_cursor_t>> tracked_cursors;
+
+  // track the current living cursors in order to keep them updated
+  std::map<search_position_t, tree_cursor_t*> tracked_cursors;
 };
 class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {
  public:

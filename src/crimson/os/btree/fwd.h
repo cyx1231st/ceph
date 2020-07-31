@@ -64,4 +64,14 @@ inline MatchKindCMP toMatchKindCMP(
   return toMatchKindCMP(-r.compare(0u, r.length(), l, l_len));
 }
 
+inline MatchKindCMP reverse(MatchKindCMP cmp) {
+  if (cmp == MatchKindCMP::NE) {
+    return MatchKindCMP::PO;
+  } else if (cmp == MatchKindCMP::PO) {
+    return MatchKindCMP::NE;
+  } else {
+    return cmp;
+  }
+}
+
 }

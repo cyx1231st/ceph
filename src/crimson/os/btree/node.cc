@@ -3,12 +3,52 @@
 
 #include "node.h"
 
+#include <cassert>
 #include <exception>
 
 #include "dummy_transaction_manager.h"
 #include "node_impl.h"
 
 namespace crimson::os::seastore::onode {
+
+tree_cursor_t::tree_cursor_t(
+    Ref<LeafNode> node, const search_position_t& pos, const onode_t* p_value)
+      : leaf_node{node}, position{pos}, p_value{p_value} {
+  assert((!pos.is_end() && p_value) || (pos.is_end() && !p_value));
+  if (!pos.is_end()) {
+    assert(p_value == leaf_node->get_p_value(position));
+    leaf_node->do_track_cursor(*this);
+  }
+}
+
+tree_cursor_t::~tree_cursor_t() {
+  if (!position.is_end()) {
+    leaf_node->do_untrack_cursor(*this);
+  }
+}
+
+void tree_cursor_t::update_track(
+    Ref<LeafNode> node, const search_position_t& pos) {
+  // already untracked
+  assert(!pos.is_end());
+  assert(!is_end());
+  leaf_node = node;
+  position = pos;
+  // p_value must be already invalidated
+  assert(!p_value);
+  leaf_node->do_track_cursor(*this);
+}
+
+const onode_t* tree_cursor_t::get_p_value() const {
+  assert(!is_end());
+  if (!p_value) {
+    // TODO: we decide to pin the extent of leaf node in order to read its
+    // value synchronously.
+    p_value = leaf_node->get_p_value(position);
+  }
+  assert(p_value);
+  return p_value;
+}
 
 Node::search_result_t Node::lower_bound(const onode_key_t& _key) {
   MatchHistory history;

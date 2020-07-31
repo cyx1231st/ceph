@@ -17,27 +17,37 @@ namespace crimson::os::seastore::onode {
 class LeafNode;
 class InternalNode;
 
-class tree_cursor_t
+class tree_cursor_t final
   : public boost::intrusive_ref_counter<
     tree_cursor_t, boost::thread_unsafe_counter> {
   // TODO: deref LeafNode if destroyed with leaf_node available
   // TODO: make sure to deref LeafNode if is_end()
   // TODO: make tree_cursor_t unique
  public:
-  tree_cursor_t(Ref<LeafNode> node, const search_position_t& pos, const onode_t* p_value)
-    : leaf_node{node}, position{pos}, p_value{p_value} {
-    assert((!pos.is_end() && p_value) || (pos.is_end() && !p_value));
+  // TODO: private & friend of LeafNode
+  tree_cursor_t(Ref<LeafNode>, const search_position_t&, const onode_t*);
+  ~tree_cursor_t();
+
+  // TODO: private & friend of LeafNode
+  void invalidate_p_value() { p_value = nullptr; }
+  void update_track(Ref<LeafNode>, const search_position_t&);
+  void set_p_value(const onode_t* _p_value) {
+    if (!p_value) {
+      p_value = _p_value;
+    } else {
+      assert(p_value == _p_value);
+    }
   }
 
   bool is_end() const { return position.is_end(); }
   Ref<LeafNode> get_leaf_node() { return leaf_node; }
   const search_position_t& get_position() const { return position; }
-  const onode_t* get_p_value() const { return p_value; }
+  const onode_t* get_p_value() const;
 
  private:
   Ref<LeafNode> leaf_node;
   search_position_t position;
-  const onode_t* p_value;
+  mutable const onode_t* p_value;
 };
 
 struct key_view_t;
@@ -117,8 +127,12 @@ class LeafNode : virtual public Node {
       const onode_t&,
       const search_position_t&,
       const MatchHistory&) = 0;
+  virtual const onode_t* get_p_value(const search_position_t&) const = 0;
+  virtual void do_track_cursor(tree_cursor_t&) = 0;
+  virtual void do_untrack_cursor(const tree_cursor_t&) = 0;
 
   friend class Node;
+  friend class tree_cursor_t;
 };
 
 }
