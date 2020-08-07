@@ -1280,7 +1280,6 @@ struct staged {
    * Lookup interfaces
    */
 
-  // TODO: remove most of the normalize helper functions
   static void lookup_largest_normalized(
       const container_t& container, search_position_t& position, const value_t*& p_value) {
     if constexpr (STAGE == STAGE_LEFT) {
@@ -1300,16 +1299,6 @@ struct staged {
       return;
     }
     assert(false);
-  }
-
-  static const value_t* get_p_value_normalized(
-      const container_t& container, const search_position_t& position) {
-    return get_p_value(container, cast_down<STAGE>(position));
-  }
-
-  static void get_key_view_normalized(
-      const container_t& container, const search_position_t& position, full_key_t<KeyT::VIEW>& output) {
-    get_key_view(container, cast_down<STAGE>(position), output);
   }
 
   static staged_result_t<NODE_TYPE, STAGE_TOP> lower_bound_normalized(

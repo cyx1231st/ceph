@@ -86,7 +86,6 @@ class Btree final
 
 struct tree_cursor_t;
 
-// TODO: track cursors in LeafNode by position (intrusive)
 class Btree::Cursor {
  public:
   Cursor(Btree*, Ref<tree_cursor_t>);

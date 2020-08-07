@@ -50,6 +50,37 @@ const onode_t* tree_cursor_t::get_p_value() const {
   return p_value;
 }
 
+Node::~Node() {
+  // XXX: tolerate failure between allocate() and as_child()
+  if (is_root()) {
+    tree->do_untrack_root(*this);
+  } else {
+    _parent_info->ptr->do_untrack_child(*this);
+  }
+}
+
+void Node::upgrade_root() {
+  assert(is_root());
+  assert(is_level_tail());
+  assert(field_type() == field_type_t::N0);
+  tree->do_untrack_root(*this);
+  auto new_root = InternalNode0::allocate_root(level(), laddr(), tree, super);
+  super.reset();
+  tree.reset();
+  as_child(search_position_t::end(), new_root);
+}
+
+template <bool VALIDATE>
+void Node::as_child(const search_position_t& pos, Ref<InternalNode> parent_node) {
+  assert(!super);
+  assert(!tree);
+  _parent_info = parent_info_t{pos, parent_node};
+  parent_info().ptr->do_track_child<VALIDATE>(*this);
+}
+template void Node::as_child<true>(const search_position_t&, Ref<InternalNode>);
+template void Node::as_child<false>(const search_position_t&, Ref<InternalNode>);
+
+
 Node::search_result_t Node::lower_bound(const onode_key_t& _key) {
   MatchHistory history;
   full_key_t<KeyT::HOBJ> key(_key);
@@ -72,8 +103,7 @@ Node::insert(const onode_key_t& _key, const onode_t& value) {
 }
 
 void Node::mkfs(/* transaction, */Ref<Btree> btree) {
-  auto root = LeafNode0::allocate(true);
-  root->make_root(/* transaction, */btree);
+  LeafNode0::mkfs(/* transaction, */btree);
 }
 
 Ref<Node> Node::load_root(/* transaction, */Ref<Btree> btree) {
@@ -81,6 +111,7 @@ Ref<Node> Node::load_root(/* transaction, */Ref<Btree> btree) {
   auto root_addr = super->get_onode_root_laddr();
   assert(root_addr != L_ADDR_NULL);
   auto root = Node::load(root_addr, true);
+  assert(root->field_type() == field_type_t::N0);
   root->as_root(btree, super);
   return root;
 }
@@ -124,6 +155,32 @@ Ref<Node> Node::load(laddr_t addr, bool is_level_tail) {
   }
   ret->init(extent, is_level_tail);
   return ret;
+}
+
+void Node::insert_parent(Ref<Node> right_node) {
+  assert(!is_root());
+  // TODO(cross-node string dedup)
+  auto my_key = get_largest_key_view();
+  parent_info().ptr->apply_child_split(
+      parent_info().position, my_key, this, right_node);
+}
+
+void InternalNode::validate_child(const Node& child) const {
+#ifndef NDEBUG
+  assert(this->level() - 1 == child.level());
+  assert(this == child.parent_info().ptr);
+  auto& child_pos = child.parent_info().position;
+  assert(*get_p_value(child_pos) == child.laddr());
+  if (child_pos.is_end()) {
+    assert(this->is_level_tail());
+    assert(child.is_level_tail());
+  } else {
+    assert(!child.is_level_tail());
+    assert(get_key_view(child_pos) == child.get_largest_key_view());
+  }
+  // XXX(multi-type)
+  assert(this->field_type() <= child.field_type());
+#endif
 }
 
 }

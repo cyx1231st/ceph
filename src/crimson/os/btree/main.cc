@@ -252,10 +252,7 @@ int main(int argc, char* argv[])
   std::cout << "allocated nodes:" << std::endl;
   for (auto& node : nodes) {
     std::cout << *node << std::endl;
-    // in order to deallocate
-    node->test_set_level_tail(true);
-    Ref<Btree> tree = new Btree();
-    node->make_root(tree);
+    node->test_make_destructable();
   }
   std::cout << std::endl;
 
@@ -568,11 +565,6 @@ int main(int argc, char* argv[])
     class DummyChild final : public Node {
      public:
       virtual ~DummyChild() {
-        if (is_root()) {
-          tree->do_untrack_root(*this);
-        } else {
-          _parent_info->ptr->do_untrack_child(*this);
-        }
         std::free(p_mem_key_view);
       }
 
@@ -594,7 +586,7 @@ int main(int argc, char* argv[])
         bool right_is_tail = _is_level_tail;
         reset(left_keys, false);
         auto right_child = DummyChild::create(right_keys, right_is_tail, pool);
-        parent_info().ptr->apply_child_split(get_largest_key_view(), this, right_child);
+        this->insert_parent(right_child);
 
         if (!can_split()) {
           splitable_nodes.erase(this);
@@ -631,6 +623,14 @@ int main(int argc, char* argv[])
         return new DummyChild(keys, is_level_tail, seed++, pool);
       }
 
+      static Ref<DummyChild> create_initial(
+          const std::set<onode_key_t>& keys, ChildPool& pool, Ref<Btree> btree) {
+        auto initial = create(keys, true, pool);
+        initial->make_root(btree);
+        initial->upgrade_root();
+        return initial;
+      }
+
       static Ref<DummyChild> create_clone(
           const std::set<onode_key_t>& keys, bool is_level_tail,
           laddr_t addr, ChildPool& pool) {
@@ -638,51 +638,6 @@ int main(int argc, char* argv[])
       }
 
      protected:
-      // TODO: generalize
-      bool is_root() const override {
-        assert((super && tree && !_parent_info.has_value()) ||
-               (!super && !tree && _parent_info.has_value()));
-        return !_parent_info.has_value();
-      }
-      void as_root(Ref<Btree> _tree, Ref<DummyRootBlock> _super) override {
-        assert(!super);
-        assert(!tree);
-        assert(!_parent_info);
-        assert(_super->get_onode_root_laddr() == laddr());
-        assert(is_level_tail());
-        super = _super;
-        tree = _tree;
-        tree->do_track_root(*this);
-      }
-      void handover_root(Ref<InternalNode> new_root,
-                         const search_position_t& tracked_pos) override {
-        assert(is_root());
-        assert(super->get_onode_root_laddr() == laddr());
-        super->write_onode_root_laddr(new_root->laddr());
-
-        tree->do_untrack_root(*this);
-        new_root->as_root(tree, super);
-        super.reset();
-        tree.reset();
-
-        as_child(tracked_pos, new_root);
-      }
-      void as_child(const search_position_t& pos,
-                    Ref<InternalNode> parent_node) override {
-        assert(!super);
-        assert(!tree);
-        _parent_info = parent_info_t{pos, parent_node};
-        parent_info().ptr->do_track_child(*this);
-      }
-      void as_child_unsafe(const search_position_t& pos,
-                           Ref<InternalNode> parent_node) override {
-        assert(!super);
-        assert(!tree);
-        _parent_info = parent_info_t{pos, parent_node};
-        parent_info().ptr->do_track_child_unsafe(*this);
-      }
-      const parent_info_t& parent_info() const override { return *_parent_info; }
-
       bool is_level_tail() const override { return _is_level_tail; }
       field_type_t field_type() const override { return field_type_t::N0; }
       laddr_t laddr() const override { return _laddr; }
@@ -692,20 +647,19 @@ int main(int argc, char* argv[])
       std::ostream& dump(std::ostream&) const override { assert(false); }
       std::ostream& dump_brief(std::ostream&) const override { assert(false); }
       void init(Ref<LogicalCachedExtent>, bool) override { assert(false); }
-
       Node::search_result_t do_lower_bound(
           const key_hobj_t&, MatchHistory&) override { assert(false); }
       Ref<tree_cursor_t> lookup_smallest() override { assert(false); }
       Ref<tree_cursor_t> lookup_largest() override { assert(false); }
 
-      void test_set_level_tail(bool is_tail) override { assert(false); }
+      void test_make_destructable() override { assert(false); }
       void test_clone_root(Ref<Btree>) const override { assert(false); }
       void test_clone_non_root(Ref<InternalNode> new_parent) const override {
         assert(!is_root());
         auto p_pool_clone = pool.pool_clone_in_progress;
         assert(p_pool_clone);
         auto clone = create_clone(keys, _is_level_tail, _laddr, *p_pool_clone);
-        clone->as_child(_parent_info->position, new_parent);
+        clone->as_child(parent_info().position, new_parent);
         clone->_laddr = _laddr;
       }
 
@@ -726,11 +680,6 @@ int main(int argc, char* argv[])
         std::tie(key_view, p_mem_key_view) = build_key_view(*keys.crbegin());
       }
 
-      // TODO: generalize
-      std::optional<parent_info_t> _parent_info;
-      Ref<DummyRootBlock> super;
-      Ref<Btree> tree;
-
       mutable std::random_device rd;
       std::set<onode_key_t> keys;
       bool _is_level_tail;
@@ -750,9 +699,7 @@ int main(int argc, char* argv[])
 
       // create tree
       p_btree = new Btree();
-      auto initial_child = DummyChild::create(keys, true, *this);
-      initial_child->make_root(p_btree);
-      InternalNode0::upgrade_root(initial_child);
+      auto initial_child = DummyChild::create_initial(keys, *this, p_btree);
 
       // split
       std::set<Ref<DummyChild>> splitable_nodes;
