@@ -4,6 +4,9 @@
 #pragma once
 
 #include <ostream>
+#include <boost/smart_ptr/intrusive_ref_counter.hpp>
+
+#include "crimson/common/type_helpers.h"
 
 #include "fwd.h"
 
@@ -76,5 +79,31 @@ inline std::ostream& operator<<(std::ostream& os, const onode_key_t& key) {
   os << key.snap << "," << key.gen << ")";
   return os;
 }
+
+// the dummy super block which is supposed to be backed by LogicalCachedExtent
+// to provide transactional update to the onode root laddr.
+class DummyRootBlock
+  : public boost::intrusive_ref_counter<
+      DummyRootBlock, boost::thread_unsafe_counter> {
+ public:
+  laddr_t get_onode_root_laddr() const {
+    return onode_root_laddr;
+  }
+  void write_onode_root_laddr(laddr_t addr) {
+    onode_root_laddr = addr;
+  }
+ private:
+  laddr_t onode_root_laddr = L_ADDR_NULL;
+};
+
+class DummyCache {
+ public:
+  DummyCache() {
+    root = new DummyRootBlock();
+  }
+  Ref<DummyRootBlock> get_root_block(/* transaction */) { return root; }
+ private:
+  Ref<DummyRootBlock> root;
+};
 
 }

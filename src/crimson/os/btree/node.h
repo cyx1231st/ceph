@@ -10,9 +10,25 @@
 
 #include "node_types.h"
 #include "stages/stage_types.h"
+#include "tree.h"
 #include "tree_types.h"
 
 namespace crimson::os::seastore::onode {
+
+/**
+ * in-memory subtree management:
+ *
+ * resource management (bottom-up):
+ * USER          --> Ref<tree_cursor_t>
+ * tree_cursor_t --> Ref<LeafNode>
+ * Node (child)  --> Ref<InternalNode> (see parent_info_t)
+ * Node (root)   --> Ref<Btree>, Ref<RootBlock>
+ *
+ * tracked lookup (top-down):
+ * BTree         --> Node* (root)
+ * InternalNode  --> Node* (children)
+ * LeafNode      --> tree_cursor_t*
+ */
 
 class LeafNode;
 class InternalNode;
@@ -78,11 +94,15 @@ class Node
   virtual std::ostream& dump(std::ostream&) const = 0;
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
 
+// TODO
 #ifndef NDEBUG
-  virtual Ref<Node> test_clone(Ref<Node>&) const = 0;
+  virtual void test_set_level_tail(bool) = 0;
+  virtual void test_clone_root(Ref<Btree>) const = 0;
+  virtual void test_clone_non_root(Ref<InternalNode>) const = 0;
 #endif
 
-  static void allocate_root(Ref<Node>&);
+  static void mkfs(/* transaction, */Ref<Btree>);
+  static Ref<Node> load_root(/* transaction */Ref<Btree>);
 
  protected:
   Node() {}
@@ -91,10 +111,17 @@ class Node
 
  // FIXME: protected
  public:
-  virtual void as_child(const parent_info_t&) = 0;
-  virtual void as_root(Ref<Node>& ref) = 0;
-  virtual void handover_root(Ref<InternalNode> new_root) = 0;
   virtual bool is_root() const = 0;
+  void make_root(/* transaction */Ref<Btree> btree) {
+    auto super = btree->get_super_block(/* transaction */);
+    assert(super->get_onode_root_laddr() == L_ADDR_NULL);
+    super->write_onode_root_laddr(laddr());
+    as_root(btree, super);
+  }
+  virtual void as_root(Ref<Btree>, Ref<DummyRootBlock>) = 0;
+  virtual void handover_root(Ref<InternalNode>, const search_position_t&) = 0;
+  virtual void as_child(const search_position_t&, Ref<InternalNode>) = 0;
+  virtual void as_child_unsafe(const search_position_t&, Ref<InternalNode>) = 0;
   virtual const parent_info_t& parent_info() const = 0;
 
   virtual bool is_level_tail() const = 0;
@@ -112,9 +139,12 @@ class InternalNode : virtual public Node {
  public:
   virtual ~InternalNode() = default;
 
-  virtual Ref<Node> get_tracked_child(const search_position_t& pos) = 0;
   // TODO: async
   virtual void apply_child_split(const key_view_t&, Ref<Node>, Ref<Node>) = 0;
+
+  virtual void do_track_child(Node&) = 0;
+  virtual void do_track_child_unsafe(Node&) = 0;
+  virtual void do_untrack_child(const Node&) = 0;
 };
 
 class LeafNode : virtual public Node {
@@ -129,7 +159,7 @@ class LeafNode : virtual public Node {
       const MatchHistory&) = 0;
   virtual const onode_t* get_p_value(const search_position_t&) const = 0;
   virtual void do_track_cursor(tree_cursor_t&) = 0;
-  virtual void do_untrack_cursor(const tree_cursor_t&) = 0;
+  virtual void do_untrack_cursor(tree_cursor_t&) = 0;
 
   friend class Node;
   friend class tree_cursor_t;

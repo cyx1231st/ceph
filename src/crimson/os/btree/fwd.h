@@ -11,6 +11,7 @@
 namespace crimson::os::seastore::onode {
 
 using laddr_t = uint64_t;
+constexpr laddr_t L_ADDR_NULL = std::numeric_limits<laddr_t>::max();
 using loff_t = uint32_t;
 
 constexpr auto INDEX_END = std::numeric_limits<size_t>::max();

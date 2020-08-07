@@ -52,16 +52,12 @@ Btree::Cursor Btree::Cursor::make_end(Btree* tree) {
   return {tree};
 }
 
-Btree::Btree() {
-  Node::allocate_root(root_node);
-}
-
 Btree::Cursor Btree::begin() {
-  return {this, root_node->lookup_smallest()};
+  return {this, get_root()->lookup_smallest()};
 }
 
 Btree::Cursor Btree::last() {
-  return {this, root_node->lookup_largest()};
+  return {this, get_root()->lookup_largest()};
 }
 
 Btree::Cursor Btree::end() {
@@ -70,12 +66,12 @@ Btree::Cursor Btree::end() {
 
 bool Btree::contains(const onode_key_t& key) {
   // TODO: improve lower_bound()
-  return MatchKindBS::EQ == root_node->lower_bound(key).match;
+  return MatchKindBS::EQ == get_root()->lower_bound(key).match;
 }
 
 Btree::Cursor Btree::find(const onode_key_t& key) {
   // TODO: improve lower_bound()
-  auto result = root_node->lower_bound(key);
+  auto result = get_root()->lower_bound(key);
   if (result.match == MatchKindBS::EQ) {
     return Cursor(this, result.p_cursor);
   } else {
@@ -84,12 +80,12 @@ Btree::Cursor Btree::find(const onode_key_t& key) {
 }
 
 Btree::Cursor Btree::lower_bound(const onode_key_t& key) {
-  return Cursor(this, root_node->lower_bound(key).p_cursor);
+  return Cursor(this, get_root()->lower_bound(key).p_cursor);
 }
 
 std::pair<Btree::Cursor, bool>
 Btree::insert(const onode_key_t& key, const onode_t& value) {
-  auto [cursor, success] = root_node->insert(key, value);
+  auto [cursor, success] = get_root()->insert(key, value);
   return {{this, cursor}, success};
 }
 
@@ -108,20 +104,33 @@ Btree::Cursor Btree::erase(Btree::Cursor& first, Btree::Cursor& last) {
   return Cursor::make_end(this);
 }
 
-size_t Btree::height() const {
-  return root_node->level() + 1;
+size_t Btree::height() {
+  return get_root()->level() + 1;
 }
 
 std::ostream& Btree::dump(std::ostream& os) {
-  return root_node->dump(os);
+  return get_root()->dump(os);
 }
 
-Btree& Btree::get() {
-  static std::unique_ptr<Btree> singleton;
-  if (!singleton) {
-    singleton.reset(new Btree());
+void Btree::mkfs(/* transaction */) {
+  Node::mkfs(/* transaction, */this);
+}
+
+Ref<Node> Btree::get_root(/* transaction */) {
+  if (root_node) {
+    return root_node;
+  } else {
+    auto ret = Node::load_root(/* transaction, */this);
+    assert(root_node == ret.get());
+    return ret;
   }
-  return *singleton;
+}
+
+void Btree::test_clone_from(/* transaction */Btree& other) {
+  // Node: assume the tree to clone is tracked correctly in memory.
+  // In some unit tests, parts of the tree are stubbed out that they
+  // should not be loaded from TransactionManager.
+  other.get_root()->test_clone_root(/* transaction */this);
 }
 
 }

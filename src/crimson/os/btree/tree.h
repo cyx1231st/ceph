@@ -4,6 +4,8 @@
 #pragma once
 
 #include <ostream>
+#include <boost/smart_ptr/intrusive_ref_counter.hpp>
+
 #include "crimson/common/type_helpers.h"
 
 #include "tree_types.h"
@@ -20,10 +22,20 @@ class Node;
  *   ceph::BlueStore::get_onode()
  *   db->get_iterator(PREFIIX_OBJ) by ceph::BlueStore::fsck()
  */
-class Btree {
+class Btree final
+  : public boost::intrusive_ref_counter<
+    Btree, boost::thread_unsafe_counter> {
  public:
-  class Cursor;
+  Btree() = default;
+  Btree(const Btree&) = delete;
+  Btree(Btree&&) = delete;
+  Btree& operator=(const Btree&) = delete;
+  Btree& operator=(Btree&&) = delete;
+  ~Btree() { assert(root_node == nullptr); }
 
+  void mkfs();
+
+  class Cursor;
   // TODO: transaction
   // lookup
   Cursor begin();
@@ -40,18 +52,36 @@ class Btree {
   Cursor erase(Cursor& first, Cursor& last);
 
   // stats
-  size_t height() const;
+  size_t height();
   std::ostream& dump(std::ostream& os);
 
-  static Btree& get();
+  // test_only
+  bool test_is_clean() const { return root_node == nullptr; }
+  void test_clone_from(Btree& other);
+
+  // TODO: move to private
+  // called by the tracked root node
+  void do_track_root(Node& root) {
+    assert(!root_node);
+    root_node = &root;
+  }
+  void do_untrack_root(Node& root) {
+    assert(root_node == &root);
+    root_node = nullptr;
+  }
+  Ref<DummyRootBlock> get_super_block(/* transaction */) {
+    return cache.get_root_block(/* transaction */);
+  }
 
  private:
-  Btree();
-  Btree(const Btree&) = delete;
-  Btree(Btree&&) = delete;
-  Btree& operator=(const Btree&) = delete;
+  Ref<Node> get_root(/* transaction */);
 
-  Ref<Node> root_node;
+  DummyCache cache;
+  // TODO: a map of transaction -> Node*
+  // track the current living root nodes by transaction
+  Node* root_node = nullptr;
+
+  friend class Node;
 };
 
 struct tree_cursor_t;

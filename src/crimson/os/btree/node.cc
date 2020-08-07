@@ -71,8 +71,18 @@ Node::insert(const onode_key_t& _key, const onode_t& value) {
   }
 }
 
-void Node::allocate_root(Ref<Node>& ref) {
-  LeafNode0::allocate_root(ref);
+void Node::mkfs(/* transaction, */Ref<Btree> btree) {
+  auto root = LeafNode0::allocate(true);
+  root->make_root(/* transaction, */btree);
+}
+
+Ref<Node> Node::load_root(/* transaction, */Ref<Btree> btree) {
+  auto super = btree->get_super_block(/* transaction */);
+  auto root_addr = super->get_onode_root_laddr();
+  assert(root_addr != L_ADDR_NULL);
+  auto root = Node::load(root_addr, true);
+  root->as_root(btree, super);
+  return root;
 }
 
 Ref<Node> Node::load(laddr_t addr, bool is_level_tail) {
