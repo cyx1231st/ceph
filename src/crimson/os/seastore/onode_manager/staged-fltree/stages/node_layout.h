@@ -4,7 +4,7 @@
 #pragma once
 
 #include "key_layout.h"
-#include "crimson/os/btree/node_types.h"
+#include "crimson/os/seastore/onode_manager/staged-fltree/node_types.h"
 
 namespace crimson::os::seastore::onode {
 

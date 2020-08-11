@@ -8,8 +8,8 @@
 #include <optional>
 #include <ostream>
 
-#include "crimson/os/btree/fwd.h"
-#include "crimson/os/btree/tree_types.h"
+#include "crimson/os/seastore/onode_manager/staged-fltree/fwd.h"
+#include "crimson/os/seastore/onode_manager/staged-fltree/tree_types.h"
 
 namespace crimson::os::seastore::onode {
 

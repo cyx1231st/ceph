@@ -11,8 +11,6 @@
 #include <sstream>
 #include <vector>
 
-#include "global/signal_handler.h"
-
 #include "dummy_transaction_manager.h"
 #include "node_impl.h"
 #include "stages/node_stage.h"
@@ -137,7 +135,6 @@ static std::pair<key_view_t, void*> build_key_view(const onode_key_t& hobj) {
 int main(int argc, char* argv[])
 {
   // TODO: move to unit tests
-  install_standard_sighandlers();
 
   // sizes of struct
   std::cout << "sizes of struct: " << std::endl;

@@ -3,7 +3,7 @@
 
 #include "node_stage.h"
 
-#include "crimson/os/btree/dummy_transaction_manager.h"
+#include "crimson/os/seastore/onode_manager/staged-fltree/dummy_transaction_manager.h"
 #include "node_layout.h"
 
 namespace crimson::os::seastore::onode {

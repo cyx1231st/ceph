@@ -7,7 +7,7 @@
 #include <optional>
 #include <ostream>
 
-#include "crimson/os/btree/fwd.h"
+#include "crimson/os/seastore/onode_manager/staged-fltree/fwd.h"
 
 namespace crimson::os::seastore::onode {
 

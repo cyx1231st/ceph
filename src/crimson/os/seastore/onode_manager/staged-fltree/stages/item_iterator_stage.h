@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "crimson/os/btree/node_types.h"
+#include "crimson/os/seastore/onode_manager/staged-fltree/node_types.h"
 #include "key_layout.h"
 #include "stage_types.h"
 

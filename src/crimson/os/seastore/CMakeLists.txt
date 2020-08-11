@@ -14,8 +14,23 @@ add_library(crimson-seastore
   onode_manager/simple-fltree/onode_block.cc
   onode_manager/simple-fltree/onode_delta.cc
   onode_manager/simple-fltree/onode_node.cc
+  onode_manager/staged-fltree/node.cc
+  onode_manager/staged-fltree/node_impl.cc
+  onode_manager/staged-fltree/stages/item_iterator_stage.cc
+  onode_manager/staged-fltree/stages/key_layout.cc
+  onode_manager/staged-fltree/stages/node_layout.cc
+  onode_manager/staged-fltree/stages/node_stage.cc
+  onode_manager/staged-fltree/stages/sub_items_stage.cc
+  onode_manager/staged-fltree/tree.cc
   seastore.cc
   ../../../test/crimson/seastore/test_block.cc
 	)
 target_link_libraries(crimson-seastore
   crimson)
+
+# TODO: move to crimson unit tests
+add_executable(test_onode_tree
+  onode_manager/staged-fltree/main.cc)
+# TODO: discard global and link with crimson-seastore
+target_link_libraries(test_onode_tree
+  crimson-seastore)
