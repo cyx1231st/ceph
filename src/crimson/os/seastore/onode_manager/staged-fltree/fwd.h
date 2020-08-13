@@ -8,11 +8,13 @@
 #include <limits>
 #include <string>
 
+#include "crimson/os/seastore/seastore_types.h"
+
 namespace crimson::os::seastore::onode {
 
-using laddr_t = uint64_t;
-constexpr laddr_t L_ADDR_NULL = std::numeric_limits<laddr_t>::max();
-using loff_t = uint32_t;
+using laddr_t = crimson::os::seastore::laddr_t;
+constexpr laddr_t L_ADDR_NULL = crimson::os::seastore::L_ADDR_NULL;
+using extent_len_t = crimson::os::seastore::extent_len_t;
 
 constexpr auto INDEX_END = std::numeric_limits<size_t>::max();
 

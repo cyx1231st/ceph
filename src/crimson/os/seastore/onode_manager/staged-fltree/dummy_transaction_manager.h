@@ -26,12 +26,12 @@ class LogicalCachedExtent
     static_assert(sizeof(void*) == sizeof(laddr_t));
     return reinterpret_cast<laddr_t>(ptr);
   }
-  loff_t get_length() const {
+  extent_len_t get_length() const {
     assert(valid);
     return length;
   }
   template <typename T>
-  const T* get_ptr(loff_t block_offset) const {
+  const T* get_ptr(extent_len_t block_offset) const {
     assert(valid);
     if constexpr (!std::is_same_v<T, void>) {
       assert(block_offset + sizeof(T) <= length);
@@ -39,7 +39,7 @@ class LogicalCachedExtent
     return static_cast<const T*>(ptr_offset(block_offset));
   }
 
-  void copy_in_mem(const void* from, void* to, loff_t len) {
+  void copy_in_mem(const void* from, void* to, extent_len_t len) {
     assert(valid);
 #ifndef NDEBUG
     auto to_ = static_cast<const char*>(to);
@@ -53,13 +53,14 @@ class LogicalCachedExtent
   void copy_in_mem(const T& from, void* to) {
     copy_in_mem(&from, to, sizeof(T));
   }
-  const void* copy_in(const void* from, loff_t to_block_offset, loff_t len) {
+  const void* copy_in(
+      const void* from, extent_len_t to_block_offset, extent_len_t len) {
     auto to = ptr_offset(to_block_offset);
     copy_in_mem(from, to, len);
     return to;
   }
   template <typename T>
-  const T* copy_in(const T& from, loff_t to_block_offset) {
+  const T* copy_in(const T& from, extent_len_t to_block_offset) {
     auto ret = copy_in(&from, to_block_offset, sizeof(from));
     return (const T*)ret;
   }
@@ -67,7 +68,7 @@ class LogicalCachedExtent
     assert(length == from.length);
     std::memcpy(ptr, from.ptr, length);
   }
-  void shift_mem(const char* from, loff_t len, int shift_offset) {
+  void shift_mem(const char* from, extent_len_t len, int shift_offset) {
     assert(valid);
     assert(from + len <= (const char*)ptr + length);
     assert(from + shift_offset >= (const char*)ptr);
@@ -78,7 +79,7 @@ class LogicalCachedExtent
     assert(to + len <= (const char*)ptr + length);
     std::memmove(const_cast<char*>(to), from, len);
   }
-  void shift(loff_t from_block_offset, loff_t len, int shift_offset) {
+  void shift(extent_len_t from_block_offset, extent_len_t len, int shift_offset) {
     shift_mem((const char*)ptr_offset(from_block_offset), len, shift_offset);
   }
   template <typename T>
@@ -88,7 +89,7 @@ class LogicalCachedExtent
   }
 
  private:
-  LogicalCachedExtent(void* ptr, loff_t len) : ptr{ptr}, length{len} {}
+  LogicalCachedExtent(void* ptr, extent_len_t len) : ptr{ptr}, length{len} {}
 
   void invalidate() {
     assert(valid);
@@ -97,19 +98,19 @@ class LogicalCachedExtent
     length = 0;
   }
 
-  const void* ptr_offset(loff_t offset) const {
+  const void* ptr_offset(extent_len_t offset) const {
     assert(valid);
     assert(offset < length);
     return static_cast<const char*>(ptr) + offset;
   }
-  void* ptr_offset(loff_t offset) {
+  void* ptr_offset(extent_len_t offset) {
     return const_cast<void*>(
         const_cast<const LogicalCachedExtent*>(this)->ptr_offset(offset));
   }
 
   bool valid = true;
   void* ptr;
-  loff_t length;
+  extent_len_t length;
 
   friend class DummyTransactionManager;
 };
@@ -119,7 +120,7 @@ class LogicalCachedExtent
 class DummyTransactionManager {
  public:
   // currently ignore delta machinary, and modify memory inplace
-  Ref<LogicalCachedExtent> alloc_extent(loff_t len) {
+  Ref<LogicalCachedExtent> alloc_extent(extent_len_t len) {
     constexpr size_t ALIGNMENT = 4096;
     assert(len % ALIGNMENT == 0);
     auto mem_block = std::aligned_alloc(len, ALIGNMENT);
