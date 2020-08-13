@@ -24,7 +24,7 @@ class NodeT : virtual public Node {
 
   virtual ~NodeT() = default;
 
-  bool is_level_tail() const override final { return _is_level_tail; }
+  bool is_level_tail() const override final;
   field_type_t field_type() const override final { return FIELD_TYPE; }
   laddr_t laddr() const override final;
   level_t level() const override final;
@@ -36,15 +36,9 @@ class NodeT : virtual public Node {
   const value_t* get_value_ptr(const search_position_t&) const;
 
 #ifndef NDEBUG
-  void test_make_destructable() override final {
-    set_level_tail(true);
-    make_root(new Btree());
-  }
+  void test_make_destructable() override final;
   void test_clone_non_root(Ref<InternalNode>) const override final {
     assert(false && "not implemented");
-  }
-  void validate_unused() const {
-    // node.fields().template validate_unused<NODE_TYPE>(is_level_tail());
   }
 #endif
 
@@ -52,14 +46,11 @@ class NodeT : virtual public Node {
   node_stage_t stage() const;
   LogicalCachedExtent& extent();
   const LogicalCachedExtent& extent() const;
-  void set_level_tail(bool value) { _is_level_tail = value; }
   static Ref<ConcreteType> _allocate(level_t level, bool level_tail);
 
  private:
-  void init(Ref<LogicalCachedExtent> _extent,
-            bool is_level_tail) override final;
+  void init(Ref<LogicalCachedExtent>) override final;
 
-  bool _is_level_tail;
   Ref<LogicalCachedExtent> _extent;
 };
 

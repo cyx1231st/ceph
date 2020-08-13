@@ -21,16 +21,6 @@ NODE_TEMPLATE(node_fields_2_t, node_type_t::LEAF);
 NODE_TEMPLATE(leaf_fields_3_t, node_type_t::LEAF);
 
 template <typename FieldType, node_type_t NODE_TYPE>
-size_t NODE_T::total_size() const {
-  if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
-    if (is_level_tail()) {
-      return FieldType::SIZE - sizeof(snap_gen_t);
-    }
-  }
-  return FieldType::SIZE;
-}
-
-template <typename FieldType, node_type_t NODE_TYPE>
 const char* NODE_T::p_left_bound() const {
   if constexpr (std::is_same_v<FieldType, internal_fields_3_t>) {
     // N3 internal node doesn't have the right part
@@ -79,6 +69,22 @@ memory_range_t NODE_T::get_nxt_container(size_t index) const {
     }
     return {item_p_start, item_p_end};
   }
+}
+
+template <typename FieldType, node_type_t NODE_TYPE>
+void NODE_T::bootstrap_extent(
+    LogicalCachedExtent& dst,
+    field_type_t field_type, node_type_t node_type,
+    bool is_level_tail, level_t level) {
+  node_header_t::bootstrap_extent(
+      dst, field_type, node_type, is_level_tail, level);
+  dst.copy_in(typename FieldType::num_keys_t(0u), sizeof(node_header_t));
+}
+
+template <typename FieldType, node_type_t NODE_TYPE>
+void NODE_T::update_is_level_tail(
+    LogicalCachedExtent& dst, const node_extent_t& extent, bool value) {
+  node_header_t::update_is_level_tail(dst, extent.p_fields->header, value);
 }
 
 template <typename FieldType, node_type_t NODE_TYPE>

@@ -25,6 +25,10 @@ template class NodeT<node_fields_1_t, node_type_t::INTERNAL, InternalNode1>;
 template class NodeT<node_fields_2_t, node_type_t::INTERNAL, InternalNode2>;
 template class NodeT<internal_fields_3_t, node_type_t::INTERNAL, InternalNode3>;
 
+
+template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
+bool NODE_T::is_level_tail() const { return stage().is_level_tail(); }
+
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 laddr_t NODE_T::laddr() const { return _extent->get_laddr(); }
 
@@ -98,7 +102,7 @@ std::ostream& NODE_T::dump_brief(std::ostream& os) const {
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 typename NODE_T::node_stage_t NODE_T::stage() const {
-  return node_stage_t(_extent->get_ptr<FieldType>(0u), &_is_level_tail);
+  return node_stage_t(_extent->get_ptr<FieldType>(0u));
 }
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
@@ -127,32 +131,30 @@ const value_type_t<NODE_TYPE>* NODE_T::get_value_ptr(
 }
 
 #ifndef NDEBUG
+template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
+void NODE_T::test_make_destructable() {
+  node_stage_t::update_is_level_tail(extent(), stage(), true);
+  make_root(new Btree());
+}
 #endif
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
 Ref<ConcreteType> NODE_T::_allocate(level_t level, bool level_tail) {
   // might be asynchronous
   auto extent = get_transaction_manager().alloc_extent(node_stage_t::EXTENT_SIZE);
-  extent->copy_in(node_header_t{FIELD_TYPE, NODE_TYPE, level}, 0u);
-  extent->copy_in(typename FieldType::num_keys_t(0u), sizeof(node_header_t));
+  node_stage_t::bootstrap_extent(
+      *extent, FIELD_TYPE, NODE_TYPE, level_tail, level);
   auto ret = Ref<ConcreteType>(new ConcreteType());
-  ret->init(extent, level_tail);
-#ifndef NDEBUG
-  // ret->stage().fields().template fill_unused<NODE_TYPE>(is_level_tail, *extent);
-#endif
+  ret->init(extent);
   return ret;
 }
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-void NODE_T::init(
-    Ref<LogicalCachedExtent> block_extent, bool b_level_tail) {
+void NODE_T::init(Ref<LogicalCachedExtent> block_extent) {
   assert(!_extent);
   assert(node_stage_t::EXTENT_SIZE == block_extent->get_length());
+  node_stage_t::validate(*block_extent->get_ptr<FieldType>(0u));
   _extent = block_extent;
-  _is_level_tail = b_level_tail;
-#ifndef NDEBUG
-  stage();
-#endif
 }
 
 #define I_NODE_T InternalNodeT<FieldType, ConcreteType>
@@ -278,7 +280,7 @@ void I_NODE_T::apply_child_split(
   right_node->dump(std::cout) << std::endl;
 
   // left node: trim
-  this->set_level_tail(false);
+  node_stage_t::update_is_level_tail(this->extent(), stage, false);
   STAGE_T::trim(this->extent(), split_at);
 
   if (insert_left) {
@@ -492,7 +494,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   right_node->dump(std::cout) << std::endl;
 
   // left node: trim
-  this->set_level_tail(false);
+  node_stage_t::update_is_level_tail(this->extent(), stage, false);
   STAGE_T::trim(this->extent(), split_at);
 
   if (insert_left) {

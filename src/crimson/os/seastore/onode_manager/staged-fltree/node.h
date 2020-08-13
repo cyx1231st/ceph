@@ -138,8 +138,8 @@ class Node
   const parent_info_t& parent_info() const { return *_parent_info; }
   void insert_parent(Ref<Node> right_node);
 
-  virtual void init(Ref<LogicalCachedExtent>, bool is_level_tail) = 0;
-  static Ref<Node> load(laddr_t, bool is_level_tail);
+  virtual void init(Ref<LogicalCachedExtent>) = 0;
+  static Ref<Node> load(laddr_t, bool expect_is_level_tail);
 
  private:
   // as child/non-root
@@ -163,10 +163,11 @@ class InternalNode : virtual public Node {
   // and LeafNode to track tree_cursor_t.
   Ref<Node> get_or_track_child(
       const search_position_t& position, laddr_t child_addr) {
+    bool level_tail = position.is_end();
     Ref<Node> child;
     auto found = tracked_child_nodes.find(position);
     if (found == tracked_child_nodes.end()) {
-      child = Node::load(child_addr, position.is_end());
+      child = Node::load(child_addr, level_tail);
       child->as_child(position, this);
     } else {
       child = found->second;

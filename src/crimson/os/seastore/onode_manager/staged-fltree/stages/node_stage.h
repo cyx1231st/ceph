@@ -19,28 +19,19 @@ class node_extent_t {
   static constexpr node_offset_t EXTENT_SIZE =
     (FieldType::SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
 
-  node_extent_t(const FieldType* p_fields, const bool* p_is_level_tail)
-      : p_fields{p_fields}, p_is_level_tail{p_is_level_tail} {
-    assert(p_fields->header.get_node_type() == NODE_TYPE);
-    assert(p_fields->header.get_field_type() == FieldType::FIELD_TYPE);
-#ifndef NDEBUG
-    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-      assert(level() > 0u);
-    } else {
-      assert(level() == 0u);
-    }
-#endif
+  node_extent_t(const FieldType* p_fields) : p_fields{p_fields} {
+    validate(*p_fields);
   }
 
   const char* p_start() const { return fields_start(*p_fields); }
   const FieldType& fields() const { return *p_fields; }
 
+  bool is_level_tail() const { return p_fields->is_level_tail(); }
   level_t level() const { return p_fields->header.level; }
   size_t free_size() const {
-    return p_fields->template free_size_before<NODE_TYPE>(
-        is_level_tail(), keys());
+    return p_fields->template free_size_before<NODE_TYPE>(keys());
   }
-  size_t total_size() const;
+  size_t total_size() const { return p_fields->total_size(); }
   const char* p_left_bound() const;
   template <node_type_t T = NODE_TYPE>
   std::enable_if_t<T == node_type_t::INTERNAL, const laddr_t*>
@@ -64,8 +55,7 @@ class node_extent_t {
   size_t keys() const { return p_fields->num_keys; }
   key_get_type operator[] (size_t index) const { return p_fields->get_key(index); }
   size_t size_before(size_t index) const {
-    auto free_size = p_fields->template free_size_before<NODE_TYPE>(
-        is_level_tail(), index);
+    auto free_size = p_fields->template free_size_before<NODE_TYPE>(index);
     assert(total_size() >= free_size);
     return total_size() - free_size;
   }
@@ -86,6 +76,23 @@ class node_extent_t {
       return ret;
     }
   }
+
+  static void validate(const FieldType& fields) {
+#ifndef NDEBUG
+    assert(fields.header.get_node_type() == NODE_TYPE);
+    assert(fields.header.get_field_type() == FieldType::FIELD_TYPE);
+    if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
+      assert(fields.header.level > 0u);
+    } else {
+      assert(fields.header.level == 0u);
+    }
+#endif
+  }
+
+  static void bootstrap_extent(
+      LogicalCachedExtent&, field_type_t, node_type_t, bool, level_t);
+
+  static void update_is_level_tail(LogicalCachedExtent&, const node_extent_t&, bool);
 
   static node_offset_t header_size() { return FieldType::HEADER_SIZE; }
 
@@ -131,10 +138,7 @@ class node_extent_t {
   class Appender;
 
  private:
-  bool is_level_tail() const { return *p_is_level_tail; }
-
   const FieldType* p_fields;
-  const bool* p_is_level_tail;
 };
 
 template <typename FieldType, node_type_t NODE_TYPE>

@@ -8,14 +8,14 @@
 
 namespace crimson::os::seastore::onode {
 
-constexpr unsigned FIELD_BITS = 7u;
 struct node_header_t {
+  static constexpr unsigned FIELD_TYPE_BITS = 6u;
+  static_assert(static_cast<uint8_t>(field_type_t::_MAX) <= 1u << FIELD_TYPE_BITS);
+  static constexpr unsigned NODE_TYPE_BITS = 1u;
+  static constexpr unsigned B_LEVEL_TAIL_BITS = 1u;
+  using bits_t = uint8_t;
+
   node_header_t() {}
-  node_header_t(field_type_t field_type, node_type_t node_type, level_t _level) {
-    set_field_type(field_type);
-    set_node_type(node_type);
-    level = _level;
-  }
   std::optional<field_type_t> get_field_type() const {
     if (field_type >= FIELD_TYPE_MAGIC &&
         field_type < static_cast<uint8_t>(field_type_t::_MAX)) {
@@ -24,21 +24,36 @@ struct node_header_t {
       return std::nullopt;
     }
   }
-  void set_field_type(field_type_t type) {
-    field_type = static_cast<uint8_t>(type);
-  }
   node_type_t get_node_type() const {
     return static_cast<node_type_t>(node_type);
+  }
+  bool get_is_level_tail() const {
+    return is_level_tail;
+  }
+
+  static void bootstrap_extent(
+      LogicalCachedExtent&, field_type_t, node_type_t, bool, level_t);
+
+  static void update_is_level_tail(LogicalCachedExtent&, const node_header_t&, bool);
+
+  bits_t field_type : FIELD_TYPE_BITS;
+  bits_t node_type : NODE_TYPE_BITS;
+  bits_t is_level_tail : B_LEVEL_TAIL_BITS;
+  static_assert(sizeof(bits_t) * 8 ==
+                FIELD_TYPE_BITS + NODE_TYPE_BITS + B_LEVEL_TAIL_BITS);
+  level_t level;
+
+ private:
+  void set_field_type(field_type_t type) {
+    field_type = static_cast<uint8_t>(type);
   }
   void set_node_type(node_type_t type) {
     node_type = static_cast<uint8_t>(type);
   }
-
-  uint8_t field_type : FIELD_BITS;
-  uint8_t node_type : 8u - FIELD_BITS;
-  level_t level;
+  void set_is_level_tail(bool value) {
+    is_level_tail = static_cast<uint8_t>(value);
+  }
 } __attribute__((packed));
-static_assert(static_cast<uint8_t>(field_type_t::_MAX) <= 1u << FIELD_BITS);
 
 template <typename FixedKeyType, field_type_t _FIELD_TYPE>
 struct _slot_t {
@@ -64,14 +79,14 @@ const char* fields_start(const FieldType& node) {
 
 template <node_type_t NODE_TYPE, typename FieldType>
 node_range_t fields_free_range_before(
-    const FieldType& node, bool is_level_tail, size_t index) {
+    const FieldType& node, size_t index) {
   assert(index <= node.num_keys);
   node_offset_t offset_start = node.get_key_start_offset(index);
   node_offset_t offset_end =
     (index == 0 ? FieldType::SIZE
                    : node.get_item_start_offset(index - 1));
   if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-    if (is_level_tail && index == node.num_keys) {
+    if (node.is_level_tail() && index == node.num_keys) {
       offset_end -= sizeof(laddr_t);
     }
   }
@@ -96,6 +111,8 @@ struct _node_fields_013_t {
   static constexpr node_offset_t HEADER_SIZE =
     sizeof(node_header_t) + sizeof(num_keys_t);
 
+  bool is_level_tail() const { return header.get_is_level_tail(); }
+  size_t total_size() const { return SIZE; }
   key_get_type get_key(size_t index) const {
     assert(index < num_keys);
     return slots[index].key;
@@ -120,25 +137,23 @@ struct _node_fields_013_t {
     return index == 0 ? SIZE : get_item_start_offset(index - 1);
   }
   template <node_type_t NODE_TYPE>
-  node_offset_t free_size_before(bool is_level_tail, size_t index) const {
-    auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, index);
+  node_offset_t free_size_before(size_t index) const {
+    auto range = fields_free_range_before<NODE_TYPE>(*this, index);
     return range.end - range.start;
   }
-#ifndef NDEBUG
+
+#if 0
   template <node_type_t NODE_TYPE>
-  void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
-    /*
-    auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
+  void fill_unused(LogicalCachedExtent& extent) const {
+    auto range = fields_free_range_before<NODE_TYPE>(*this, num_keys);
     for (auto i = range.start; i < range.end; ++i) {
       extent.copy_in(uint8_t(0xc5), i);
     }
-    */
-    assert(false);
   }
 
   template <node_type_t NODE_TYPE>
-  void validate_unused(bool is_level_tail) const {
-    auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
+  void validate_unused() const {
+    auto range = fields_free_range_before<NODE_TYPE>(*this, num_keys);
     for (auto i = fields_start(*this) + range.start;
          i < fields_start(*this) + range.end;
          ++i) {
@@ -183,6 +198,8 @@ struct node_fields_2_t {
   static constexpr node_offset_t HEADER_SIZE =
     sizeof(node_header_t) + sizeof(num_keys_t);
 
+  bool is_level_tail() const { return header.get_is_level_tail(); }
+  size_t total_size() const { return SIZE; }
   key_get_type get_key(size_t index) const {
     assert(index < num_keys);
     node_offset_t item_end_offset =
@@ -211,25 +228,23 @@ struct node_fields_2_t {
     return index == 0 ? SIZE : get_item_start_offset(index - 1);
   }
   template <node_type_t NODE_TYPE>
-  node_offset_t free_size_before(bool is_level_tail, size_t index) const {
-    auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, index);
+  node_offset_t free_size_before(size_t index) const {
+    auto range = fields_free_range_before<NODE_TYPE>(*this, index);
     return range.end - range.start;
   }
-#ifndef NDEBUG
+
+#if 0
   template <node_type_t NODE_TYPE>
-  void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
-    /*
-    auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
+  void fill_unused(LogicalCachedExtent& extent) const {
+    auto range = fields_free_range_before<NODE_TYPE>(*this, num_keys);
     for (auto i = range.start; i < range.end; ++i) {
       extent.copy_in(uint8_t(0xc5), i);
     }
-    */
-    assert(false);
   }
 
   template <node_type_t NODE_TYPE>
-  void validate_unused(bool is_level_tail) const {
-    auto range = fields_free_range_before<NODE_TYPE>(*this, is_level_tail, num_keys);
+  void validate_unused() const {
+    auto range = fields_free_range_before<NODE_TYPE>(*this, num_keys);
     for (auto i = fields_start(*this) + range.start;
          i < fields_start(*this) + range.end;
          ++i) {
@@ -279,27 +294,35 @@ struct _internal_fields_3_t {
   static constexpr node_offset_t HEADER_SIZE =
     sizeof(node_header_t) + sizeof(num_keys_t);
 
+  bool is_level_tail() const { return header.get_is_level_tail(); }
+  size_t total_size() const {
+    if (is_level_tail()) {
+      return SIZE - sizeof(snap_gen_t);
+    } else {
+      return SIZE;
+    }
+  }
   key_get_type get_key(size_t index) const {
     assert(index < num_keys);
     return keys[index];
   }
   template <node_type_t NODE_TYPE>
   std::enable_if_t<NODE_TYPE == node_type_t::INTERNAL, node_offset_t>
-  free_size_before(bool is_level_tail, size_t index) const {
+  free_size_before(size_t index) const {
     assert(index <= num_keys);
-    auto allowed_num_keys = is_level_tail ? MAX_NUM_KEYS - 1 : MAX_NUM_KEYS;
+    auto allowed_num_keys = is_level_tail() ? MAX_NUM_KEYS - 1 : MAX_NUM_KEYS;
     assert(num_keys <= allowed_num_keys);
     auto free = (MAX_NUM_KEYS - index) * (sizeof(snap_gen_t) + sizeof(laddr_t));
-    if (is_level_tail && index == num_keys) {
+    if (is_level_tail() && index == num_keys) {
       free -= (sizeof(snap_gen_t) + sizeof(laddr_t));
     }
     assert(free < SIZE);
     return free;
   }
-#ifndef NDEBUG
+
+#if 0
   template <node_type_t NODE_TYPE>
-  void fill_unused(bool is_level_tail, LogicalCachedExtent& extent) const {
-    /*
+  void fill_unused(LogicalCachedExtent& extent) const {
     node_offset_t begin = (const char*)&keys[num_keys] - fields_start(*this);
     node_offset_t end = (const char*)&child_addrs[0] - fields_start(*this);
     for (auto i = begin; i < end; ++i) {
@@ -307,18 +330,16 @@ struct _internal_fields_3_t {
     }
     begin = (const char*)&child_addrs[num_keys] - fields_start(*this);
     end = NODE_BLOCK_SIZE;
-    if (is_level_tail) {
+    if (is_level_tail()) {
       begin += sizeof(laddr_t);
     }
     for (auto i = begin; i < end; ++i) {
       extent.copy_in(uint8_t(0xc5), i);
     }
-    */
-    assert(false);
   }
 
   template <node_type_t NODE_TYPE>
-  void validate_unused(bool is_level_tail) const {
+  void validate_unused() const {
     auto begin = (const char*)&keys[num_keys];
     auto end = (const char*)&child_addrs[0];
     for (auto i = begin; i < end; ++i) {
@@ -326,7 +347,7 @@ struct _internal_fields_3_t {
     }
     begin = (const char*)&child_addrs[num_keys];
     end = fields_start(*this) + NODE_BLOCK_SIZE;
-    if (is_level_tail) {
+    if (is_level_tail()) {
       begin += sizeof(laddr_t);
     }
     for (auto i = begin; i < end; ++i) {

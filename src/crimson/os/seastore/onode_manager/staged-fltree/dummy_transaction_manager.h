@@ -81,6 +81,11 @@ class LogicalCachedExtent
   void shift(loff_t from_block_offset, loff_t len, int shift_offset) {
     shift_mem((const char*)ptr_offset(from_block_offset), len, shift_offset);
   }
+  template <typename T>
+  void verify_inplace_update(const T& update) {
+    assert((const char*)ptr <= (const char*)&update);
+    assert((const char*)&update + sizeof(T) <= (const char*)ptr + length);
+  }
 
  private:
   LogicalCachedExtent(void* ptr, loff_t len) : ptr{ptr}, length{len} {}

@@ -7,6 +7,25 @@
 
 namespace crimson::os::seastore::onode {
 
+void node_header_t::bootstrap_extent(
+    LogicalCachedExtent& dst,
+    field_type_t field_type, node_type_t node_type,
+    bool is_level_tail, level_t level) {
+  node_header_t header;
+  header.set_field_type(field_type);
+  header.set_node_type(node_type);
+  header.set_is_level_tail(is_level_tail);
+  header.level = level;
+  dst.copy_in(header, 0);
+}
+
+void node_header_t::update_is_level_tail(
+    LogicalCachedExtent& dst, const node_header_t& header, bool value) {
+  auto& _header = const_cast<node_header_t&>(header);
+  _header.set_is_level_tail(value);
+  dst.verify_inplace_update(_header);
+}
+
 #define F013_T _node_fields_013_t<SlotType>
 #define F013_INST(ST) _node_fields_013_t<ST>
 #define F013_TEMPLATE(ST) template struct F013_INST(ST)

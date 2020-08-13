@@ -643,7 +643,7 @@ int main(int argc, char* argv[])
       key_view_t get_largest_key_view() const override { return key_view; }
       std::ostream& dump(std::ostream&) const override { assert(false); }
       std::ostream& dump_brief(std::ostream&) const override { assert(false); }
-      void init(Ref<LogicalCachedExtent>, bool) override { assert(false); }
+      void init(Ref<LogicalCachedExtent>) override { assert(false); }
       Node::search_result_t do_lower_bound(
           const key_hobj_t&, MatchHistory&) override { assert(false); }
       Ref<tree_cursor_t> lookup_smallest() override { assert(false); }

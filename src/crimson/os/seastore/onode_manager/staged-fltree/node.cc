@@ -116,7 +116,7 @@ Ref<Node> Node::load_root(/* transaction, */Ref<Btree> btree) {
   return root;
 }
 
-Ref<Node> Node::load(laddr_t addr, bool is_level_tail) {
+Ref<Node> Node::load(laddr_t addr, bool expect_is_level_tail) {
   // TODO: throw error if cannot read from address
   auto extent = get_transaction_manager().read_extent(addr);
   const auto header = extent->get_ptr<node_header_t>(0u);
@@ -153,7 +153,8 @@ Ref<Node> Node::load(laddr_t addr, bool is_level_tail) {
   } else {
     assert(false);
   }
-  ret->init(extent, is_level_tail);
+  ret->init(extent);
+  assert(ret->is_level_tail() == expect_is_level_tail);
   return ret;
 }
 
