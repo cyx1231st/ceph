@@ -12,6 +12,11 @@
 
 namespace crimson::os::seastore::onode {
 
+// TODO: decide by NODE_BLOCK_SIZE
+using node_offset_t = uint16_t;
+constexpr node_offset_t BLOCK_SIZE = 1u << 12;
+constexpr node_offset_t NODE_BLOCK_SIZE = BLOCK_SIZE * 1u;
+
 // might be managed by an Onode class
 struct onode_t {
   // onode should be smaller than a node
@@ -79,31 +84,5 @@ inline std::ostream& operator<<(std::ostream& os, const onode_key_t& key) {
   os << key.snap << "," << key.gen << ")";
   return os;
 }
-
-// the dummy super block which is supposed to be backed by LogicalCachedExtent
-// to provide transactional update to the onode root laddr.
-class DummyRootBlock
-  : public boost::intrusive_ref_counter<
-      DummyRootBlock, boost::thread_unsafe_counter> {
- public:
-  laddr_t get_onode_root_laddr() const {
-    return onode_root_laddr;
-  }
-  void write_onode_root_laddr(laddr_t addr) {
-    onode_root_laddr = addr;
-  }
- private:
-  laddr_t onode_root_laddr = L_ADDR_NULL;
-};
-
-class DummyCache {
- public:
-  DummyCache() {
-    root = new DummyRootBlock();
-  }
-  Ref<DummyRootBlock> get_root_block(/* transaction */) { return root; }
- private:
-  Ref<DummyRootBlock> root;
-};
 
 }

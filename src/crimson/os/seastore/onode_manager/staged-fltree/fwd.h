@@ -6,15 +6,24 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
 
 #include "crimson/os/seastore/seastore_types.h"
 
 namespace crimson::os::seastore::onode {
 
-using laddr_t = crimson::os::seastore::laddr_t;
-constexpr laddr_t L_ADDR_NULL = crimson::os::seastore::L_ADDR_NULL;
-using extent_len_t = crimson::os::seastore::extent_len_t;
+class DummyTransactionManager;
+using TransactionManagerURef = std::unique_ptr<DummyTransactionManager>;
+struct Transaction {};
+struct context_t {
+  DummyTransactionManager& tm;
+  Transaction& t;
+};
+
+using crimson::os::seastore::laddr_t;
+using crimson::os::seastore::L_ADDR_NULL;
+using crimson::os::seastore::extent_len_t;
 
 constexpr auto INDEX_END = std::numeric_limits<size_t>::max();
 

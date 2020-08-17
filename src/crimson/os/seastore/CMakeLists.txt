@@ -21,6 +21,7 @@ add_library(crimson-seastore
   onode_manager/staged-fltree/stages/node_layout.cc
   onode_manager/staged-fltree/stages/node_stage.cc
   onode_manager/staged-fltree/stages/sub_items_stage.cc
+  onode_manager/staged-fltree/super_node.cc
   onode_manager/staged-fltree/tree.cc
   seastore.cc
   ../../../test/crimson/seastore/test_block.cc

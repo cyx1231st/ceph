@@ -10,6 +10,7 @@
 #include "crimson/common/type_helpers.h"
 
 #include "fwd.h"
+#include "super_node.h"
 
 namespace crimson::os::seastore::onode {
 
@@ -115,12 +116,21 @@ class LogicalCachedExtent
   friend class DummyTransactionManager;
 };
 
+class Btree;
 // memory-based, synchronous and simplified version of
 // crimson::os::seastore::TransactionManager
 class DummyTransactionManager {
  public:
+  ~DummyTransactionManager() {
+    for (auto& [addr, extent] : allocate_map) {
+      std::free(extent->ptr);
+      extent->invalidate();
+    }
+    allocate_map.clear();
+  }
+
   // currently ignore delta machinary, and modify memory inplace
-  Ref<LogicalCachedExtent> alloc_extent(extent_len_t len) {
+  Ref<LogicalCachedExtent> alloc_extent(Transaction& t, extent_len_t len) {
     constexpr size_t ALIGNMENT = 4096;
     assert(len % ALIGNMENT == 0);
     auto mem_block = std::aligned_alloc(len, ALIGNMENT);
@@ -129,26 +139,25 @@ class DummyTransactionManager {
     allocate_map.insert({extent->get_laddr(), extent});
     return extent;
   }
-  void free_all() {
-    for (auto& [addr, extent] : allocate_map) {
-      std::free(extent->ptr);
-      extent->invalidate();
-    }
-    allocate_map.clear();
-  }
-  Ref<LogicalCachedExtent> read_extent(laddr_t addr) {
+  Ref<LogicalCachedExtent> read_extent(
+      Transaction& t, laddr_t addr, extent_len_t len) {
     auto iter = allocate_map.find(addr);
     assert(iter != allocate_map.end());
+    assert(iter->second->get_length() == len);
     return iter->second;
+  }
+  SuperNodeURef get_super_node(Transaction& t, Btree& tree) {
+    return std::make_unique<DummyRootBlock>(t, tree, &onode_root_laddr);
+  }
+
+  static TransactionManagerURef create() {
+    auto ret = std::make_unique<DummyTransactionManager>();
+    return ret;
   }
 
  private:
   std::map<laddr_t, Ref<LogicalCachedExtent>> allocate_map;
+  laddr_t onode_root_laddr = L_ADDR_NULL;
 };
-
-inline DummyTransactionManager& get_transaction_manager() {
-  static DummyTransactionManager transaction_manager;
-  return transaction_manager;
-}
 
 }

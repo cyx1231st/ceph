@@ -218,40 +218,42 @@ int main(int argc, char* argv[])
   }
 
   // node tests
-  auto internal_node_0 = InternalNode0::allocate(1u, false);
-  auto internal_node_1 = InternalNode1::allocate(1u, false);
-  auto internal_node_2 = InternalNode2::allocate(1u, false);
-  auto internal_node_3 = InternalNode3::allocate(1u, false);
-  auto internal_node_0t = InternalNode0::allocate(1u, true);
-  auto internal_node_1t = InternalNode1::allocate(1u, true);
-  auto internal_node_2t = InternalNode2::allocate(1u, true);
-  auto internal_node_3t = InternalNode3::allocate(1u, true);
-  std::vector<Ref<InternalNode>> internal_nodes = {
-    internal_node_0, internal_node_1, internal_node_2, internal_node_3,
-    internal_node_0t, internal_node_1t, internal_node_2t, internal_node_3t};
+  {
+    auto _p_tm = DummyTransactionManager::create();
+    Transaction t;
+    context_t c{*_p_tm.get(), t};
+    Btree tree(std::move(_p_tm));
 
-  auto leaf_node_0 = LeafNode0::allocate(false);
-  auto leaf_node_1 = LeafNode1::allocate(false);
-  auto leaf_node_2 = LeafNode2::allocate(false);
-  auto leaf_node_3 = LeafNode3::allocate(false);
-  auto leaf_node_0t = LeafNode0::allocate(true);
-  auto leaf_node_1t = LeafNode1::allocate(true);
-  auto leaf_node_2t = LeafNode2::allocate(true);
-  auto leaf_node_3t = LeafNode3::allocate(true);
-  std::vector<Ref<LeafNode>> leaf_nodes = {
-    leaf_node_0, leaf_node_1, leaf_node_2, leaf_node_3,
-    leaf_node_0t, leaf_node_1t, leaf_node_2t, leaf_node_3t};
+    std::vector<Ref<Node>> nodes = {
+      InternalNode0::allocate(c, 1u, false),
+      InternalNode1::allocate(c, 1u, false),
+      InternalNode2::allocate(c, 1u, false),
+      InternalNode3::allocate(c, 1u, false),
+      InternalNode0::allocate(c, 1u, true),
+      InternalNode1::allocate(c, 1u, true),
+      InternalNode2::allocate(c, 1u, true),
+      InternalNode3::allocate(c, 1u, true),
+      LeafNode0::allocate(c, false),
+      LeafNode1::allocate(c, false),
+      LeafNode2::allocate(c, false),
+      LeafNode3::allocate(c, false),
+      LeafNode0::allocate(c, true),
+      LeafNode1::allocate(c, true),
+      LeafNode2::allocate(c, true),
+      LeafNode3::allocate(c, true)
+    };
 
-  std::vector<Ref<Node>> nodes;
-  nodes.insert(nodes.end(), internal_nodes.begin(), internal_nodes.end());
-  nodes.insert(nodes.end(), leaf_nodes.begin(), leaf_nodes.end());
-
-  std::cout << "allocated nodes:" << std::endl;
-  for (auto& node : nodes) {
-    std::cout << *node << std::endl;
-    node->test_make_destructable();
+    std::cout << "allocated nodes:" << std::endl;
+    assert(tree.test_is_clean());
+    for (auto iter = nodes.begin(); iter != nodes.end();) {
+      std::cout << **iter << std::endl;
+      (*iter)->test_make_destructable(c, c.tm.get_super_node(c.t, tree));
+      assert(!tree.test_is_clean());
+      iter = nodes.erase(iter);
+      assert(tree.test_is_clean());
+    }
+    std::cout << std::endl;
   }
-  std::cout << std::endl;
 
   /*************** tree tests ***************/
   auto f_validate_cursor = [] (const Btree::Cursor& cursor, const onode_t& onode) {
@@ -265,29 +267,30 @@ int main(int argc, char* argv[])
 
   // leaf node insert
   {
-    Ref<Btree> p_btree = new Btree();
-    Btree& btree = *p_btree.get();
-    btree.mkfs();
+    Btree btree(DummyTransactionManager::create());
+    Transaction t;
+    btree.mkfs(t);
 
     std::cout << "---------------------------------------------\n"
               << "randomized leaf node insert:"
               << std::endl << std::endl;
     auto key_s = onode_key_t{0, 0, 0, "ns", "oid", 0, 0};
     auto key_e = onode_key_t{std::numeric_limits<shard_t>::max(), 0, 0, "ns", "oid", 0, 0};
-    assert(btree.find(key_s).is_end());
-    assert(btree.begin().is_end());
-    assert(btree.last().is_end());
+    assert(btree.find(t, key_s).is_end());
+    assert(btree.begin(t).is_end());
+    assert(btree.last(t).is_end());
 
     std::vector<std::tuple<onode_key_t,
                            const onode_t*,
                            Btree::Cursor>> insert_history;
-    auto f_validate_insert_new = [&btree, &f_validate_cursor, &insert_history] (
-        const onode_key_t& key, const onode_t& value) {
-      auto [cursor, success] = btree.insert(key, value);
+    auto f_validate_insert_new =
+        [&btree, &t, &f_validate_cursor, &insert_history] (
+          const onode_key_t& key, const onode_t& value) {
+      auto [cursor, success] = btree.insert(t, key, value);
       assert(success == true);
       insert_history.emplace_back(key, &value, cursor);
       f_validate_cursor(cursor, value);
-      auto cursor_ = btree.lower_bound(key);
+      auto cursor_ = btree.lower_bound(t, key);
       assert(cursor_.value() == cursor.value());
       return cursor.value();
     };
@@ -299,16 +302,16 @@ int main(int argc, char* argv[])
 
     // validate lookup
     {
-      auto cursor1_s = btree.lower_bound(key_s);
+      auto cursor1_s = btree.lower_bound(t, key_s);
       assert(cursor1_s.value() == p_value1);
-      auto cursor1_e = btree.lower_bound(key_e);
+      auto cursor1_e = btree.lower_bound(t, key_e);
       assert(cursor1_e.is_end());
     }
 
     // insert the same key1 with a different onode
     {
       auto& onode1_dup = onodes.pick();
-      auto [cursor1_dup, ret1_dup] = btree.insert(key1, onode1_dup);
+      auto [cursor1_dup, ret1_dup] = btree.insert(t, key1, onode1_dup);
       assert(ret1_dup == false);
       f_validate_cursor(cursor1_dup, onode1);
     }
@@ -389,21 +392,21 @@ int main(int argc, char* argv[])
     std::for_each(kvs.begin(), kvs.end(), [&f_validate_insert_new] (auto& kv) {
       f_validate_insert_new(kv.first, *kv.second);
     });
-    assert(btree.height() == 1);
+    assert(btree.height(t) == 1);
     assert(!btree.test_is_clean());
 
     for (auto& [k, v, c] : insert_history) {
       // validate values in tree keep intact
-      auto cursor = btree.lower_bound(k);
+      auto cursor = btree.lower_bound(t, k);
       f_validate_cursor(cursor, *v);
       // validate values in cursors keep intact
       f_validate_cursor(c, *v);
     }
-    f_validate_cursor(btree.lower_bound(key_s), smallest_value);
-    f_validate_cursor(btree.begin(), smallest_value);
-    f_validate_cursor(btree.last(), largest_value);
+    f_validate_cursor(btree.lower_bound(t, key_s), smallest_value);
+    f_validate_cursor(btree.begin(t), smallest_value);
+    f_validate_cursor(btree.last(t), largest_value);
 
-    btree.dump(std::cout) << std::endl << std::endl;
+    btree.dump(t, std::cout) << std::endl << std::endl;
 
     insert_history.clear();
     assert(btree.test_is_clean());
@@ -414,9 +417,9 @@ int main(int argc, char* argv[])
 
   // leaf node split
   {
-    Ref<Btree> p_btree = new Btree();
-    Btree& btree = *p_btree.get();
-    btree.mkfs();
+    Btree btree(DummyTransactionManager::create());
+    Transaction t;
+    btree.mkfs(t);
 
     std::cout << "---------------------------------------------\n"
               << "before leaf node split:"
@@ -427,32 +430,32 @@ int main(int argc, char* argv[])
                            Btree::Cursor>> insert_history;
     for (auto& key : keys) {
       auto& value = onodes.create(120);
-      auto [cursor, success] = btree.insert(key, value);
+      auto [cursor, success] = btree.insert(t, key, value);
       assert(success == true);
       f_validate_cursor(cursor, value);
       insert_history.emplace_back(key, &value, cursor);
     }
-    assert(btree.height() == 1);
+    assert(btree.height(t) == 1);
     assert(!btree.test_is_clean());
-    btree.dump(std::cout) << std::endl << std::endl;
+    btree.dump(t, std::cout) << std::endl << std::endl;
 
-    auto f_split = [&btree, &insert_history, &f_validate_cursor] (
+    auto f_split = [&btree, &t, &insert_history, &f_validate_cursor] (
         const onode_key_t& key, const onode_t& value) {
-      Ref<Btree> p_btree_clone = new Btree();
-      Btree& btree_clone = *p_btree_clone.get();
-      btree_clone.test_clone_from(btree);
+      Btree btree_clone(DummyTransactionManager::create());
+      Transaction t_clone;
+      btree_clone.test_clone_from(t_clone, t, btree);
       std::cout << "insert " << key << ":" << std::endl;
-      auto [cursor, success] = btree_clone.insert(key, value);
+      auto [cursor, success] = btree_clone.insert(t_clone, key, value);
       assert(success == true);
       f_validate_cursor(cursor, value);
-      btree_clone.dump(std::cout) << std::endl << std::endl;
-      assert(btree_clone.height() == 2);
+      btree_clone.dump(t_clone, std::cout) << std::endl << std::endl;
+      assert(btree_clone.height(t_clone) == 2);
 
       for (auto& [k, v, c] : insert_history) {
-        auto result = btree_clone.lower_bound(k);
+        auto result = btree_clone.lower_bound(t_clone, k);
         f_validate_cursor(result, *v);
       }
-      auto result = btree_clone.lower_bound(key);
+      auto result = btree_clone.lower_bound(t_clone, key);
       f_validate_cursor(result, value);
     };
     auto& onode = onodes.create(1280);
@@ -565,7 +568,8 @@ int main(int argc, char* argv[])
         std::free(p_mem_key_view);
       }
 
-      void populate_split(std::set<Ref<DummyChild>>& splitable_nodes) {
+      void populate_split(
+          context_t c, std::set<Ref<DummyChild>>& splitable_nodes) {
         assert(can_split());
         assert(splitable_nodes.find(this) != splitable_nodes.end());
 
@@ -583,7 +587,7 @@ int main(int argc, char* argv[])
         bool right_is_tail = _is_level_tail;
         reset(left_keys, false);
         auto right_child = DummyChild::create(right_keys, right_is_tail, pool);
-        this->insert_parent(right_child);
+        this->insert_parent(c, right_child);
 
         if (!can_split()) {
           splitable_nodes.erase(this);
@@ -593,7 +597,7 @@ int main(int argc, char* argv[])
         }
       }
 
-      void insert_and_split(const onode_key_t& insert_key) {
+      void insert_and_split(context_t c, const onode_key_t& insert_key) {
         assert(keys.size() == 1);
         auto& key = *keys.begin();
         assert(insert_key < key);
@@ -605,7 +609,7 @@ int main(int argc, char* argv[])
 
         std::set<Ref<DummyChild>> splitable_nodes;
         splitable_nodes.insert(this);
-        populate_split(splitable_nodes);
+        populate_split(c, splitable_nodes);
         assert(!splitable_nodes.size());
       }
 
@@ -621,10 +625,12 @@ int main(int argc, char* argv[])
       }
 
       static Ref<DummyChild> create_initial(
-          const std::set<onode_key_t>& keys, ChildPool& pool, Ref<Btree> btree) {
+          context_t c, const std::set<onode_key_t>& keys,
+          ChildPool& pool, Btree& btree) {
         auto initial = create(keys, true, pool);
-        initial->make_root(btree);
-        initial->upgrade_root();
+        auto super = c.tm.get_super_node(c.t, btree);
+        initial->make_root_new(c, std::move(super));
+        initial->upgrade_root(c);
         return initial;
       }
 
@@ -645,13 +651,16 @@ int main(int argc, char* argv[])
       std::ostream& dump_brief(std::ostream&) const override { assert(false); }
       void init(Ref<LogicalCachedExtent>) override { assert(false); }
       Node::search_result_t do_lower_bound(
-          const key_hobj_t&, MatchHistory&) override { assert(false); }
-      Ref<tree_cursor_t> lookup_smallest() override { assert(false); }
-      Ref<tree_cursor_t> lookup_largest() override { assert(false); }
+          context_t, const key_hobj_t&, MatchHistory&) override { assert(false); }
+      Ref<tree_cursor_t> lookup_smallest(context_t) override { assert(false); }
+      Ref<tree_cursor_t> lookup_largest(context_t) override { assert(false); }
 
-      void test_make_destructable() override { assert(false); }
-      void test_clone_root(Ref<Btree>) const override { assert(false); }
-      void test_clone_non_root(Ref<InternalNode> new_parent) const override {
+      void test_make_destructable(
+          context_t, SuperNodeURef&&) override { assert(false); }
+      void test_clone_root(
+          context_t, SuperNodeURef&&) const override { assert(false); }
+      void test_clone_non_root(
+          context_t c, Ref<InternalNode> new_parent) const override {
         assert(!is_root());
         auto p_pool_clone = pool.pool_clone_in_progress;
         assert(p_pool_clone);
@@ -695,8 +704,11 @@ int main(int argc, char* argv[])
       reset();
 
       // create tree
-      p_btree = new Btree();
-      auto initial_child = DummyChild::create_initial(keys, *this, p_btree);
+      auto _p_tm = DummyTransactionManager::create();
+      p_tm = _p_tm.get();
+      p_btree.emplace(std::move(_p_tm));
+      auto initial_child = DummyChild::create_initial(
+          get_context(), keys, *this, *p_btree);
 
       // split
       std::set<Ref<DummyChild>> splitable_nodes;
@@ -707,10 +719,10 @@ int main(int argc, char* argv[])
         auto iter = splitable_nodes.begin();
         std::advance(iter, index);
         Ref<DummyChild> child = *iter;
-        child->populate_split(splitable_nodes);
+        child->populate_split(get_context(), splitable_nodes);
       }
-      p_btree->dump(std::cout) << std::endl << std::endl;
-      assert(p_btree->height() == 2);
+      p_btree->dump(t, std::cout) << std::endl << std::endl;
+      assert(p_btree->height(t) == 2);
     }
 
     void test_split(const onode_key_t& key, search_position_t pos) {
@@ -718,14 +730,16 @@ int main(int argc, char* argv[])
 
       ChildPool pool_clone;
       pool_clone_in_progress = &pool_clone;
-      pool_clone.p_btree = new Btree();
-      pool_clone.p_btree->test_clone_from(*p_btree);
+      auto _p_tm = DummyTransactionManager::create();
+      pool_clone.p_tm = _p_tm.get();
+      pool_clone.p_btree.emplace(std::move(_p_tm));
+      pool_clone.p_btree->test_clone_from(pool_clone.t, t, *p_btree);
       pool_clone_in_progress = nullptr;
 
       auto node_to_split = pool_clone.get_node_by_pos(pos);
-      node_to_split->insert_and_split(key);
-      pool_clone.p_btree->dump(std::cout) << std::endl << std::endl;
-      assert(pool_clone.p_btree->height() == 3);
+      node_to_split->insert_and_split(pool_clone.get_context(), key);
+      pool_clone.p_btree->dump(pool_clone.t, std::cout) << std::endl << std::endl;
+      assert(pool_clone.p_btree->height(pool_clone.t) == 3);
     }
 
    private:
@@ -735,6 +749,7 @@ int main(int argc, char* argv[])
         assert(!p_btree->test_is_clean());
         tracked_children.clear();
         assert(p_btree->test_is_clean());
+        p_tm = nullptr;
         p_btree.reset();
       } else {
         assert(!p_btree);
@@ -755,8 +770,15 @@ int main(int argc, char* argv[])
       return *iter;
     }
 
+    context_t get_context() {
+      assert(p_tm != nullptr);
+      return {*p_tm, t};
+    }
+
     std::set<Ref<DummyChild>> tracked_children;
-    Ref<Btree> p_btree;
+    std::optional<Btree> p_btree;
+    DummyTransactionManager* p_tm = nullptr;
+    Transaction t;
 
     ChildPool* pool_clone_in_progress = nullptr;
   };
@@ -946,6 +968,4 @@ int main(int argc, char* argv[])
     // TODO: test split at {0, 0, 0}
     // TODO: test split at {END, END, END}
   }
-
-  get_transaction_manager().free_all();
 }

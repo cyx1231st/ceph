@@ -11,7 +11,7 @@
 
 #include "node_types.h"
 #include "stages/stage_types.h"
-#include "tree.h"
+#include "super_node.h"
 #include "tree_types.h"
 
 namespace crimson::os::seastore::onode {
@@ -23,10 +23,12 @@ namespace crimson::os::seastore::onode {
  * USER          --> Ref<tree_cursor_t>
  * tree_cursor_t --> Ref<LeafNode>
  * Node (child)  --> Ref<InternalNode> (see parent_info_t)
- * Node (root)   --> Ref<Btree>, Ref<RootBlock>
+ * Node (root)   --> Ref<SuperNode>
+ * SuperNode     --> Btree
  *
  * tracked lookup (top-down):
- * BTree         --> Node* (root)
+ * Btree         --> SuperNode*
+ * SuperNode     --> Node* (root)
  * InternalNode  --> Node* (children)
  * LeafNode      --> tree_cursor_t*
  */
@@ -79,21 +81,21 @@ class Node
 
   virtual ~Node();
   virtual level_t level() const = 0;
-  virtual Ref<tree_cursor_t> lookup_smallest() = 0;
-  virtual Ref<tree_cursor_t> lookup_largest() = 0;
-  search_result_t lower_bound(const onode_key_t& key);
-  std::pair<Ref<tree_cursor_t>, bool> insert(const onode_key_t&, const onode_t&);
+  virtual Ref<tree_cursor_t> lookup_smallest(context_t) = 0;
+  virtual Ref<tree_cursor_t> lookup_largest(context_t) = 0;
+  search_result_t lower_bound(context_t, const onode_key_t& key);
+  std::pair<Ref<tree_cursor_t>, bool> insert(context_t, const onode_key_t&, const onode_t&);
 
   virtual std::ostream& dump(std::ostream&) const = 0;
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
 
-  static void mkfs(/* transaction, */Ref<Btree>);
-  static Ref<Node> load_root(/* transaction */Ref<Btree>);
+  static void mkfs(context_t, SuperNodeURef&&);
+  static Ref<Node> load_root(context_t, SuperNodeURef&&);
 
 #ifndef NDEBUG
-  virtual void test_make_destructable() = 0;
-  virtual void test_clone_root(Ref<Btree>) const = 0;
-  virtual void test_clone_non_root(Ref<InternalNode>) const = 0;
+  virtual void test_make_destructable(context_t, SuperNodeURef&&) = 0;
+  virtual void test_clone_root(context_t, SuperNodeURef&&) const = 0;
+  virtual void test_clone_non_root(context_t, Ref<InternalNode>) const = 0;
 #endif
 
  public: // used by node_impl.h, FIXME: protected
@@ -102,7 +104,7 @@ class Node
   virtual laddr_t laddr() const = 0;
   virtual key_view_t get_key_view(const search_position_t&) const = 0;
   virtual key_view_t get_largest_key_view() const = 0;
-  virtual search_result_t do_lower_bound(const key_hobj_t&, MatchHistory&) = 0;
+  virtual search_result_t do_lower_bound(context_t, const key_hobj_t&, MatchHistory&) = 0;
 
  protected:
   Node() {}
@@ -112,41 +114,43 @@ class Node
     Ref<InternalNode> ptr;
   };
   bool is_root() const {
-    assert((super && tree && !_parent_info.has_value()) ||
-           (!super && !tree && _parent_info.has_value()));
+    assert((super && !_parent_info.has_value()) ||
+           (!super && _parent_info.has_value()));
     return !_parent_info.has_value();
   }
-  void make_root(/* transaction */Ref<Btree> btree) {
-    auto super = btree->get_super_block(/* transaction */);
-    assert(super->get_onode_root_laddr() == L_ADDR_NULL);
-    super->write_onode_root_laddr(laddr());
-    as_root(btree, super);
+  void make_root(context_t c, SuperNodeURef&& _super) {
+    _super->write_root_laddr(c, laddr());
+    as_root(std::move(_super));
   }
-  void as_root(Ref<Btree> _tree, Ref<DummyRootBlock> _super) {
-    assert(!super);
-    assert(!tree);
-    assert(!_parent_info);
-    assert(_super->get_onode_root_laddr() == laddr());
+  void make_root_new(context_t c, SuperNodeURef&& _super) {
+    assert(_super->get_root_laddr() == L_ADDR_NULL);
+    make_root(c, std::move(_super));
+  }
+  void make_root_from(context_t c, SuperNodeURef&& _super, laddr_t from_addr) {
+    assert(_super->get_root_laddr() == from_addr);
+    make_root(c, std::move(_super));
+  }
+  void as_root(SuperNodeURef&& _super) {
+    assert(!super && !_parent_info);
+    assert(_super->get_root_laddr() == laddr());
     assert(is_level_tail());
-    super = _super;
-    tree = _tree;
-    tree->do_track_root(*this);
+    super = std::move(_super);
+    super->do_track_root(*this);
   }
-  void upgrade_root();
+  void upgrade_root(context_t);
   template <bool VALIDATE = true>
   void as_child(const search_position_t&, Ref<InternalNode>);
   const parent_info_t& parent_info() const { return *_parent_info; }
-  void insert_parent(Ref<Node> right_node);
+  void insert_parent(context_t, Ref<Node> right_node);
 
   virtual void init(Ref<LogicalCachedExtent>) = 0;
-  static Ref<Node> load(laddr_t, bool expect_is_level_tail);
+  static Ref<Node> load(context_t, laddr_t, bool expect_is_level_tail);
 
  private:
   // as child/non-root
   std::optional<parent_info_t> _parent_info;
   // as root
-  Ref<DummyRootBlock> super;
-  Ref<Btree> tree;
+  SuperNodeURef super;
 
   friend class InternalNode;
 };
@@ -162,12 +166,12 @@ class InternalNode : virtual public Node {
   // XXX: extract a common tracker for InternalNode to track Node,
   // and LeafNode to track tree_cursor_t.
   Ref<Node> get_or_track_child(
-      const search_position_t& position, laddr_t child_addr) {
+      context_t c, const search_position_t& position, laddr_t child_addr) {
     bool level_tail = position.is_end();
     Ref<Node> child;
     auto found = tracked_child_nodes.find(position);
     if (found == tracked_child_nodes.end()) {
-      child = Node::load(child_addr, level_tail);
+      child = Node::load(c, child_addr, level_tail);
       child->as_child(position, this);
     } else {
       child = found->second;
@@ -242,10 +246,11 @@ class InternalNode : virtual public Node {
   }
 
 #ifndef NDEBUG
-  void test_clone_children(Ref<InternalNode> clone) const {
+  void test_clone_children(
+      context_t c_other, Ref<InternalNode> clone) const {
     for (auto& kv : tracked_child_nodes) {
       assert(kv.first == kv.second->parent_info().position);
-      kv.second->test_clone_non_root(clone);
+      kv.second->test_clone_non_root(c_other, clone);
     }
   }
 #endif
@@ -253,7 +258,7 @@ class InternalNode : virtual public Node {
  private:
   // TODO: async
   virtual void apply_child_split(
-      const search_position_t&, const key_view_t&, Ref<Node>, Ref<Node>) = 0;
+      context_t, const search_position_t&, const key_view_t&, Ref<Node>, Ref<Node>) = 0;
   virtual const laddr_t* get_p_value(const search_position_t&) const = 0;
   void validate_child(const Node& child) const;
   template <bool VALIDATE>
@@ -372,6 +377,7 @@ class LeafNode : virtual public Node {
 
  private:
   virtual Ref<tree_cursor_t> insert_value(
+      context_t,
       const key_hobj_t&,
       const onode_t&,
       const search_position_t&,

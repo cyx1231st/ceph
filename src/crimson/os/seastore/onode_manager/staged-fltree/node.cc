@@ -53,27 +53,25 @@ const onode_t* tree_cursor_t::get_p_value() const {
 Node::~Node() {
   // XXX: tolerate failure between allocate() and as_child()
   if (is_root()) {
-    tree->do_untrack_root(*this);
+    super->do_untrack_root(*this);
   } else {
     _parent_info->ptr->do_untrack_child(*this);
   }
 }
 
-void Node::upgrade_root() {
+void Node::upgrade_root(context_t c) {
   assert(is_root());
   assert(is_level_tail());
   assert(field_type() == field_type_t::N0);
-  tree->do_untrack_root(*this);
-  auto new_root = InternalNode0::allocate_root(level(), laddr(), tree, super);
-  super.reset();
-  tree.reset();
+  super->do_untrack_root(*this);
+  // TODO: bootstrap extent inside
+  auto new_root = InternalNode0::allocate_root(c, level(), laddr(), std::move(super));
   as_child(search_position_t::end(), new_root);
 }
 
 template <bool VALIDATE>
 void Node::as_child(const search_position_t& pos, Ref<InternalNode> parent_node) {
   assert(!super);
-  assert(!tree);
   _parent_info = parent_info_t{pos, parent_node};
   parent_info().ptr->do_track_child<VALIDATE>(*this);
 }
@@ -81,44 +79,49 @@ template void Node::as_child<true>(const search_position_t&, Ref<InternalNode>);
 template void Node::as_child<false>(const search_position_t&, Ref<InternalNode>);
 
 
-Node::search_result_t Node::lower_bound(const onode_key_t& _key) {
+Node::search_result_t
+Node::lower_bound(context_t c, const onode_key_t& _key) {
   MatchHistory history;
   full_key_t<KeyT::HOBJ> key(_key);
-  return do_lower_bound(key, history);
+  return do_lower_bound(c, key, history);
 }
 
 std::pair<Ref<tree_cursor_t>, bool>
-Node::insert(const onode_key_t& _key, const onode_t& value) {
+Node::insert(context_t c, const onode_key_t& _key, const onode_t& value) {
   MatchHistory history;
   full_key_t<KeyT::HOBJ> key(_key);
-  auto result = do_lower_bound(key, history);
+  auto result = do_lower_bound(c, key, history);
   if (result.match == MatchKindBS::EQ) {
     return {result.p_cursor, false};
   } else {
     auto leaf_node = result.p_cursor->get_leaf_node();
     auto p_cursor = leaf_node->insert_value(
-        key, value, result.p_cursor->get_position(), history);
+        c, key, value, result.p_cursor->get_position(), history);
     return {p_cursor, true};
   }
 }
 
-void Node::mkfs(/* transaction, */Ref<Btree> btree) {
-  LeafNode0::mkfs(/* transaction, */btree);
+void Node::mkfs(context_t c, SuperNodeURef&& super) {
+  LeafNode0::mkfs(c, std::move(super));
 }
 
-Ref<Node> Node::load_root(/* transaction, */Ref<Btree> btree) {
-  auto super = btree->get_super_block(/* transaction */);
-  auto root_addr = super->get_onode_root_laddr();
+Ref<Node> Node::load_root(context_t c, SuperNodeURef&& _super) {
+  auto root_addr = _super->get_root_laddr();
   assert(root_addr != L_ADDR_NULL);
-  auto root = Node::load(root_addr, true);
+  auto root = Node::load(c, root_addr, true);
   assert(root->field_type() == field_type_t::N0);
-  root->as_root(btree, super);
+  root->as_root(std::move(_super));
   return root;
 }
 
-Ref<Node> Node::load(laddr_t addr, bool expect_is_level_tail) {
+Ref<Node> Node::load(context_t c, laddr_t addr, bool expect_is_level_tail) {
   // TODO: throw error if cannot read from address
-  auto extent = get_transaction_manager().read_extent(addr);
+  // NOTE:
+  // *option1: all types of node have the same length;
+  // option2: length is defined by node/field types;
+  // option3: length is totally flexible;
+  auto extent = c.tm.read_extent(c.t, addr, NODE_BLOCK_SIZE);
+  // TODO: bootstrap extent inside read_extent()
   const auto header = extent->get_ptr<node_header_t>(0u);
   auto _field_type = header->get_field_type();
   if (!_field_type.has_value()) {
@@ -158,12 +161,12 @@ Ref<Node> Node::load(laddr_t addr, bool expect_is_level_tail) {
   return ret;
 }
 
-void Node::insert_parent(Ref<Node> right_node) {
+void Node::insert_parent(context_t c, Ref<Node> right_node) {
   assert(!is_root());
   // TODO(cross-node string dedup)
   auto my_key = get_largest_key_view();
   parent_info().ptr->apply_child_split(
-      parent_info().position, my_key, this, right_node);
+      c, parent_info().position, my_key, this, right_node);
 }
 
 void InternalNode::validate_child(const Node& child) const {

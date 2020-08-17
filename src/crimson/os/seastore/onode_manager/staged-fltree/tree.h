@@ -3,8 +3,8 @@
 
 #pragma once
 
+#include <optional>
 #include <ostream>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
 #include "crimson/common/type_helpers.h"
 
@@ -12,6 +12,7 @@
 
 namespace crimson::os::seastore::onode {
 
+class DummyRootBlock;
 class Node;
 
 /*
@@ -22,75 +23,66 @@ class Node;
  *   ceph::BlueStore::get_onode()
  *   db->get_iterator(PREFIIX_OBJ) by ceph::BlueStore::fsck()
  */
-class Btree final
-  : public boost::intrusive_ref_counter<
-    Btree, boost::thread_unsafe_counter> {
+class Btree {
  public:
-  Btree() = default;
+  Btree(TransactionManagerURef&& tm);
   Btree(const Btree&) = delete;
   Btree(Btree&&) = delete;
   Btree& operator=(const Btree&) = delete;
   Btree& operator=(Btree&&) = delete;
-  ~Btree() { assert(root_node == nullptr); }
+  ~Btree();
 
-  void mkfs();
+  void mkfs(Transaction&);
 
   class Cursor;
-  // TODO: transaction
   // lookup
-  Cursor begin();
-  Cursor last();
+  Cursor begin(Transaction&);
+  Cursor last(Transaction&);
   Cursor end();
-  bool contains(const onode_key_t& key);
-  Cursor find(const onode_key_t& key);
-  Cursor lower_bound(const onode_key_t& key);
+  bool contains(Transaction&, const onode_key_t&);
+  Cursor find(Transaction&, const onode_key_t&);
+  Cursor lower_bound(Transaction&, const onode_key_t&);
 
   // modifiers
-  std::pair<Cursor, bool> insert(const onode_key_t& key, const onode_t& value);
-  size_t erase(const onode_key_t& key);
+  std::pair<Cursor, bool> insert(Transaction&, const onode_key_t&, const onode_t&);
+  size_t erase(Transaction&, const onode_key_t& key);
   Cursor erase(Cursor& pos);
   Cursor erase(Cursor& first, Cursor& last);
 
   // stats
-  size_t height();
-  std::ostream& dump(std::ostream& os);
+  size_t height(Transaction&);
+  std::ostream& dump(Transaction&, std::ostream& os);
 
   // test_only
-  bool test_is_clean() const { return root_node == nullptr; }
-  void test_clone_from(Btree& other);
-
-  // TODO: move to private
-  // called by the tracked root node
-  void do_track_root(Node& root) {
-    assert(!root_node);
-    root_node = &root;
-  }
-  void do_untrack_root(Node& root) {
-    assert(root_node == &root);
-    root_node = nullptr;
-  }
-  Ref<DummyRootBlock> get_super_block(/* transaction */) {
-    return cache.get_root_block(/* transaction */);
-  }
+  bool test_is_clean() const { return tracked_supers.empty(); }
+  void test_clone_from(Transaction& t, Transaction& t_from, Btree& from);
 
  private:
-  Ref<Node> get_root(/* transaction */);
+  // called by the tracked super node
+  void do_track_super(Transaction& t, DummyRootBlock& super) {
+    assert(tracked_supers.find(&t) == tracked_supers.end());
+    tracked_supers[&t] = &super;
+  }
+  void do_untrack_super(Transaction& t, DummyRootBlock& super) {
+    auto removed = tracked_supers.erase(&t);
+    assert(removed);
+  }
+  context_t get_context(Transaction& t) { return {*tm, t}; }
 
-  DummyCache cache;
-  // TODO: a map of transaction -> Node*
-  // track the current living root nodes by transaction
-  Node* root_node = nullptr;
+  Ref<Node> get_root(Transaction& t);
 
-  friend class Node;
+  TransactionManagerURef tm;
+  // XXX abstract a root tracker
+  std::map<Transaction*, DummyRootBlock*> tracked_supers;
+
+  friend class DummyRootBlock;
 };
 
 struct tree_cursor_t;
 
 class Btree::Cursor {
  public:
-  Cursor(Btree*, Ref<tree_cursor_t>);
-  Cursor(const Cursor& x) = default;
-  ~Cursor() = default;
+  ~Cursor();
 
   bool is_end() const;
   const onode_key_t& key();
@@ -104,14 +96,17 @@ class Btree::Cursor {
     return tmp;
   }
 
-  static Cursor make_end(Btree* tree);
-
  private:
-  Cursor(Btree* p_tree) : tree{*p_tree} {}
+  Cursor(Btree*, Ref<tree_cursor_t>);
+  Cursor(Btree* p_tree);
+
+  static Cursor make_end(Btree* tree);
 
   Btree& tree;
   Ref<tree_cursor_t> p_cursor;
   std::optional<onode_key_t> key_copy;
+
+  friend class Btree;
 };
 
 }

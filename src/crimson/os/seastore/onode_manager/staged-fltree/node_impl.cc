@@ -132,16 +132,16 @@ const value_type_t<NODE_TYPE>* NODE_T::get_value_ptr(
 
 #ifndef NDEBUG
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-void NODE_T::test_make_destructable() {
+void NODE_T::test_make_destructable(context_t c, SuperNodeURef&& _super) {
   node_stage_t::update_is_level_tail(extent(), stage(), true);
-  make_root(new Btree());
+  make_root(c, std::move(_super));
 }
 #endif
 
 template <typename FieldType, node_type_t NODE_TYPE, typename ConcreteType>
-Ref<ConcreteType> NODE_T::_allocate(level_t level, bool level_tail) {
-  // might be asynchronous
-  auto extent = get_transaction_manager().alloc_extent(node_stage_t::EXTENT_SIZE);
+Ref<ConcreteType> NODE_T::_allocate(context_t c, level_t level, bool level_tail) {
+  // TODO: bootstrap extent
+  auto extent = c.tm.alloc_extent(c.t, node_stage_t::EXTENT_SIZE);
   node_stage_t::bootstrap_extent(
       *extent, FIELD_TYPE, NODE_TYPE, level_tail, level);
   auto ret = Ref<ConcreteType>(new ConcreteType());
@@ -165,7 +165,7 @@ template class InternalNodeT<internal_fields_3_t, InternalNode3>;
 
 template <typename FieldType, typename ConcreteType>
 Node::search_result_t I_NODE_T::do_lower_bound(
-    const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
+    context_t c, const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
   auto stage = this->stage();
   auto result = STAGE_T::lower_bound_normalized(stage, key, history);
   auto& position = result.position;
@@ -177,16 +177,17 @@ Node::search_result_t I_NODE_T::do_lower_bound(
     assert(result.p_value);
     child_addr = *result.p_value;
   }
-  Ref<Node> child = get_or_track_child(position, child_addr);
+  Ref<Node> child = get_or_track_child(c, position, child_addr);
   // XXX(multi-type): pass result.mstat to child
-  return child->do_lower_bound(key, history);
+  return child->do_lower_bound(c, key, history);
 }
 
 template <typename FieldType, typename ConcreteType>
 void I_NODE_T::apply_child_split(
     // TODO(cross-node string dedup)
-    const search_position_t& pos, const full_key_t<KeyT::VIEW>& left_key,
-    Ref<Node> left_child, Ref<Node> right_child) {
+    context_t c, const search_position_t& pos,
+    const full_key_t<KeyT::VIEW>& left_key, Ref<Node> left_child,
+    Ref<Node> right_child) {
   // update pos => l_addr to r_addr
   const laddr_t* p_rvalue = this->get_value_ptr(pos);
   auto left_laddr = left_child->laddr();
@@ -213,6 +214,7 @@ void I_NODE_T::apply_child_split(
   // TODO: common part begin, move to NodeT
   auto free_size = stage.free_size();
   if (free_size >= insert_size) {
+    // TODO: delta(INSERT, left_key, left_addr, insert_pos, insert_stage, insert_size)
     auto p_value = STAGE_T::template proceed_insert<KeyT::VIEW, false>(
         this->extent(), stage, left_key, left_laddr,
         insert_pos, insert_stage, insert_size);
@@ -247,9 +249,9 @@ void I_NODE_T::apply_child_split(
             << std::endl;
 
   if (is_root()) {
-    this->upgrade_root();
+    this->upgrade_root(c);
   }
-  auto right_node = ConcreteType::allocate(this->level(), this->is_level_tail());
+  auto right_node = ConcreteType::allocate(c, this->level(), this->is_level_tail());
 
   auto append_at = split_at;
   // TODO(cross-node string dedup)
@@ -279,6 +281,9 @@ void I_NODE_T::apply_child_split(
   appender.wrap();
   right_node->dump(std::cout) << std::endl;
 
+  // TODO: delta(SPLIT, split_at)
+  // TODO: delta(SPLIT_INSERT, split_at,
+  //             left_key, left_laddr, insert_pos, insert_stage, insert_size)
   // left node: trim
   node_stage_t::update_is_level_tail(this->extent(), stage, false);
   STAGE_T::trim(this->extent(), split_at);
@@ -312,7 +317,7 @@ void I_NODE_T::apply_child_split(
   right_node->validate_tracked_children();
 
   // propagate index to parent
-  this->insert_parent(right_node);
+  this->insert_parent(c, right_node);
 
   // TODO (optimize)
   // try to acquire space from siblings before split... see btrfs
@@ -320,34 +325,36 @@ void I_NODE_T::apply_child_split(
 
 #ifndef NDEBUG
 template <typename FieldType, typename ConcreteType>
-void I_NODE_T::test_clone_root(/* transaction */Ref<Btree> new_tree) const {
+void I_NODE_T::test_clone_root(
+    context_t c_other, SuperNodeURef&& super_other) const {
   assert(is_root());
   assert(is_level_tail());
   assert(field_type() == field_type_t::N0);
-  auto clone = InternalNode0::test_allocate_cloned_root(level(), new_tree, this->extent());
+  auto clone = InternalNode0::test_allocate_cloned_root(
+      c_other, level(), std::move(super_other), this->extent());
   // In some unit tests, the children are stubbed out that they
   // don't exist in TransactionManager, and are only tracked in memory.
-  test_clone_children(clone);
+  test_clone_children(c_other, clone);
 }
 #endif
 
+// TODO: bootstrap extent
 Ref<InternalNode0> InternalNode0::allocate_root(
-    level_t old_root_level, laddr_t old_root_addr,
-    Ref<Btree> tree, Ref<DummyRootBlock> super) {
-  auto root = allocate(old_root_level + 1, true);
+    context_t c, level_t old_root_level,
+    laddr_t old_root_addr, SuperNodeURef&& _super) {
+  auto root = allocate(c, old_root_level + 1, true);
   const laddr_t* p_value = root->get_value_ptr(search_position_t::end());
   root->extent().copy_in_mem(old_root_addr, const_cast<laddr_t*>(p_value));
-  assert(super->get_onode_root_laddr() == old_root_addr);
-  super->write_onode_root_laddr(root->laddr());
-  root->as_root(tree, super);
+  root->make_root_from(c, std::move(_super), old_root_addr);
   return root;
 }
 
 #ifndef NDEBUG
 Ref<InternalNode0> InternalNode0::test_allocate_cloned_root(
-    level_t level, Ref<Btree> tree, const LogicalCachedExtent& from_extent) {
-  auto clone = allocate(level, true);
-  clone->make_root(tree);
+    context_t c, level_t level, SuperNodeURef&& super,
+    const LogicalCachedExtent& from_extent) {
+  auto clone = allocate(c, level, true);
+  clone->make_root_new(c, std::move(super));
   clone->extent().copy_from(from_extent);
   return clone;
 }
@@ -361,7 +368,7 @@ template class LeafNodeT<leaf_fields_3_t, LeafNode3>;
 
 template <typename FieldType, typename ConcreteType>
 Node::search_result_t L_NODE_T::do_lower_bound(
-    const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
+    context_t, const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
   auto stage = this->stage();
   if (unlikely(stage.keys() == 0)) {
     assert(this->is_root());
@@ -381,7 +388,7 @@ Node::search_result_t L_NODE_T::do_lower_bound(
 }
 
 template <typename FieldType, typename ConcreteType>
-Ref<tree_cursor_t> L_NODE_T::lookup_smallest() {
+Ref<tree_cursor_t> L_NODE_T::lookup_smallest(context_t) {
   auto stage = this->stage();
   if (unlikely(stage.keys() == 0)) {
     assert(this->is_root());
@@ -395,7 +402,7 @@ Ref<tree_cursor_t> L_NODE_T::lookup_smallest() {
 }
 
 template <typename FieldType, typename ConcreteType>
-Ref<tree_cursor_t> L_NODE_T::lookup_largest() {
+Ref<tree_cursor_t> L_NODE_T::lookup_largest(context_t) {
   auto stage = this->stage();
   if (unlikely(stage.keys() == 0)) {
     assert(this->is_root());
@@ -411,7 +418,7 @@ Ref<tree_cursor_t> L_NODE_T::lookup_largest() {
 
 template <typename FieldType, typename ConcreteType>
 Ref<tree_cursor_t> L_NODE_T::insert_value(
-    const full_key_t<KeyT::HOBJ>& key, const onode_t& value,
+    context_t c, const full_key_t<KeyT::HOBJ>& key, const onode_t& value,
     const search_position_t& pos, const MatchHistory& history) {
 #ifndef NDEBUG
   if (pos.is_end()) {
@@ -428,6 +435,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   // TODO: common part begin, move to NodeT
   auto free_size = stage.free_size();
   if (free_size >= insert_size) {
+    // TODO: delta(INSERT, key, value, insert_pos, insert_stage, insert_size)
     auto p_value = STAGE_T::template proceed_insert<KeyT::HOBJ, false>(
         this->extent(), stage, key, value,
         insert_pos, insert_stage, insert_size);
@@ -461,9 +469,9 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
             << std::endl;
 
   if (is_root()) {
-    this->upgrade_root();
+    this->upgrade_root(c);
   }
-  auto right_node = ConcreteType::allocate(this->is_level_tail());
+  auto right_node = ConcreteType::allocate(c, this->is_level_tail());
 
   auto append_at = split_at;
   // TODO(cross-node string dedup)
@@ -493,6 +501,9 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   appender.wrap();
   right_node->dump(std::cout) << std::endl;
 
+  // TODO: delta(SPLIT, split_at)
+  // TODO: delta(SPLIT_INSERT, split_at,
+  //             key, value, insert_pos, insert_stage, insert_size)
   // left node: trim
   node_stage_t::update_is_level_tail(this->extent(), stage, false);
   STAGE_T::trim(this->extent(), split_at);
@@ -529,7 +540,7 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
   right_node->validate_tracked_cursors();
 
   // propagate index to parent
-  this->insert_parent(right_node);
+  this->insert_parent(c, right_node);
 
   return ret;
 
@@ -539,17 +550,18 @@ Ref<tree_cursor_t> L_NODE_T::insert_value(
 
 #ifndef NDEBUG
 template <typename FieldType, typename ConcreteType>
-void L_NODE_T::test_clone_root(/* transaction */Ref<Btree> new_tree) const {
+void L_NODE_T::test_clone_root(context_t c_other, SuperNodeURef&& super_other) const {
   assert(this->is_root());
   assert(is_level_tail());
   assert(field_type() == field_type_t::N0);
-  auto clone = LeafNode0::test_allocate_cloned_root(new_tree, this->extent());
+  auto clone = LeafNode0::test_allocate_cloned_root(
+      c_other, std::move(super_other), this->extent());
 }
 
 Ref<LeafNode0> LeafNode0::test_allocate_cloned_root(
-    Ref<Btree> tree, const LogicalCachedExtent& from_extent) {
-  auto clone = allocate(true);
-  clone->make_root(tree);
+    context_t c, SuperNodeURef&& super, const LogicalCachedExtent& from_extent) {
+  auto clone = allocate(c, true);
+  clone->make_root_new(c, std::move(super));
   clone->extent().copy_from(from_extent);
   return clone;
 }

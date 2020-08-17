@@ -36,8 +36,8 @@ class NodeT : virtual public Node {
   const value_t* get_value_ptr(const search_position_t&) const;
 
 #ifndef NDEBUG
-  void test_make_destructable() override final;
-  void test_clone_non_root(Ref<InternalNode>) const override final {
+  void test_make_destructable(context_t, SuperNodeURef&&) override final;
+  void test_clone_non_root(context_t, Ref<InternalNode>) const override final {
     assert(false && "not implemented");
   }
 #endif
@@ -46,7 +46,7 @@ class NodeT : virtual public Node {
   node_stage_t stage() const;
   LogicalCachedExtent& extent();
   const LogicalCachedExtent& extent() const;
-  static Ref<ConcreteType> _allocate(level_t level, bool level_tail);
+  static Ref<ConcreteType> _allocate(context_t, level_t level, bool level_tail);
 
  private:
   void init(Ref<LogicalCachedExtent>) override final;
@@ -64,34 +64,35 @@ class InternalNodeT : public InternalNode,
   virtual ~InternalNodeT() = default;
 
   Node::search_result_t do_lower_bound(
-      const full_key_t<KeyT::HOBJ>&, MatchHistory&) override final;
+      context_t, const full_key_t<KeyT::HOBJ>&, MatchHistory&) override final;
 
-  Ref<tree_cursor_t> lookup_smallest() override final {
+  Ref<tree_cursor_t> lookup_smallest(context_t c) override final {
     auto position = search_position_t::begin();
     laddr_t child_addr = *this->get_value_ptr(position);
-    auto child = get_or_track_child(position, child_addr);
-    return child->lookup_smallest();
+    auto child = get_or_track_child(c, position, child_addr);
+    return child->lookup_smallest(c);
   }
 
-  Ref<tree_cursor_t> lookup_largest() override final {
+  Ref<tree_cursor_t> lookup_largest(context_t c) override final {
     // NOTE: unlike L_NODE_T::lookup_largest(), this only works for the tail
     // internal node to return the tail child address.
     auto position = search_position_t::end();
     laddr_t child_addr = *this->get_value_ptr(position);
-    auto child = get_or_track_child(position, child_addr);
-    return child->lookup_largest();
+    auto child = get_or_track_child(c, position, child_addr);
+    return child->lookup_largest(c);
   }
 
-  void apply_child_split(const search_position_t&, const full_key_t<KeyT::VIEW>&,
-                         Ref<Node>, Ref<Node>) override final;
+  void apply_child_split(
+      context_t, const search_position_t&, const full_key_t<KeyT::VIEW>&,
+      Ref<Node>, Ref<Node>) override final;
 
 #ifndef NDEBUG
-  void test_clone_root(Ref<Btree>) const override final;
+  void test_clone_root(context_t, SuperNodeURef&&) const override final;
 #endif
 
-  static Ref<ConcreteType> allocate(level_t level, bool level_tail) {
+  static Ref<ConcreteType> allocate(context_t c, level_t level, bool level_tail) {
     assert(level != 0u);
-    return ConcreteType::_allocate(level, level_tail);
+    return ConcreteType::_allocate(c, level, level_tail);
   }
 
  private:
@@ -103,10 +104,10 @@ class InternalNodeT : public InternalNode,
 class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {
  public:
   static Ref<InternalNode0> allocate_root(
-      level_t, laddr_t, Ref<Btree>, Ref<DummyRootBlock>);
+      context_t, level_t, laddr_t, SuperNodeURef&&);
 #ifndef NDEBUG
   static Ref<InternalNode0> test_allocate_cloned_root(
-      level_t, Ref<Btree>, const LogicalCachedExtent&);
+      context_t, level_t, SuperNodeURef&&, const LogicalCachedExtent&);
 #endif
 };
 class InternalNode1 final : public InternalNodeT<node_fields_1_t, InternalNode1> {};
@@ -123,19 +124,19 @@ class LeafNodeT: public LeafNode,
   virtual ~LeafNodeT() = default;
 
   search_result_t do_lower_bound(
-      const full_key_t<KeyT::HOBJ>&, MatchHistory&) override final;
-  Ref<tree_cursor_t> lookup_smallest() override final;
-  Ref<tree_cursor_t> lookup_largest() override final;
+      context_t, const full_key_t<KeyT::HOBJ>&, MatchHistory&) override final;
+  Ref<tree_cursor_t> lookup_smallest(context_t) override final;
+  Ref<tree_cursor_t> lookup_largest(context_t) override final;
   Ref<tree_cursor_t> insert_value(
-      const full_key_t<KeyT::HOBJ>&, const onode_t&,
+      context_t, const full_key_t<KeyT::HOBJ>&, const onode_t&,
       const search_position_t&, const MatchHistory&) override final;
 
 #ifndef NDEBUG
-  void test_clone_root(Ref<Btree>) const override final;
+  void test_clone_root(context_t, SuperNodeURef&&) const override final;
 #endif
 
-  static Ref<ConcreteType> allocate(bool is_level_tail) {
-    return ConcreteType::_allocate(0u, is_level_tail);
+  static Ref<ConcreteType> allocate(context_t c, bool is_level_tail) {
+    return ConcreteType::_allocate(c, 0u, is_level_tail);
   }
 
  private:
@@ -145,13 +146,13 @@ class LeafNodeT: public LeafNode,
 };
 class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {
  public:
-  static void mkfs(/* transaction */Ref<Btree> btree) {
-    auto root = allocate(true);
-    root->make_root(/* transaction, */btree);
+  static void mkfs(context_t c, SuperNodeURef&& super) {
+    auto root = allocate(c, true);
+    root->make_root_new(c, std::move(super));
   }
 #ifndef NDEBUG
   static Ref<LeafNode0> test_allocate_cloned_root(
-      Ref<Btree>, const LogicalCachedExtent&);
+      context_t, SuperNodeURef&&, const LogicalCachedExtent&);
 #endif
 };
 class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {};
