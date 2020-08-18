@@ -247,7 +247,7 @@ int main(int argc, char* argv[])
     assert(tree.test_is_clean());
     for (auto iter = nodes.begin(); iter != nodes.end();) {
       std::cout << **iter << std::endl;
-      (*iter)->test_make_destructable(c, c.tm.get_super_node(c.t, tree));
+      (*iter)->test_make_destructable(c, c.tm.get_super(c.t, tree));
       assert(!tree.test_is_clean());
       iter = nodes.erase(iter);
       assert(tree.test_is_clean());
@@ -628,7 +628,7 @@ int main(int argc, char* argv[])
           context_t c, const std::set<onode_key_t>& keys,
           ChildPool& pool, Btree& btree) {
         auto initial = create(keys, true, pool);
-        auto super = c.tm.get_super_node(c.t, btree);
+        auto super = c.tm.get_super(c.t, btree);
         initial->make_root_new(c, std::move(super));
         initial->upgrade_root(c);
         return initial;

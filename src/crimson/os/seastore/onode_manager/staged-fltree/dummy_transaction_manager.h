@@ -139,6 +139,7 @@ class DummyTransactionManager {
     allocate_map.insert({extent->get_laddr(), extent});
     return extent;
   }
+
   Ref<LogicalCachedExtent> read_extent(
       Transaction& t, laddr_t addr, extent_len_t len) {
     auto iter = allocate_map.find(addr);
@@ -146,7 +147,8 @@ class DummyTransactionManager {
     assert(iter->second->get_length() == len);
     return iter->second;
   }
-  SuperNodeURef get_super_node(Transaction& t, Btree& tree) {
+
+  SuperNodeURef get_super(Transaction& t, Btree& tree) {
     return std::make_unique<DummyRootBlock>(t, tree, &onode_root_laddr);
   }
 

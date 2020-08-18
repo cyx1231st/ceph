@@ -66,7 +66,7 @@ Btree::Btree(TransactionManagerURef&& tm) : tm{std::move(tm)} {}
 Btree::~Btree() { assert(tracked_supers.empty()); }
 
 void Btree::mkfs(Transaction& t) {
-  auto super = tm->get_super_node(t, *this);
+  auto super = tm->get_super(t, *this);
   Node::mkfs(get_context(t), std::move(super));
 }
 
@@ -133,7 +133,7 @@ std::ostream& Btree::dump(Transaction& t, std::ostream& os) {
 Ref<Node> Btree::get_root(Transaction& t) {
   auto iter = tracked_supers.find(&t);
   if (iter == tracked_supers.end()) {
-    auto super = tm->get_super_node(t, *this);
+    auto super = tm->get_super(t, *this);
     assert(tracked_supers.find(&t)->second == super.get());
     auto root = Node::load_root(get_context(t), std::move(super));
     assert(tracked_supers.find(&t)->second->get_p_root() == root.get());
@@ -148,7 +148,7 @@ void Btree::test_clone_from(
   // Note: assume the tree to clone is tracked correctly in memory.
   // In some unit tests, parts of the tree are stubbed out that they
   // should not be loaded from TransactionManager.
-  auto super = tm->get_super_node(t, *this);
+  auto super = tm->get_super(t, *this);
   // TODO: reverse
   from.get_root(t_from)->test_clone_root(get_context(t), std::move(super));
 }
