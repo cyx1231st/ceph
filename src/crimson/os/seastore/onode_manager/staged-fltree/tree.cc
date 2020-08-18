@@ -51,6 +51,12 @@ Btree::Cursor& Btree::Cursor::operator++() {
   return *this;
 }
 
+Btree::Cursor Btree::Cursor::operator++(int) {
+  Cursor tmp = *this;
+  ++*this;
+  return tmp;
+}
+
 Btree::Cursor Btree::Cursor::make_end(Btree* tree) {
   return {tree};
 }

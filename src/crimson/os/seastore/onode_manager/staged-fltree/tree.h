@@ -78,8 +78,7 @@ class Btree {
   friend class DummyRootBlock;
 };
 
-struct tree_cursor_t;
-
+class tree_cursor_t;
 class Btree::Cursor {
  public:
   ~Cursor();
@@ -90,11 +89,7 @@ class Btree::Cursor {
   bool operator==(const Cursor& x) const;
   bool operator!=(const Cursor& x) const { return !(*this == x); }
   Cursor& operator++();
-  Cursor operator++(int) {
-    Cursor tmp = *this;
-    ++*this;
-    return tmp;
-  }
+  Cursor operator++(int);
 
  private:
   Cursor(Btree*, Ref<tree_cursor_t>);
