@@ -17,7 +17,7 @@ class node_extent_t {
   static constexpr node_type_t NODE_TYPE = _NODE_TYPE;
   static constexpr field_type_t FIELD_TYPE = FieldType::FIELD_TYPE;
   static constexpr node_offset_t EXTENT_SIZE =
-    (FieldType::SIZE + BLOCK_SIZE - 1u) / BLOCK_SIZE * BLOCK_SIZE;
+    (FieldType::SIZE + DISK_BLOCK_SIZE - 1u) / DISK_BLOCK_SIZE * DISK_BLOCK_SIZE;
 
   node_extent_t(const FieldType* p_fields) : p_fields{p_fields} {
     validate(*p_fields);

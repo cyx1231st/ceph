@@ -3,24 +3,31 @@
 
 #include "tree.h"
 
+#include <iostream>
+
 #include "dummy_transaction_manager.h"
 #include "node.h"
+#include "stages/key_layout.h" // full_key_t<KeyT::HOBJ>
 #include "super_node.h"
 
 namespace crimson::os::seastore::onode {
 
-Btree::Cursor::Cursor(Btree* tree, Ref<tree_cursor_t> _p_cursor)
-  : tree(*tree) {
+using btree_ertr = Btree::btree_ertr;
+template <class... ValuesT>
+using btree_future = Btree::btree_future<ValuesT...>;
+
+Btree::Cursor::Cursor(Btree* p_tree, Ref<tree_cursor_t> _p_cursor)
+  : p_tree(p_tree) {
   // for cursors indicating end of tree
   // untrack the leaf node
   if (!_p_cursor->is_end()) {
     p_cursor = _p_cursor;
   }
 }
-
+Btree::Cursor::Cursor(Btree* p_tree) : p_tree{p_tree} {}
+Btree::Cursor::Cursor(const Cursor& other) = default;
+Btree::Cursor::Cursor(Cursor&& other) noexcept = default;
 Btree::Cursor::~Cursor() = default;
-
-Btree::Cursor::Cursor(Btree* p_tree) : tree{*p_tree} {}
 
 bool Btree::Cursor::is_end() const {
   if (p_cursor) {
@@ -57,100 +64,166 @@ Btree::Cursor Btree::Cursor::operator++(int) {
   return tmp;
 }
 
-Btree::Cursor Btree::Cursor::make_end(Btree* tree) {
-  return {tree};
+Btree::Cursor Btree::Cursor::make_end(Btree* p_tree) {
+  return {p_tree};
 }
 
 Btree::Btree(TransactionManagerURef&& tm) : tm{std::move(tm)} {}
 
 Btree::~Btree() { assert(tracked_supers.empty()); }
 
-void Btree::mkfs(Transaction& t) {
-  auto super = tm->get_super(t, *this);
-  Node::mkfs(get_context(t), std::move(super));
+btree_future<> Btree::mkfs(Transaction& t) {
+  return tm->get_super(t, *this).safe_then([this, &t](auto super) {
+    return Node::mkfs(get_context(t), std::move(super));
+  });
 }
 
-Btree::Cursor Btree::begin(Transaction& t) {
-  return {this, get_root(t)->lookup_smallest(get_context(t))};
+btree_future<Btree::Cursor> Btree::begin(Transaction& t) {
+  return get_root(t).safe_then([this, &t](auto root) {
+    return root->lookup_smallest(get_context(t));
+  }).safe_then([this](auto cursor) {
+    return Cursor{this, cursor};
+  });
 }
 
-Btree::Cursor Btree::last(Transaction& t) {
-  return {this, get_root(t)->lookup_largest(get_context(t))};
+btree_future<Btree::Cursor> Btree::last(Transaction& t) {
+  return get_root(t).safe_then([this, &t](auto root) {
+    return root->lookup_largest(get_context(t));
+  }).safe_then([this](auto cursor) {
+    return Cursor(this, cursor);
+  });
 }
 
 Btree::Cursor Btree::end() {
   return Cursor::make_end(this);
 }
 
-bool Btree::contains(Transaction& t, const onode_key_t& key) {
-  // TODO: improve lower_bound()
-  return MatchKindBS::EQ == get_root(t)->lower_bound(get_context(t), key).match;
+btree_future<bool>
+Btree::contains(Transaction& t, const onode_key_t& key) {
+  return seastar::do_with(
+    full_key_t<KeyT::HOBJ>(key),
+    [this, &t](auto& key) -> btree_future<bool> {
+      return get_root(t).safe_then([this, &t, &key](auto root) {
+        // TODO: improve lower_bound()
+        return root->lower_bound(get_context(t), key);
+      }).safe_then([](auto result) {
+        return MatchKindBS::EQ == result.match;
+      });
+    }
+  );
 }
 
-Btree::Cursor Btree::find(Transaction& t, const onode_key_t& key) {
-  // TODO: improve lower_bound()
-  auto result = get_root(t)->lower_bound(get_context(t), key);
-  if (result.match == MatchKindBS::EQ) {
-    return Cursor(this, result.p_cursor);
-  } else {
-    return Cursor::make_end(this);
-  }
+btree_future<Btree::Cursor>
+Btree::find(Transaction& t, const onode_key_t& key) {
+  return seastar::do_with(
+    full_key_t<KeyT::HOBJ>(key),
+    [this, &t](auto& key) -> btree_future<Btree::Cursor> {
+      return get_root(t).safe_then([this, &t, &key](auto root) {
+        // TODO: improve lower_bound()
+        return root->lower_bound(get_context(t), key);
+      }).safe_then([this](auto result) {
+        if (result.match == MatchKindBS::EQ) {
+          return Cursor(this, result.p_cursor);
+        } else {
+          return Cursor::make_end(this);
+        }
+      });
+    }
+  );
 }
 
-Btree::Cursor Btree::lower_bound(Transaction& t, const onode_key_t& key) {
-  return Cursor(this, get_root(t)->lower_bound(get_context(t), key).p_cursor);
+btree_future<Btree::Cursor>
+Btree::lower_bound(Transaction& t, const onode_key_t& key) {
+  return seastar::do_with(
+    full_key_t<KeyT::HOBJ>(key),
+    [this, &t](auto& key) -> btree_future<Btree::Cursor> {
+      return get_root(t).safe_then([this, &t, &key](auto root) {
+        return root->lower_bound(get_context(t), key);
+      }).safe_then([this](auto result) {
+        return Cursor(this, result.p_cursor);
+      });
+    }
+  );
 }
 
-std::pair<Btree::Cursor, bool>
+btree_future<std::pair<Btree::Cursor, bool>>
 Btree::insert(Transaction& t, const onode_key_t& key, const onode_t& value) {
-  auto [cursor, success] = get_root(t)->insert(get_context(t), key, value);
-  return {{this, cursor}, success};
+  return seastar::do_with(
+    full_key_t<KeyT::HOBJ>(key),
+    [this, &t, &value](auto& key) -> btree_future<std::pair<Btree::Cursor, bool>> {
+      return get_root(t).safe_then([this, &t, &key, &value](auto root) {
+        return root->insert(get_context(t), key, value);
+      }).safe_then([this](auto ret) {
+        auto& [cursor, success] = ret;
+        return std::make_pair(Cursor(this, cursor), success);
+      });
+    }
+  );
 }
 
-size_t Btree::erase(Transaction& t, const onode_key_t& key) {
+btree_future<size_t> Btree::erase(Transaction& t, const onode_key_t& key) {
   // TODO
-  return 0u;
+  return btree_ertr::make_ready_future<size_t>(0u);
 }
 
-Btree::Cursor Btree::erase(Btree::Cursor& pos) {
+btree_future<Btree::Cursor> Btree::erase(Btree::Cursor& pos) {
   // TODO
-  return Cursor::make_end(this);
+  return btree_ertr::make_ready_future<Cursor>(
+      Cursor::make_end(this));
 }
 
-Btree::Cursor Btree::erase(Btree::Cursor& first, Btree::Cursor& last) {
+btree_future<Btree::Cursor>
+Btree::erase(Btree::Cursor& first, Btree::Cursor& last) {
   // TODO
-  return Cursor::make_end(this);
+  return btree_ertr::make_ready_future<Cursor>(
+      Cursor::make_end(this));
 }
 
-size_t Btree::height(Transaction& t) {
-  return get_root(t)->level() + 1;
+btree_future<size_t> Btree::height(Transaction& t) {
+  return get_root(t).safe_then([](auto root) {
+    return size_t(root->level() + 1);
+  });
 }
 
 std::ostream& Btree::dump(Transaction& t, std::ostream& os) {
-  return get_root(t)->dump(os);
-}
-
-Ref<Node> Btree::get_root(Transaction& t) {
   auto iter = tracked_supers.find(&t);
   if (iter == tracked_supers.end()) {
-    auto super = tm->get_super(t, *this);
-    assert(tracked_supers.find(&t)->second == super.get());
-    auto root = Node::load_root(get_context(t), std::move(super));
-    assert(tracked_supers.find(&t)->second->get_p_root() == root.get());
-    return root;
+    os << "empty tree!";
   } else {
-    return iter->second->get_p_root();
+    iter->second->get_p_root()->dump(os);
+  }
+  return os;
+}
+
+btree_future<Ref<Node>> Btree::get_root(Transaction& t) {
+  auto iter = tracked_supers.find(&t);
+  if (iter == tracked_supers.end()) {
+    return tm->get_super(t, *this).safe_then([this, &t](auto super) {
+      assert(tracked_supers.find(&t)->second == super.get());
+      return Node::load_root(get_context(t), std::move(super));
+    }).safe_then([this, &t](auto root) {
+      assert(tracked_supers.find(&t)->second->get_p_root() == root.get());
+      return root;
+    });
+  } else {
+    return btree_ertr::make_ready_future<Ref<Node>>(
+        iter->second->get_p_root());
   }
 }
 
-void Btree::test_clone_from(
+btree_future<> Btree::test_clone_from(
     Transaction& t, Transaction& t_from, Btree& from) {
   // Note: assume the tree to clone is tracked correctly in memory.
   // In some unit tests, parts of the tree are stubbed out that they
   // should not be loaded from TransactionManager.
-  auto super = tm->get_super(t, *this);
-  // TODO: reverse
-  from.get_root(t_from)->test_clone_root(get_context(t), std::move(super));
+  return tm->get_super(t, *this
+  ).safe_then([this, &t, &t_from, &from](auto super) {
+    return from.get_root(t_from
+    ).safe_then([this, &t, super = std::move(super)](auto root) mutable {
+      // TODO: reverse
+      return root->test_clone_root(get_context(t), std::move(super));
+    });
+  });
 }
 
 }

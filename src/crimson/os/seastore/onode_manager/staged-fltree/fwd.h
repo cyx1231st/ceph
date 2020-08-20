@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
 
 namespace crimson::os::seastore::onode {

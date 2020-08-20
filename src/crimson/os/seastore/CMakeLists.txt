@@ -28,10 +28,3 @@ add_library(crimson-seastore
 	)
 target_link_libraries(crimson-seastore
   crimson)
-
-# TODO: move to crimson unit tests
-add_executable(test_onode_tree
-  onode_manager/staged-fltree/main.cc)
-# TODO: discard global and link with crimson-seastore
-target_link_libraries(test_onode_tree
-  crimson-seastore)

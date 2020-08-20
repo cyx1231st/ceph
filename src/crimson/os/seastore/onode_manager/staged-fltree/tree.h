@@ -25,6 +25,14 @@ class Node;
  */
 class Btree {
  public:
+  using btree_ertr = crimson::errorator<
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::invarg,
+    crimson::ct_error::enoent,
+    crimson::ct_error::erange>;
+  template <class... ValuesT>
+  using btree_future = btree_ertr::future<ValuesT...>;
+
   Btree(TransactionManagerURef&& tm);
   Btree(const Btree&) = delete;
   Btree(Btree&&) = delete;
@@ -32,30 +40,32 @@ class Btree {
   Btree& operator=(Btree&&) = delete;
   ~Btree();
 
-  void mkfs(Transaction&);
+  btree_future<> mkfs(Transaction&);
 
   class Cursor;
   // lookup
-  Cursor begin(Transaction&);
-  Cursor last(Transaction&);
+  btree_future<Cursor> begin(Transaction&);
+  btree_future<Cursor> last(Transaction&);
   Cursor end();
-  bool contains(Transaction&, const onode_key_t&);
-  Cursor find(Transaction&, const onode_key_t&);
-  Cursor lower_bound(Transaction&, const onode_key_t&);
+  btree_future<bool> contains(Transaction&, const onode_key_t&);
+  btree_future<Cursor> find(Transaction&, const onode_key_t&);
+  btree_future<Cursor> lower_bound(Transaction&, const onode_key_t&);
 
   // modifiers
-  std::pair<Cursor, bool> insert(Transaction&, const onode_key_t&, const onode_t&);
-  size_t erase(Transaction&, const onode_key_t& key);
-  Cursor erase(Cursor& pos);
-  Cursor erase(Cursor& first, Cursor& last);
+  // TODO: get_or_insert onode
+  btree_future<std::pair<Cursor, bool>>
+  insert(Transaction&, const onode_key_t&, const onode_t&);
+  btree_future<size_t> erase(Transaction&, const onode_key_t& key);
+  btree_future<Cursor> erase(Cursor& pos);
+  btree_future<Cursor> erase(Cursor& first, Cursor& last);
 
   // stats
-  size_t height(Transaction&);
-  std::ostream& dump(Transaction&, std::ostream& os);
+  btree_future<size_t> height(Transaction&);
+  std::ostream& dump(Transaction&, std::ostream&);
 
   // test_only
   bool test_is_clean() const { return tracked_supers.empty(); }
-  void test_clone_from(Transaction& t, Transaction& t_from, Btree& from);
+  btree_future<> test_clone_from(Transaction& t, Transaction& t_from, Btree& from);
 
  private:
   // called by the tracked super node
@@ -69,7 +79,7 @@ class Btree {
   }
   context_t get_context(Transaction& t) { return {*tm, t}; }
 
-  Ref<Node> get_root(Transaction& t);
+  btree_future<Ref<Node>> get_root(Transaction& t);
 
   TransactionManagerURef tm;
   // XXX abstract a root tracker
@@ -81,6 +91,8 @@ class Btree {
 class tree_cursor_t;
 class Btree::Cursor {
  public:
+  Cursor(const Cursor& other);
+  Cursor(Cursor&& other) noexcept;
   ~Cursor();
 
   bool is_end() const;
@@ -93,13 +105,12 @@ class Btree::Cursor {
 
  private:
   Cursor(Btree*, Ref<tree_cursor_t>);
-  Cursor(Btree* p_tree);
+  Cursor(Btree*);
 
-  static Cursor make_end(Btree* tree);
+  static Cursor make_end(Btree*);
 
-  Btree& tree;
+  Btree* p_tree;
   Ref<tree_cursor_t> p_cursor;
-  std::optional<onode_key_t> key_copy;
 
   friend class Btree;
 };

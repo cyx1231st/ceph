@@ -73,6 +73,14 @@ class LogicalCachedExtent;
 class Node
   : public boost::intrusive_ref_counter<Node, boost::thread_unsafe_counter> {
  public:
+  using node_ertr = crimson::errorator<
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::invarg,
+    crimson::ct_error::enoent,
+    crimson::ct_error::erange>;
+  template <class... ValuesT>
+  using node_future = node_ertr::future<ValuesT...>;
+
   struct search_result_t {
     bool is_end() const { return p_cursor->is_end(); }
     Ref<tree_cursor_t> p_cursor;
@@ -81,21 +89,24 @@ class Node
 
   virtual ~Node();
   virtual level_t level() const = 0;
-  virtual Ref<tree_cursor_t> lookup_smallest(context_t) = 0;
-  virtual Ref<tree_cursor_t> lookup_largest(context_t) = 0;
-  search_result_t lower_bound(context_t, const onode_key_t& key);
-  std::pair<Ref<tree_cursor_t>, bool> insert(context_t, const onode_key_t&, const onode_t&);
+  virtual node_future<Ref<tree_cursor_t>> lookup_smallest(context_t) = 0;
+  virtual node_future<Ref<tree_cursor_t>> lookup_largest(context_t) = 0;
+  node_future<search_result_t> lower_bound(context_t, const key_hobj_t& key);
+
+  node_future<std::pair<Ref<tree_cursor_t>, bool>>
+  insert(context_t, const key_hobj_t&, const onode_t&);
 
   virtual std::ostream& dump(std::ostream&) const = 0;
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
 
-  static void mkfs(context_t, SuperNodeURef&&);
-  static Ref<Node> load_root(context_t, SuperNodeURef&&);
+  static node_future<> mkfs(context_t, SuperNodeURef&&);
+
+  static node_future<Ref<Node>> load_root(context_t, SuperNodeURef&&);
 
 #ifndef NDEBUG
   virtual void test_make_destructable(context_t, SuperNodeURef&&) = 0;
-  virtual void test_clone_root(context_t, SuperNodeURef&&) const = 0;
-  virtual void test_clone_non_root(context_t, Ref<InternalNode>) const = 0;
+  virtual node_future<> test_clone_root(context_t, SuperNodeURef&&) const = 0;
+  virtual node_future<> test_clone_non_root(context_t, Ref<InternalNode>) const = 0;
 #endif
 
  public: // used by node_impl.h, FIXME: protected
@@ -104,7 +115,8 @@ class Node
   virtual laddr_t laddr() const = 0;
   virtual key_view_t get_key_view(const search_position_t&) const = 0;
   virtual key_view_t get_largest_key_view() const = 0;
-  virtual search_result_t do_lower_bound(context_t, const key_hobj_t&, MatchHistory&) = 0;
+  virtual node_future<search_result_t>
+  do_lower_bound(context_t, const key_hobj_t&, MatchHistory&) = 0;
 
  protected:
   Node() {}
@@ -137,14 +149,16 @@ class Node
     super = std::move(_super);
     super->do_track_root(*this);
   }
-  void upgrade_root(context_t);
+  node_future<> upgrade_root(context_t);
   template <bool VALIDATE = true>
   void as_child(const search_position_t&, Ref<InternalNode>);
   const parent_info_t& parent_info() const { return *_parent_info; }
-  void insert_parent(context_t, Ref<Node> right_node);
+  node_future<> insert_parent(context_t, Ref<Node> right_node);
 
   virtual void init(Ref<LogicalCachedExtent>) = 0;
-  static Ref<Node> load(context_t, laddr_t, bool expect_is_level_tail);
+
+  static node_future<Ref<Node>>
+  load(context_t, laddr_t, bool expect_is_level_tail);
 
  private:
   // as child/non-root
@@ -165,21 +179,24 @@ class InternalNode : virtual public Node {
  protected:
   // XXX: extract a common tracker for InternalNode to track Node,
   // and LeafNode to track tree_cursor_t.
-  Ref<Node> get_or_track_child(
+  node_future<Ref<Node>> get_or_track_child(
       context_t c, const search_position_t& position, laddr_t child_addr) {
     bool level_tail = position.is_end();
     Ref<Node> child;
     auto found = tracked_child_nodes.find(position);
-    if (found == tracked_child_nodes.end()) {
-      child = Node::load(c, child_addr, level_tail);
-      child->as_child(position, this);
-    } else {
-      child = found->second;
-    }
-    assert(child_addr == child->laddr());
-    assert(position == child->parent_info().position);
-    validate_child(*child);
-    return child;
+    return (found == tracked_child_nodes.end()
+      ? Node::load(c, child_addr, level_tail
+        ).safe_then([this, position] (auto child) {
+          child->as_child(position, this);
+          return child;
+        })
+      : node_ertr::make_ready_future<Ref<Node>>(found->second)
+    ).safe_then([this, position, child_addr] (auto child) {
+      assert(child_addr == child->laddr());
+      assert(position == child->parent_info().position);
+      validate_child(*child);
+      return child;
+    });
   }
 
   void track_insert(
@@ -246,18 +263,22 @@ class InternalNode : virtual public Node {
   }
 
 #ifndef NDEBUG
-  void test_clone_children(
+  node_future<> test_clone_children(
       context_t c_other, Ref<InternalNode> clone) const {
-    for (auto& kv : tracked_child_nodes) {
-      assert(kv.first == kv.second->parent_info().position);
-      kv.second->test_clone_non_root(c_other, clone);
-    }
+    Ref<const InternalNode> this_ref = this;
+    return crimson::do_for_each(
+      tracked_child_nodes.begin(),
+      tracked_child_nodes.end(),
+      [this_ref, c_other, clone](auto& kv) {
+        assert(kv.first == kv.second->parent_info().position);
+        return kv.second->test_clone_non_root(c_other, clone);
+      }
+    );
   }
 #endif
 
  private:
-  // TODO: async
-  virtual void apply_child_split(
+  virtual node_future<> apply_child_split(
       context_t, const search_position_t&, const key_view_t&, Ref<Node>, Ref<Node>) = 0;
   virtual const laddr_t* get_p_value(const search_position_t&) const = 0;
   void validate_child(const Node& child) const;
@@ -376,7 +397,7 @@ class LeafNode : virtual public Node {
   }
 
  private:
-  virtual Ref<tree_cursor_t> insert_value(
+  virtual node_future<Ref<tree_cursor_t>> insert_value(
       context_t,
       const key_hobj_t&,
       const onode_t&,

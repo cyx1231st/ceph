@@ -8,6 +8,7 @@
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
 #include "crimson/common/type_helpers.h"
+#include "crimson/os/seastore/transaction_manager.h"
 
 #include "fwd.h"
 #include "super_node.h"
@@ -121,6 +122,14 @@ class Btree;
 // crimson::os::seastore::TransactionManager
 class DummyTransactionManager {
  public:
+  using tm_ertr = crimson::errorator<
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::invarg,
+    crimson::ct_error::enoent,
+    crimson::ct_error::erange>;
+  template <class... ValuesT>
+  using tm_future = tm_ertr::future<ValuesT...>;
+
   ~DummyTransactionManager() {
     for (auto& [addr, extent] : allocate_map) {
       std::free(extent->ptr);
@@ -130,26 +139,28 @@ class DummyTransactionManager {
   }
 
   // currently ignore delta machinary, and modify memory inplace
-  Ref<LogicalCachedExtent> alloc_extent(Transaction& t, extent_len_t len) {
+  tm_future<Ref<LogicalCachedExtent>> alloc_extent(
+      Transaction& t, extent_len_t len) {
     constexpr size_t ALIGNMENT = 4096;
     assert(len % ALIGNMENT == 0);
     auto mem_block = std::aligned_alloc(len, ALIGNMENT);
     auto extent = Ref<LogicalCachedExtent>(new LogicalCachedExtent(mem_block, len));
     assert(allocate_map.find(extent->get_laddr()) == allocate_map.end());
     allocate_map.insert({extent->get_laddr(), extent});
-    return extent;
+    return tm_ertr::make_ready_future<Ref<LogicalCachedExtent>>(extent);
   }
 
-  Ref<LogicalCachedExtent> read_extent(
+  tm_future<Ref<LogicalCachedExtent>> read_extent(
       Transaction& t, laddr_t addr, extent_len_t len) {
     auto iter = allocate_map.find(addr);
     assert(iter != allocate_map.end());
     assert(iter->second->get_length() == len);
-    return iter->second;
+    return tm_ertr::make_ready_future<Ref<LogicalCachedExtent>>(iter->second);
   }
 
-  SuperNodeURef get_super(Transaction& t, Btree& tree) {
-    return std::make_unique<DummyRootBlock>(t, tree, &onode_root_laddr);
+  tm_future<SuperNodeURef> get_super(Transaction& t, Btree& tree) {
+    return tm_ertr::make_ready_future<SuperNodeURef>(
+        std::make_unique<DummyRootBlock>(t, tree, &onode_root_laddr));
   }
 
   static TransactionManagerURef create() {
