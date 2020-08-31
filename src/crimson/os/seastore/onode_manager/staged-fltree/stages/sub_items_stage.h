@@ -68,11 +68,11 @@ class internal_sub_items_t {
 
   template <KeyT KT>
   static const laddr_t* insert_at(
-      LogicalCachedExtent&, const internal_sub_items_t&,
+      NodeExtentMutable&, const internal_sub_items_t&,
       const full_key_t<KT>&, const laddr_t&,
       size_t index, node_offset_t size, const char* p_left_bound);
 
-  static size_t trim_until(LogicalCachedExtent&, internal_sub_items_t&, size_t);
+  static size_t trim_until(NodeExtentMutable&, internal_sub_items_t&, size_t);
 
   template <KeyT KT>
   class Appender;
@@ -85,14 +85,14 @@ class internal_sub_items_t {
 template <KeyT KT>
 class internal_sub_items_t::Appender {
  public:
-  Appender(LogicalCachedExtent* p_dst, char* p_append)
-    : p_dst{p_dst}, p_append{p_append} {}
+  Appender(NodeExtentMutable* p_mut, char* p_append)
+    : p_mut{p_mut}, p_append{p_append} {}
   void append(const internal_sub_items_t& src, size_t from, size_t items);
   void append(const full_key_t<KT>&, const laddr_t&, const laddr_t*&);
   char* wrap() { return p_append; }
  private:
   const laddr_t** pp_value = nullptr;
-  LogicalCachedExtent* p_dst;
+  NodeExtentMutable* p_mut;
   char* p_append;
 };
 
@@ -197,11 +197,11 @@ class leaf_sub_items_t {
 
   template <KeyT KT>
   static const onode_t* insert_at(
-      LogicalCachedExtent&, const leaf_sub_items_t&,
+      NodeExtentMutable&, const leaf_sub_items_t&,
       const full_key_t<KT>&, const onode_t&,
       size_t index, node_offset_t size, const char* p_left_bound);
 
-  static size_t trim_until(LogicalCachedExtent&, leaf_sub_items_t&, size_t index);
+  static size_t trim_until(NodeExtentMutable&, leaf_sub_items_t&, size_t index);
 
   template <KeyT KT>
   class Appender;
@@ -228,8 +228,8 @@ class leaf_sub_items_t::Appender {
   using var_t = std::variant<range_items_t, kv_item_t>;
 
  public:
-  Appender(LogicalCachedExtent* p_dst, char* p_append)
-    : p_dst{p_dst}, p_append{p_append} {
+  Appender(NodeExtentMutable* p_mut, char* p_append)
+    : p_mut{p_mut}, p_append{p_append} {
   }
 
   void append(const leaf_sub_items_t& src, size_t from, size_t items) {
@@ -261,7 +261,7 @@ class leaf_sub_items_t::Appender {
  private:
   std::optional<leaf_sub_items_t> op_src;
   const onode_t** pp_value = nullptr;
-  LogicalCachedExtent* p_dst;
+  NodeExtentMutable* p_mut;
   char* p_append;
   var_t appends[APPENDER_LIMIT];
   size_t cnt = 0;

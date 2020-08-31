@@ -294,13 +294,13 @@ struct staged {
     * static:
     *   header_size() -> node_offset_t
     *   estimate_insert(key, value) -> node_offset_t
-    *   (IS_BOTTOM) insert_at(extent, src, key, value,
+    *   (IS_BOTTOM) insert_at(mut, src, key, value,
     *                         index, size, p_left_bound) -> const value_t*
-    *   (!IS_BOTTOM) insert_prefix_at(extent, src, key,
+    *   (!IS_BOTTOM) insert_prefix_at(mut, src, key,
     *                         index, size, p_left_bound) -> memory_range_t
-    *   (!IS_BOTTOM) update_size_at(extent, src, index, size)
-    *   trim_until(extent, container, index) -> trim_size
-    *   (!IS_BOTTOM) trim_at(extent, container, index, trimmed) -> trim_size
+    *   (!IS_BOTTOM) update_size_at(mut, src, index, size)
+    *   trim_until(mut, container, index) -> trim_size
+    *   (!IS_BOTTOM) trim_at(mut, container, index, trimmed) -> trim_size
     *
     * Appender::append(const container_t& src, from, items)
     */
@@ -387,25 +387,25 @@ struct staged {
 
     template <KeyT KT, typename T = value_t>
     std::enable_if_t<IS_BOTTOM, const T*> insert(
-        LogicalCachedExtent& extent, const full_key_t<KT>& key,
+        NodeExtentMutable& mut, const full_key_t<KT>& key,
         const value_t& value, node_offset_t insert_size, const char* p_left_bound) {
       return container_t::template insert_at<KT>(
-          extent, container, key, value, _index, insert_size, p_left_bound);
+          mut, container, key, value, _index, insert_size, p_left_bound);
     }
 
     template <KeyT KT, typename T = memory_range_t>
     std::enable_if_t<!IS_BOTTOM, T> insert_prefix(
-        LogicalCachedExtent& extent, const full_key_t<KT>& key,
+        NodeExtentMutable& mut, const full_key_t<KT>& key,
         node_offset_t size, const char* p_left_bound) {
       return container_t::template insert_prefix_at<KT>(
-          extent, container, key, _index, size, p_left_bound);
+          mut, container, key, _index, size, p_left_bound);
     }
 
     template <typename T = void>
     std::enable_if_t<!IS_BOTTOM, T>
-    update_size(LogicalCachedExtent& extent, node_offset_t insert_size) {
+    update_size(NodeExtentMutable& mut, node_offset_t insert_size) {
       assert(!is_end());
-      container_t::update_size_at(extent, container, _index, insert_size);
+      container_t::update_size_at(mut, container, _index, insert_size);
     }
 
     // Note: possible to return an end iterator when is_exclusive is true
@@ -507,14 +507,14 @@ struct staged {
       }
     }
 
-    size_t trim_until(LogicalCachedExtent& extent) {
-      return container_t::trim_until(extent, container, _index);
+    size_t trim_until(NodeExtentMutable& mut) {
+      return container_t::trim_until(mut, container, _index);
     }
 
     template <typename T = size_t>
     std::enable_if_t<!IS_BOTTOM, T>
-    trim_at(LogicalCachedExtent& extent, size_t trimmed) {
-      return container_t::trim_at(extent, container, _index, trimmed);
+    trim_at(NodeExtentMutable& mut, size_t trimmed) {
+      return container_t::trim_at(mut, container, _index, trimmed);
     }
 
     static node_offset_t header_size() {
@@ -546,10 +546,10 @@ struct staged {
      * static:
      *   header_size() -> node_offset_t
      *   estimate_insert(key, value) -> node_offset_t
-     *   insert_prefix(extent, src, key, is_end, size, p_left_bound) -> memory_range_t
-     *   update_size(extent, src, size)
-     *   trim_until(extent, container) -> trim_size
-     *   trim_at(extent, container, trimmed) -> trim_size
+     *   insert_prefix(mut, src, key, is_end, size, p_left_bound) -> memory_range_t
+     *   update_size(mut, src, size)
+     *   trim_until(mut, container) -> trim_size
+     *   trim_at(mut, container, trimmed) -> trim_size
      */
     // currently the iterative iterator is only implemented with STAGE_STRING
     // for in-node space efficiency
@@ -661,15 +661,15 @@ struct staged {
 
     template <KeyT KT>
     memory_range_t insert_prefix(
-        LogicalCachedExtent& extent, const full_key_t<KT>& key,
+        NodeExtentMutable& mut, const full_key_t<KT>& key,
         node_offset_t size, const char* p_left_bound) {
       return container_t::template insert_prefix<KT>(
-          extent, container, key, is_end(), size, p_left_bound);
+          mut, container, key, is_end(), size, p_left_bound);
     }
 
-    void update_size(LogicalCachedExtent& extent, node_offset_t insert_size) {
+    void update_size(NodeExtentMutable& mut, node_offset_t insert_size) {
       assert(!is_end());
-      container_t::update_size(extent, container, insert_size);
+      container_t::update_size(mut, container, insert_size);
     }
 
     // Note: possible to return an end iterator when is_exclusive is true
@@ -798,16 +798,16 @@ struct staged {
       to_index = index();
     }
 
-    size_t trim_until(LogicalCachedExtent& extent) {
+    size_t trim_until(NodeExtentMutable& mut) {
       if (is_end()) {
         return 0;
       }
-      return container_t::trim_until(extent, container);
+      return container_t::trim_until(mut, container);
     }
 
-    size_t trim_at(LogicalCachedExtent& extent, size_t trimmed) {
+    size_t trim_at(NodeExtentMutable& mut, size_t trimmed) {
       assert(!is_end());
-      return container_t::trim_at(extent, container, trimmed);
+      return container_t::trim_at(mut, container, trimmed);
     }
 
     static node_offset_t header_size() {
@@ -846,9 +846,9 @@ struct staged {
    *   set_end()
    *   seek(key, exclude_last) -> MatchKindBS
    * insert:
-   *   (IS_BOTTOM) insert(extent, key, value, size, p_left_bound) -> p_value
-   *   (!IS_BOTTOM) insert_prefix(extent, key, size, p_left_bound) -> memory_range_t
-   *   (!IS_BOTTOM) update_size(extent, size)
+   *   (IS_BOTTOM) insert(mut, key, value, size, p_left_bound) -> p_value
+   *   (!IS_BOTTOM) insert_prefix(mut, key, size, p_left_bound) -> memory_range_t
+   *   (!IS_BOTTOM) update_size(mut, size)
    * split;
    *   seek_split_inserted<bool is_exclusive>(
    *       start_size, extra_size, target_size, i_index, i_size,
@@ -858,8 +858,8 @@ struct staged {
    *     -> split_size
    *   seek_split(start_size, extra_size, target_size) -> split_size
    *   copy_out_until(appender, to_index, to_stage) (can be end)
-   *   trim_until(extent) -> trim_size
-   *   (!IS_BOTTOM) trim_at(extent, trimmed) -> trim_size
+   *   trim_until(mut) -> trim_size
+   *   (!IS_BOTTOM) trim_at(mut, trimmed) -> trim_size
    * static:
    *   header_size() -> node_offset_t
    *   estimate_insert(key, value) -> node_offset_t
@@ -1174,12 +1174,12 @@ struct staged {
 
   template <KeyT KT>
   static const value_t* insert_new(
-      LogicalCachedExtent& extent, const memory_range_t& range,
+      NodeExtentMutable& mut, const memory_range_t& range,
       const full_key_t<KT>& key, const value_t& value) {
     char* p_insert = const_cast<char*>(range.p_end);
     const value_t* p_value = nullptr;
     StagedAppender<KT> appender;
-    appender.init(&extent, p_insert);
+    appender.init(&mut, p_insert);
     appender.append(key, value, p_value);
     const char* p_insert_front = appender.wrap();
     assert(p_insert_front == range.p_start);
@@ -1188,7 +1188,7 @@ struct staged {
 
   template <KeyT KT, bool SPLIT>
   static const value_t* proceed_insert_recursively(
-      LogicalCachedExtent& extent, const container_t& container,
+      NodeExtentMutable& mut, const container_t& container,
       const full_key_t<KT>& key, const value_t& value,
       position_t& position, match_stage_t& stage,
       node_offset_t& _insert_size, const char* p_left_bound) {
@@ -1231,19 +1231,19 @@ struct staged {
       assert(_insert_size == insert_size<KT>(key, value));
       if constexpr (IS_BOTTOM) {
         return iter.template insert<KT>(
-            extent, key, value, _insert_size, p_left_bound);
+            mut, key, value, _insert_size, p_left_bound);
       } else {
         auto range = iter.template insert_prefix<KT>(
-            extent, key, _insert_size, p_left_bound);
-        return NXT_STAGE_T::template insert_new<KT>(extent, range, key, value);
+            mut, key, _insert_size, p_left_bound);
+        return NXT_STAGE_T::template insert_new<KT>(mut, range, key, value);
       }
     } else {
       if constexpr (!IS_BOTTOM) {
         auto nxt_container = iter.get_nxt_container();
         auto p_value = NXT_STAGE_T::template proceed_insert_recursively<KT, SPLIT>(
-            extent, nxt_container, key, value,
+            mut, nxt_container, key, value,
             position.nxt, stage, _insert_size, p_left_bound);
-        iter.update_size(extent, _insert_size);
+        iter.update_size(mut, _insert_size);
         return p_value;
       } else {
         assert(false && "impossible path");
@@ -1253,7 +1253,7 @@ struct staged {
 
   template <KeyT KT, bool SPLIT>
   static const value_t* proceed_insert(
-      LogicalCachedExtent& extent, const container_t& container,
+      NodeExtentMutable& mut, const container_t& container,
       const full_key_t<KT>& key, const value_t& value,
       position_t& position, match_stage_t& stage, node_offset_t& _insert_size) {
     auto p_left_bound = container.p_left_bound();
@@ -1263,15 +1263,15 @@ struct staged {
       position = position_t::begin();
       if constexpr (IS_BOTTOM) {
         return container_t::template insert_at<KT>(
-            extent, container, key, value, 0, _insert_size, p_left_bound);
+            mut, container, key, value, 0, _insert_size, p_left_bound);
       } else {
         auto range = container_t::template insert_prefix_at<KT>(
-            extent, container, key, 0, _insert_size, p_left_bound);
-        return NXT_STAGE_T::template insert_new<KT>(extent, range, key, value);
+            mut, container, key, 0, _insert_size, p_left_bound);
+        return NXT_STAGE_T::template insert_new<KT>(mut, range, key, value);
       }
     } else {
       return proceed_insert_recursively<KT, SPLIT>(
-          extent, container, key, value,
+          mut, container, key, value,
           position, stage, _insert_size, p_left_bound);
     }
   }
@@ -1572,13 +1572,13 @@ struct staged {
 
   /*
    * container appender type system
-   *   container_t::Appender(LogicalCachedExtent& dst, char* p_append)
+   *   container_t::Appender(NodeExtentMutable& mut, char* p_append)
    *   append(const container_t& src, size_t from, size_t items)
    *   wrap() -> char*
    * IF !IS_BOTTOM:
    *   open_nxt(const key_get_type&)
    *   open_nxt(const full_key_t&)
-   *       -> std::tuple<LogicalCachedExtent&, char*>
+   *       -> std::tuple<NodeExtentMutable&, char*>
    *   wrap_nxt(char* p_append)
    * ELSE
    *   append(const full_key_t& key, const value_t& value)
@@ -1602,9 +1602,10 @@ struct staged {
       return _index;
     }
     bool in_progress() const { return require_wrap_nxt; }
-    void init(LogicalCachedExtent* p_dst, char* p_start) {
+    // TODO: pass by reference
+    void init(NodeExtentMutable* p_mut, char* p_start) {
       assert(!valid());
-      appender = typename container_t::template Appender<KT>(p_dst, p_start);
+      appender = typename container_t::template Appender<KT>(p_mut, p_start);
       _index = 0;
     }
     // possible to make src_iter end if
@@ -1653,8 +1654,8 @@ struct staged {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         require_wrap_nxt = true;
-        auto [p_dst, p_append] = appender->open_nxt(paritial_key);
-        this->_nxt.init(p_dst, p_append);
+        auto [p_mut, p_append] = appender->open_nxt(paritial_key);
+        this->_nxt.init(p_mut, p_append);
         return this->_nxt;
       } else {
         assert(false);
@@ -1665,8 +1666,8 @@ struct staged {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         require_wrap_nxt = true;
-        auto [p_dst, p_append] = appender->open_nxt(key);
-        this->_nxt.init(p_dst, p_append);
+        auto [p_mut, p_append] = appender->open_nxt(key);
+        this->_nxt.init(p_mut, p_append);
         return this->_nxt;
       } else {
         assert(false);
@@ -1802,7 +1803,7 @@ struct staged {
   }
 
   static std::tuple<TrimType, size_t>
-  recursively_trim(LogicalCachedExtent& extent, StagedIterator& trim_at) {
+  recursively_trim(NodeExtentMutable& mut, StagedIterator& trim_at) {
     if (!trim_at.valid()) {
       return {TrimType::BEFORE, 0u};
     }
@@ -1813,39 +1814,39 @@ struct staged {
     auto& iter = trim_at.get();
     if constexpr (!IS_BOTTOM) {
       auto [type, trimmed] = NXT_STAGE_T::recursively_trim(
-          extent, trim_at.get_nxt());
+          mut, trim_at.get_nxt());
       size_t trim_size;
       if (type == TrimType::AFTER) {
         if (iter.is_last()) {
           return {TrimType::AFTER, 0u};
         }
         ++trim_at;
-        trim_size = iter.trim_until(extent);
+        trim_size = iter.trim_until(mut);
       } else if (type == TrimType::BEFORE) {
         if (iter.index() == 0) {
           return {TrimType::BEFORE, 0u};
         }
-        trim_size = iter.trim_until(extent);
+        trim_size = iter.trim_until(mut);
       } else {
-        trim_size = iter.trim_at(extent, trimmed);
+        trim_size = iter.trim_at(mut, trimmed);
       }
       return {TrimType::AT, trim_size};
     } else {
       if (iter.index() == 0) {
         return {TrimType::BEFORE, 0u};
       } else {
-        auto trimmed = iter.trim_until(extent);
+        auto trimmed = iter.trim_until(mut);
         return {TrimType::AT, trimmed};
       }
     }
   }
 
-  static void trim(LogicalCachedExtent& extent, StagedIterator& trim_at) {
-    auto [type, trimmed] = recursively_trim(extent, trim_at);
+  static void trim(NodeExtentMutable& mut, StagedIterator& trim_at) {
+    auto [type, trimmed] = recursively_trim(mut, trim_at);
     if (type == TrimType::AFTER) {
       auto& iter = trim_at.get();
       assert(iter.is_end());
-      iter.trim_until(extent);
+      iter.trim_until(mut);
     }
   }
 };

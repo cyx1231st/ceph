@@ -5,10 +5,10 @@
 
 #include <iostream>
 
-#include "dummy_transaction_manager.h"
 #include "node.h"
+#include "node_extent_manager.h"
 #include "stages/key_layout.h" // full_key_t<KeyT::HOBJ>
-#include "super_node.h"
+#include "super.h"
 
 namespace crimson::os::seastore::onode {
 
@@ -68,12 +68,14 @@ Btree::Cursor Btree::Cursor::make_end(Btree* p_tree) {
   return {p_tree};
 }
 
-Btree::Btree(TransactionManagerURef&& tm) : tm{std::move(tm)} {}
+Btree::Btree(NodeExtentManagerURef&& _nm)
+  : nm{std::move(_nm)},
+    root_tracker{RootNodeTracker::create(nm->is_read_isolated())} {}
 
-Btree::~Btree() { assert(tracked_supers.empty()); }
+Btree::~Btree() { assert(root_tracker->is_clean()); }
 
 btree_future<> Btree::mkfs(Transaction& t) {
-  return tm->get_super(t, *this).safe_then([this, &t](auto super) {
+  return nm->get_super(t, *root_tracker).safe_then([this, &t](auto super) {
     return Node::mkfs(get_context(t), std::move(super));
   });
 }
@@ -186,41 +188,43 @@ btree_future<size_t> Btree::height(Transaction& t) {
 }
 
 std::ostream& Btree::dump(Transaction& t, std::ostream& os) {
-  auto iter = tracked_supers.find(&t);
-  if (iter == tracked_supers.end()) {
-    os << "empty tree!";
+  auto root = root_tracker->get_root(t);
+  if (root) {
+    root->dump(os);
   } else {
-    iter->second->get_p_root()->dump(os);
+    os << "empty tree!";
   }
   return os;
 }
 
 btree_future<Ref<Node>> Btree::get_root(Transaction& t) {
-  auto iter = tracked_supers.find(&t);
-  if (iter == tracked_supers.end()) {
-    return tm->get_super(t, *this).safe_then([this, &t](auto super) {
-      assert(tracked_supers.find(&t)->second == super.get());
+  auto root = root_tracker->get_root(t);
+  if (root) {
+    return btree_ertr::make_ready_future<Ref<Node>>(root);
+  } else {
+    return nm->get_super(t, *root_tracker).safe_then([this, &t](auto&& super) {
       return Node::load_root(get_context(t), std::move(super));
     }).safe_then([this, &t](auto root) {
-      assert(tracked_supers.find(&t)->second->get_p_root() == root.get());
+      assert(root == root_tracker->get_root(t));
       return root;
     });
-  } else {
-    return btree_ertr::make_ready_future<Ref<Node>>(
-        iter->second->get_p_root());
   }
+}
+
+bool Btree::test_is_clean() const {
+  return root_tracker->is_clean();
 }
 
 btree_future<> Btree::test_clone_from(
     Transaction& t, Transaction& t_from, Btree& from) {
   // Note: assume the tree to clone is tracked correctly in memory.
   // In some unit tests, parts of the tree are stubbed out that they
-  // should not be loaded from TransactionManager.
-  return tm->get_super(t, *this
+  // should not be loaded from NodeExtentManager.
+  return nm->get_super(t, *root_tracker
   ).safe_then([this, &t, &t_from, &from](auto super) {
     return from.get_root(t_from
     ).safe_then([this, &t, super = std::move(super)](auto root) mutable {
-      // TODO: reverse
+      // XXX: reverse
       return root->test_clone_root(get_context(t), std::move(super));
     });
   });

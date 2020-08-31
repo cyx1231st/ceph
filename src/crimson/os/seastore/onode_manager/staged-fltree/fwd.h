@@ -11,14 +11,20 @@
 
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
+#include "crimson/os/seastore/transaction.h"
 
 namespace crimson::os::seastore::onode {
 
-class DummyTransactionManager;
-using TransactionManagerURef = std::unique_ptr<DummyTransactionManager>;
-struct Transaction {};
+class NodeExtentMutable;
+class NodeExtentManager;
+using NodeExtentManagerURef = std::unique_ptr<NodeExtentManager>;
+class RootNodeTracker;
+using RootNodeTrackerURef = std::unique_ptr<RootNodeTracker>;
+using crimson::os::seastore::Transaction;
+using crimson::os::seastore::TransactionRef;
+using crimson::os::seastore::make_transaction;
 struct context_t {
-  DummyTransactionManager& tm;
+  NodeExtentManager& nm;
   Transaction& t;
 };
 

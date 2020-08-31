@@ -8,7 +8,8 @@
 #include <sstream>
 #include <vector>
 
-#include "crimson/os/seastore/onode_manager/staged-fltree/dummy_transaction_manager.h"
+#include "crimson/common/log.h"
+#include "crimson/os/seastore/onode_manager/staged-fltree/node_extent_manager.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/node_impl.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/stages/node_stage.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/stages/stage.h"
@@ -56,7 +57,9 @@ namespace {
   }
 }
 
-TEST_F(seastar_test_suite_t, basic_sizes)
+struct a_basic_test_t : public seastar_test_suite_t {};
+
+TEST_F(a_basic_test_t, 1_basic_sizes)
 {
   logger().info("\n"
     "Bytes of struct:\n"
@@ -85,7 +88,7 @@ TEST_F(seastar_test_suite_t, basic_sizes)
   key_hobj_t key(hobj);
   auto [key_view, p_mem] = build_key_view(hobj);
   onode_t value = {2};
-#define STAGE_T(NodeType) node_to_stage_t<typename NodeType::node_stage_t>
+#define _STAGE_T(NodeType) node_to_stage_t<typename NodeType::node_stage_t>
 #define NXT_T(StageType)  staged<typename StageType::next_param_t>
   logger().info("\n"
     "Bytes of a key-value insertion (full-string):\n"
@@ -98,79 +101,65 @@ TEST_F(seastar_test_suite_t, basic_sizes)
     "  LeafNode1: {} {} {}\n"
     "  LeafNode2: {} {}\n"
     "  LeafNode3: {}",
-    STAGE_T(InternalNode0)::template insert_size<KeyT::VIEW>(key_view, 0),
-    NXT_T(STAGE_T(InternalNode0))::template insert_size<KeyT::VIEW>(key_view, 0),
-    NXT_T(NXT_T(STAGE_T(InternalNode0)))::template insert_size<KeyT::VIEW>(key_view, 0),
-    STAGE_T(InternalNode1)::template insert_size<KeyT::VIEW>(key_view, 0),
-    NXT_T(STAGE_T(InternalNode1))::template insert_size<KeyT::VIEW>(key_view, 0),
-    NXT_T(NXT_T(STAGE_T(InternalNode1)))::template insert_size<KeyT::VIEW>(key_view, 0),
-    STAGE_T(InternalNode2)::template insert_size<KeyT::VIEW>(key_view, 0),
-    NXT_T(STAGE_T(InternalNode2))::template insert_size<KeyT::VIEW>(key_view, 0),
-    STAGE_T(InternalNode3)::template insert_size<KeyT::VIEW>(key_view, 0),
-    STAGE_T(LeafNode0)::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(STAGE_T(LeafNode0))::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(NXT_T(STAGE_T(LeafNode0)))::template insert_size<KeyT::HOBJ>(key, value),
-    STAGE_T(LeafNode1)::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(STAGE_T(LeafNode1))::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(NXT_T(STAGE_T(LeafNode1)))::template insert_size<KeyT::HOBJ>(key, value),
-    STAGE_T(LeafNode2)::template insert_size<KeyT::HOBJ>(key, value),
-    NXT_T(STAGE_T(LeafNode2))::template insert_size<KeyT::HOBJ>(key, value),
-    STAGE_T(LeafNode3)::template insert_size<KeyT::HOBJ>(key, value)
+    _STAGE_T(InternalNode0)::template insert_size<KeyT::VIEW>(key_view, 0),
+    NXT_T(_STAGE_T(InternalNode0))::template insert_size<KeyT::VIEW>(key_view, 0),
+    NXT_T(NXT_T(_STAGE_T(InternalNode0)))::template insert_size<KeyT::VIEW>(key_view, 0),
+    _STAGE_T(InternalNode1)::template insert_size<KeyT::VIEW>(key_view, 0),
+    NXT_T(_STAGE_T(InternalNode1))::template insert_size<KeyT::VIEW>(key_view, 0),
+    NXT_T(NXT_T(_STAGE_T(InternalNode1)))::template insert_size<KeyT::VIEW>(key_view, 0),
+    _STAGE_T(InternalNode2)::template insert_size<KeyT::VIEW>(key_view, 0),
+    NXT_T(_STAGE_T(InternalNode2))::template insert_size<KeyT::VIEW>(key_view, 0),
+    _STAGE_T(InternalNode3)::template insert_size<KeyT::VIEW>(key_view, 0),
+    _STAGE_T(LeafNode0)::template insert_size<KeyT::HOBJ>(key, value),
+    NXT_T(_STAGE_T(LeafNode0))::template insert_size<KeyT::HOBJ>(key, value),
+    NXT_T(NXT_T(_STAGE_T(LeafNode0)))::template insert_size<KeyT::HOBJ>(key, value),
+    _STAGE_T(LeafNode1)::template insert_size<KeyT::HOBJ>(key, value),
+    NXT_T(_STAGE_T(LeafNode1))::template insert_size<KeyT::HOBJ>(key, value),
+    NXT_T(NXT_T(_STAGE_T(LeafNode1)))::template insert_size<KeyT::HOBJ>(key, value),
+    _STAGE_T(LeafNode2)::template insert_size<KeyT::HOBJ>(key, value),
+    NXT_T(_STAGE_T(LeafNode2))::template insert_size<KeyT::HOBJ>(key, value),
+    _STAGE_T(LeafNode3)::template insert_size<KeyT::HOBJ>(key, value)
   );
   std::free(p_mem);
 }
 
-struct dummy_tree_test_t : public seastar_test_suite_t {
-  TransactionManagerURef tmp_tm;
-  Transaction t;
-  context_t c;
-  Btree tree;
-
-  dummy_tree_test_t()
-    : tmp_tm(DummyTransactionManager::create()),
-      c{*tmp_tm.get(), t},
-      tree(std::move(tmp_tm)) {}
-
-  seastar::future<> set_up_fut() override final {
-    return tree.mkfs(t).handle_error(
-      crimson::ct_error::all_same_way([] {
-        ASSERT_FALSE("Unable to mkfs");
-      })
-    );
-  }
-};
-
-TEST_F(dummy_tree_test_t, node_sizes)
+TEST_F(a_basic_test_t, 2_node_sizes)
 {
   run_async([this] {
-    std::vector<Ref<Node>> nodes = {
-      InternalNode0::allocate(c, 1u, false).unsafe_get0(),
-      InternalNode1::allocate(c, 1u, false).unsafe_get0(),
-      InternalNode2::allocate(c, 1u, false).unsafe_get0(),
-      InternalNode3::allocate(c, 1u, false).unsafe_get0(),
-      InternalNode0::allocate(c, 1u, true).unsafe_get0(),
-      InternalNode1::allocate(c, 1u, true).unsafe_get0(),
-      InternalNode2::allocate(c, 1u, true).unsafe_get0(),
-      InternalNode3::allocate(c, 1u, true).unsafe_get0(),
-      LeafNode0::allocate(c, false).unsafe_get0(),
-      LeafNode1::allocate(c, false).unsafe_get0(),
-      LeafNode2::allocate(c, false).unsafe_get0(),
-      LeafNode3::allocate(c, false).unsafe_get0(),
-      LeafNode0::allocate(c, true).unsafe_get0(),
-      LeafNode1::allocate(c, true).unsafe_get0(),
-      LeafNode2::allocate(c, true).unsafe_get0(),
-      LeafNode3::allocate(c, true).unsafe_get0()
+    auto nm = NodeExtentManager::create_dummy();
+    auto t = make_transaction();
+    context_t c{*nm, *t};
+    std::vector<std::pair<Ref<Node>, NodeExtentMutable>> nodes = {
+      InternalNode0::allocate(c, 1u, false).unsafe_get0().make_pair(),
+      InternalNode1::allocate(c, 1u, false).unsafe_get0().make_pair(),
+      InternalNode2::allocate(c, 1u, false).unsafe_get0().make_pair(),
+      InternalNode3::allocate(c, 1u, false).unsafe_get0().make_pair(),
+      InternalNode0::allocate(c, 1u, true).unsafe_get0().make_pair(),
+      InternalNode1::allocate(c, 1u, true).unsafe_get0().make_pair(),
+      InternalNode2::allocate(c, 1u, true).unsafe_get0().make_pair(),
+      InternalNode3::allocate(c, 1u, true).unsafe_get0().make_pair(),
+      LeafNode0::allocate(c, false).unsafe_get0().make_pair(),
+      LeafNode1::allocate(c, false).unsafe_get0().make_pair(),
+      LeafNode2::allocate(c, false).unsafe_get0().make_pair(),
+      LeafNode3::allocate(c, false).unsafe_get0().make_pair(),
+      LeafNode0::allocate(c, true).unsafe_get0().make_pair(),
+      LeafNode1::allocate(c, true).unsafe_get0().make_pair(),
+      LeafNode2::allocate(c, true).unsafe_get0().make_pair(),
+      LeafNode3::allocate(c, true).unsafe_get0().make_pair()
     };
     std::ostringstream oss;
     oss << "\nallocated nodes:";
-    assert(tree.test_is_clean());
+    auto node_tracker = RootNodeTracker::create(c.nm.is_read_isolated());
+    assert(node_tracker->is_clean());
     for (auto iter = nodes.begin(); iter != nodes.end();) {
-      oss << "\n  " << **iter;
-      (*iter)->test_make_destructable(
-          c, c.tm.get_super(c.t, tree).unsafe_get0());
-      assert(!tree.test_is_clean());
+      auto& ref_node = iter->first;
+      auto& mut = iter->second;
+      oss << "\n  " << *ref_node;
+      ref_node->test_make_destructable(
+          c, mut, c.nm.get_super(c.t, *node_tracker).unsafe_get0());
+      assert(!node_tracker->is_clean());
       iter = nodes.erase(iter);
-      assert(tree.test_is_clean());
+      assert(node_tracker->is_clean());
     }
     logger().info("{}", oss.str());
   });
@@ -238,7 +227,30 @@ class Onodes {
   std::vector<onode_t*> tracked_onodes;
 };
 
-TEST_F(dummy_tree_test_t, random_insert_leaf_node)
+struct b_dummy_tree_test_t : public seastar_test_suite_t {
+  NodeExtentManagerURef moved_nm;
+  TransactionRef ref_t;
+  Transaction& t;
+  context_t c;
+  Btree tree;
+
+  b_dummy_tree_test_t()
+    : moved_nm{NodeExtentManager::create_dummy()},
+      ref_t{make_transaction()},
+      t{*ref_t},
+      c{*moved_nm, t},
+      tree{std::move(moved_nm)} {}
+
+  seastar::future<> set_up_fut() override final {
+    return tree.mkfs(t).handle_error(
+      crimson::ct_error::all_same_way([] {
+        ASSERT_FALSE("Unable to mkfs");
+      })
+    );
+  }
+};
+
+TEST_F(b_dummy_tree_test_t, 3_random_insert_leaf_node)
 {
   run_async([this] {
     logger().info("\n---------------------------------------------"
@@ -423,7 +435,7 @@ static std::set<onode_key_t> build_key_set(
   return ret;
 }
 
-TEST_F(dummy_tree_test_t, split_leaf_node)
+TEST_F(b_dummy_tree_test_t, 4_split_leaf_node)
 {
   run_async([this] {
     logger().info("\n---------------------------------------------"
@@ -448,8 +460,9 @@ TEST_F(dummy_tree_test_t, split_leaf_node)
 
     auto f_split = [this, &insert_history] (
         const onode_key_t& key, const onode_t& value) {
-      Btree tree_clone(DummyTransactionManager::create());
-      Transaction t_clone;
+      Btree tree_clone(NodeExtentManager::create_dummy());
+      auto ref_t_clone = make_transaction();
+      Transaction& t_clone = *ref_t_clone;
       tree_clone.test_clone_from(t_clone, t, tree).unsafe_get0();
 
       logger().info("insert {}:", key);
@@ -618,9 +631,9 @@ class ChildPool {
 
     static node_future<Ref<DummyChild>> create_initial(
         context_t c, const std::set<onode_key_t>& keys,
-        ChildPool& pool, Btree& btree) {
+        ChildPool& pool, RootNodeTracker& root_tracker) {
       auto initial = create(keys, true, pool);
-      return c.tm.get_super(c.t, btree
+      return c.nm.get_super(c.t, root_tracker
       ).safe_then([c, &pool, initial](auto super) {
         initial->make_root_new(c, std::move(super));
         return initial->upgrade_root(c).safe_then([initial] {
@@ -640,24 +653,27 @@ class ChildPool {
     field_type_t field_type() const override { return field_type_t::N0; }
     laddr_t laddr() const override { return _laddr; }
     level_t level() const override { return 0u; }
-    key_view_t get_key_view(const search_position_t&) const override { assert(false); }
+    key_view_t get_key_view(const search_position_t&) const override {
+      assert(false && "impossible path"); }
     key_view_t get_largest_key_view() const override { return key_view; }
-    std::ostream& dump(std::ostream&) const override { assert(false); }
-    std::ostream& dump_brief(std::ostream&) const override { assert(false); }
-    void init(Ref<LogicalCachedExtent>) override { assert(false); }
+    std::ostream& dump(std::ostream&) const override {
+      assert(false && "impossible path"); }
+    std::ostream& dump_brief(std::ostream&) const override {
+      assert(false && "impossible path"); }
     node_future<search_result_t> do_lower_bound(
-        context_t, const key_hobj_t&, MatchHistory&) override { assert(false); }
-    node_future<Ref<tree_cursor_t>> lookup_smallest(
-        context_t) override { assert(false); }
-    node_future<Ref<tree_cursor_t>> lookup_largest(
-        context_t) override { assert(false); }
-
+        context_t, const key_hobj_t&, MatchHistory&) override {
+      assert(false && "impossible path"); }
+    node_future<Ref<tree_cursor_t>> lookup_smallest(context_t) override {
+      assert(false && "impossible path"); }
+    node_future<Ref<tree_cursor_t>> lookup_largest(context_t) override {
+      assert(false && "impossible path"); }
     void test_make_destructable(
-        context_t, SuperNodeURef&&) override { assert(false); }
-    node_future<> test_clone_root(
-        context_t, SuperNodeURef&&) const override { assert(false); }
+        context_t, NodeExtentMutable&, Super::URef&&) override {
+      assert(false && "impossible path"); }
+    node_future<> test_clone_root(context_t, Super::URef&&) const override {
+      assert(false && "impossible path"); }
     node_future<> test_clone_non_root(
-        context_t c, Ref<InternalNode> new_parent) const override {
+        context_t, Ref<InternalNode> new_parent) const override {
       assert(!is_root());
       auto p_pool_clone = pool.pool_clone_in_progress;
       assert(p_pool_clone);
@@ -706,10 +722,10 @@ class ChildPool {
     reset();
 
     // create tree
-    auto _p_tm = DummyTransactionManager::create();
-    p_tm = _p_tm.get();
-    p_btree.emplace(std::move(_p_tm));
-    return DummyChild::create_initial(get_context(), keys, *this, *p_btree
+    auto ref_nm = NodeExtentManager::create_dummy();
+    p_nm = ref_nm.get();
+    p_btree.emplace(std::move(ref_nm));
+    return DummyChild::create_initial(get_context(), keys, *this, *p_btree->root_tracker
     ).safe_then([this](auto initial_child) {
       // split
       splitable_nodes.insert(initial_child);
@@ -728,9 +744,9 @@ class ChildPool {
       });
     }).safe_then([this] {
       std::ostringstream oss;
-      p_btree->dump(t, oss);
+      p_btree->dump(t(), oss);
       logger().info("\n{}\n", oss.str());
-      return p_btree->height(t);
+      return p_btree->height(t());
     }).safe_then([](auto height) {
       assert(height == 2);
     });
@@ -741,19 +757,19 @@ class ChildPool {
       logger().info("insert {} at {}:", key, pos);
       ChildPool pool_clone;
       pool_clone_in_progress = &pool_clone;
-      auto _p_tm = DummyTransactionManager::create();
-      pool_clone.p_tm = _p_tm.get();
-      pool_clone.p_btree.emplace(std::move(_p_tm));
+      auto ref_nm = NodeExtentManager::create_dummy();
+      pool_clone.p_nm = ref_nm.get();
+      pool_clone.p_btree.emplace(std::move(ref_nm));
       pool_clone.p_btree->test_clone_from(
-        pool_clone.t, t, *p_btree).unsafe_get0();
+        pool_clone.t(), t(), *p_btree).unsafe_get0();
       pool_clone_in_progress = nullptr;
       auto node_to_split = pool_clone.get_node_by_pos(pos);
       node_to_split->insert_and_split(
         pool_clone.get_context(), key, pool_clone.splitable_nodes).unsafe_get0();
       std::ostringstream oss;
-      pool_clone.p_btree->dump(pool_clone.t, oss);
+      pool_clone.p_btree->dump(pool_clone.t(), oss);
       logger().info("\n{}\n", oss.str());
-      assert(pool_clone.p_btree->height(pool_clone.t).unsafe_get0() == 3);
+      assert(pool_clone.p_btree->height(pool_clone.t()).unsafe_get0() == 3);
     });
   }
 
@@ -764,7 +780,7 @@ class ChildPool {
       assert(!p_btree->test_is_clean());
       tracked_children.clear();
       assert(p_btree->test_is_clean());
-      p_tm = nullptr;
+      p_nm = nullptr;
       p_btree.reset();
     } else {
       assert(!p_btree);
@@ -787,14 +803,16 @@ class ChildPool {
   }
 
   context_t get_context() {
-    assert(p_tm != nullptr);
-    return {*p_tm, t};
+    assert(p_nm != nullptr);
+    return {*p_nm, t()};
   }
+
+  Transaction& t() const { return *ref_t; }
 
   std::set<Ref<DummyChild>> tracked_children;
   std::optional<Btree> p_btree;
-  DummyTransactionManager* p_tm = nullptr;
-  Transaction t;
+  NodeExtentManager* p_nm = nullptr;
+  TransactionRef ref_t = make_transaction();
 
   std::random_device rd;
   std::set<Ref<DummyChild>> splitable_nodes;
@@ -802,7 +820,9 @@ class ChildPool {
   ChildPool* pool_clone_in_progress = nullptr;
 };
 
-TEST_F(seastar_test_suite_t, split_internal_node)
+struct c_dummy_children_test_t : public seastar_test_suite_t {};
+
+TEST_F(c_dummy_children_test_t, 5_split_internal_node)
 {
   run_async([this] {
     ChildPool pool;

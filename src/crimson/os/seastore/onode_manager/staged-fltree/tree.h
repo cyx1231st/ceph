@@ -12,7 +12,6 @@
 
 namespace crimson::os::seastore::onode {
 
-class DummyRootBlock;
 class Node;
 
 /*
@@ -33,7 +32,7 @@ class Btree {
   template <class... ValuesT>
   using btree_future = btree_ertr::future<ValuesT...>;
 
-  Btree(TransactionManagerURef&& tm);
+  Btree(NodeExtentManagerURef&& nm);
   Btree(const Btree&) = delete;
   Btree(Btree&&) = delete;
   Btree& operator=(const Btree&) = delete;
@@ -64,28 +63,18 @@ class Btree {
   std::ostream& dump(Transaction&, std::ostream&);
 
   // test_only
-  bool test_is_clean() const { return tracked_supers.empty(); }
+  bool test_is_clean() const;
   btree_future<> test_clone_from(Transaction& t, Transaction& t_from, Btree& from);
 
  private:
-  // called by the tracked super node
-  void do_track_super(Transaction& t, DummyRootBlock& super) {
-    assert(tracked_supers.find(&t) == tracked_supers.end());
-    tracked_supers[&t] = &super;
-  }
-  void do_untrack_super(Transaction& t, DummyRootBlock& super) {
-    auto removed = tracked_supers.erase(&t);
-    assert(removed);
-  }
-  context_t get_context(Transaction& t) { return {*tm, t}; }
+  context_t get_context(Transaction& t) { return {*nm, t}; }
 
   btree_future<Ref<Node>> get_root(Transaction& t);
 
-  TransactionManagerURef tm;
-  // XXX abstract a root tracker
-  std::map<Transaction*, DummyRootBlock*> tracked_supers;
+  NodeExtentManagerURef nm;
+  RootNodeTrackerURef root_tracker;
 
-  friend class DummyRootBlock;
+  friend class ChildPool;
 };
 
 class tree_cursor_t;

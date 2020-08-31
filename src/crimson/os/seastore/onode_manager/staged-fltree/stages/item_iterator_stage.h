@@ -79,16 +79,16 @@ class item_iterator_t {
 
   template <KeyT KT>
   static memory_range_t insert_prefix(
-      LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter,
+      NodeExtentMutable& mut, const item_iterator_t<NODE_TYPE>& iter,
       const full_key_t<KT>& key, bool is_end,
       node_offset_t size, const char* p_left_bound);
 
   static void update_size(
-      LogicalCachedExtent& dst, const item_iterator_t<NODE_TYPE>& iter, int change);
+      NodeExtentMutable& mut, const item_iterator_t<NODE_TYPE>& iter, int change);
 
-  static size_t trim_until(LogicalCachedExtent&, const item_iterator_t<NODE_TYPE>&);
+  static size_t trim_until(NodeExtentMutable&, const item_iterator_t<NODE_TYPE>&);
   static size_t trim_at(
-      LogicalCachedExtent&, const item_iterator_t<NODE_TYPE>&, size_t trimmed);
+      NodeExtentMutable&, const item_iterator_t<NODE_TYPE>&, size_t trimmed);
 
   enum class index_t { none, last, end };
   template <KeyT KT>
@@ -116,16 +116,16 @@ template <node_type_t NODE_TYPE>
 template <KeyT KT>
 class item_iterator_t<NODE_TYPE>::Appender {
  public:
-  Appender(LogicalCachedExtent* p_dst, char* p_append)
-    : p_dst{p_dst}, p_append{p_append} {}
+  Appender(NodeExtentMutable* p_mut, char* p_append)
+    : p_mut{p_mut}, p_append{p_append} {}
   bool append(const item_iterator_t<NODE_TYPE>& src, size_t& items, index_t type);
   char* wrap() { return p_append; }
-  std::tuple<LogicalCachedExtent*, char*> open_nxt(const key_get_type&);
-  std::tuple<LogicalCachedExtent*, char*> open_nxt(const full_key_t<KT>&);
+  std::tuple<NodeExtentMutable*, char*> open_nxt(const key_get_type&);
+  std::tuple<NodeExtentMutable*, char*> open_nxt(const full_key_t<KT>&);
   void wrap_nxt(char* _p_append);
 
  private:
-  LogicalCachedExtent* p_dst;
+  NodeExtentMutable* p_mut;
   char* p_append;
   char* p_offset_while_open;
 };

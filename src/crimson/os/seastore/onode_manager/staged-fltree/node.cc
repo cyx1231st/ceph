@@ -6,7 +6,6 @@
 #include <cassert>
 #include <exception>
 
-#include "dummy_transaction_manager.h"
 #include "node_impl.h"
 
 namespace crimson::os::seastore::onode {
@@ -116,69 +115,19 @@ Node::insert(context_t c, const key_hobj_t& key, const onode_t& value) {
   );
 }
 
-node_future<> Node::mkfs(context_t c, SuperNodeURef&& super) {
+node_future<> Node::mkfs(context_t c, Super::URef&& super) {
   return LeafNode0::mkfs(c, std::move(super));
 }
 
 node_future<Ref<Node>>
-Node::load_root(context_t c, SuperNodeURef&& _super) {
+Node::load_root(context_t c, Super::URef&& _super) {
   auto root_addr = _super->get_root_laddr();
   assert(root_addr != L_ADDR_NULL);
-  return Node::load(c, root_addr, true
+  return load_node(c, root_addr, true
   ).safe_then([_super = std::move(_super)](auto root) mutable {
     assert(root->field_type() == field_type_t::N0);
     root->as_root(std::move(_super));
     return node_ertr::make_ready_future<Ref<Node>>(root);
-  });
-}
-
-node_future<Ref<Node>>
-Node::load(context_t c, laddr_t addr, bool expect_is_level_tail) {
-  // TODO: throw error if cannot read from address
-  // NOTE:
-  // *option1: all types of node have the same length;
-  // option2: length is defined by node/field types;
-  // option3: length is totally flexible;
-  return c.tm.read_extent(c.t, addr, NODE_BLOCK_SIZE
-  ).safe_then([expect_is_level_tail](auto extent) {
-    // TODO: bootstrap extent inside read_extent()
-    const auto header = extent->template get_ptr<node_header_t>(0u);
-    auto _field_type = header->get_field_type();
-    if (!_field_type.has_value()) {
-      throw std::runtime_error("load failed: bad field type");
-    }
-    auto _node_type = header->get_node_type();
-    Ref<Node> ret;
-    if (_field_type == field_type_t::N0) {
-      if (_node_type == node_type_t::LEAF) {
-        ret = new LeafNode0();
-      } else {
-        ret = new InternalNode0();
-      }
-    } else if (_field_type == field_type_t::N1) {
-      if (_node_type == node_type_t::LEAF) {
-        ret = new LeafNode1();
-      } else {
-        ret = new InternalNode1();
-      }
-    } else if (_field_type == field_type_t::N2) {
-      if (_node_type == node_type_t::LEAF) {
-        ret = new LeafNode2();
-      } else {
-        ret = new InternalNode2();
-      }
-    } else if (_field_type == field_type_t::N3) {
-      if (_node_type == node_type_t::LEAF) {
-        ret = new LeafNode3();
-      } else {
-        ret = new InternalNode3();
-      }
-    } else {
-      assert(false);
-    }
-    ret->init(extent);
-    assert(ret->is_level_tail() == expect_is_level_tail);
-    return ret;
   });
 }
 
@@ -188,6 +137,26 @@ node_future<> Node::insert_parent(context_t c, Ref<Node> right_node) {
   auto my_key = get_largest_key_view();
   return parent_info().ptr->apply_child_split(
       c, parent_info().position, my_key, this, right_node);
+}
+
+node_future<Ref<Node>> InternalNode::get_or_track_child(
+    context_t c, const search_position_t& position, laddr_t child_addr) {
+  bool level_tail = position.is_end();
+  Ref<Node> child;
+  auto found = tracked_child_nodes.find(position);
+  return (found == tracked_child_nodes.end()
+    ? load_node(c, child_addr, level_tail
+      ).safe_then([this, position] (auto child) {
+        child->as_child(position, this);
+        return child;
+      })
+    : node_ertr::make_ready_future<Ref<Node>>(found->second)
+  ).safe_then([this, position, child_addr] (auto child) {
+    assert(child_addr == child->laddr());
+    assert(position == child->parent_info().position);
+    validate_child(*child);
+    return child;
+  });
 }
 
 void InternalNode::validate_child(const Node& child) const {

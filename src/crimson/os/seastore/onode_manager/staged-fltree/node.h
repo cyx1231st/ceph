@@ -11,7 +11,7 @@
 
 #include "node_types.h"
 #include "stages/stage_types.h"
-#include "super_node.h"
+#include "super.h"
 #include "tree_types.h"
 
 namespace crimson::os::seastore::onode {
@@ -23,12 +23,12 @@ namespace crimson::os::seastore::onode {
  * USER          --> Ref<tree_cursor_t>
  * tree_cursor_t --> Ref<LeafNode>
  * Node (child)  --> Ref<InternalNode> (see parent_info_t)
- * Node (root)   --> Ref<SuperNode>
- * SuperNode     --> Btree
+ * Node (root)   --> Super::URef
+ * Super         --> Btree
  *
  * tracked lookup (top-down):
- * Btree         --> SuperNode*
- * SuperNode     --> Node* (root)
+ * Btree         --> Super*
+ * Super         --> Node* (root)
  * InternalNode  --> Node* (children)
  * LeafNode      --> tree_cursor_t*
  */
@@ -68,7 +68,6 @@ class tree_cursor_t final
 
 struct key_view_t;
 struct key_hobj_t;
-class LogicalCachedExtent;
 
 class Node
   : public boost::intrusive_ref_counter<Node, boost::thread_unsafe_counter> {
@@ -99,13 +98,14 @@ class Node
   virtual std::ostream& dump(std::ostream&) const = 0;
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
 
-  static node_future<> mkfs(context_t, SuperNodeURef&&);
+  static node_future<> mkfs(context_t, Super::URef&&);
 
-  static node_future<Ref<Node>> load_root(context_t, SuperNodeURef&&);
+  static node_future<Ref<Node>> load_root(context_t, Super::URef&&);
 
 #ifndef NDEBUG
-  virtual void test_make_destructable(context_t, SuperNodeURef&&) = 0;
-  virtual node_future<> test_clone_root(context_t, SuperNodeURef&&) const = 0;
+  virtual void test_make_destructable(
+      context_t, NodeExtentMutable&, Super::URef&&) = 0;
+  virtual node_future<> test_clone_root(context_t, Super::URef&&) const = 0;
   virtual node_future<> test_clone_non_root(context_t, Ref<InternalNode>) const = 0;
 #endif
 
@@ -130,19 +130,19 @@ class Node
            (!super && _parent_info.has_value()));
     return !_parent_info.has_value();
   }
-  void make_root(context_t c, SuperNodeURef&& _super) {
+  void make_root(context_t c, Super::URef&& _super) {
     _super->write_root_laddr(c, laddr());
     as_root(std::move(_super));
   }
-  void make_root_new(context_t c, SuperNodeURef&& _super) {
+  void make_root_new(context_t c, Super::URef&& _super) {
     assert(_super->get_root_laddr() == L_ADDR_NULL);
     make_root(c, std::move(_super));
   }
-  void make_root_from(context_t c, SuperNodeURef&& _super, laddr_t from_addr) {
+  void make_root_from(context_t c, Super::URef&& _super, laddr_t from_addr) {
     assert(_super->get_root_laddr() == from_addr);
     make_root(c, std::move(_super));
   }
-  void as_root(SuperNodeURef&& _super) {
+  void as_root(Super::URef&& _super) {
     assert(!super && !_parent_info);
     assert(_super->get_root_laddr() == laddr());
     assert(is_level_tail());
@@ -155,8 +155,6 @@ class Node
   const parent_info_t& parent_info() const { return *_parent_info; }
   node_future<> insert_parent(context_t, Ref<Node> right_node);
 
-  virtual void init(Ref<LogicalCachedExtent>) = 0;
-
   static node_future<Ref<Node>>
   load(context_t, laddr_t, bool expect_is_level_tail);
 
@@ -164,7 +162,7 @@ class Node
   // as child/non-root
   std::optional<parent_info_t> _parent_info;
   // as root
-  SuperNodeURef super;
+  Super::URef super;
 
   friend class InternalNode;
 };
@@ -180,24 +178,7 @@ class InternalNode : virtual public Node {
   // XXX: extract a common tracker for InternalNode to track Node,
   // and LeafNode to track tree_cursor_t.
   node_future<Ref<Node>> get_or_track_child(
-      context_t c, const search_position_t& position, laddr_t child_addr) {
-    bool level_tail = position.is_end();
-    Ref<Node> child;
-    auto found = tracked_child_nodes.find(position);
-    return (found == tracked_child_nodes.end()
-      ? Node::load(c, child_addr, level_tail
-        ).safe_then([this, position] (auto child) {
-          child->as_child(position, this);
-          return child;
-        })
-      : node_ertr::make_ready_future<Ref<Node>>(found->second)
-    ).safe_then([this, position, child_addr] (auto child) {
-      assert(child_addr == child->laddr());
-      assert(position == child->parent_info().position);
-      validate_child(*child);
-      return child;
-    });
-  }
+      context_t, const search_position_t&, laddr_t);
 
   void track_insert(
       const search_position_t& insert_pos, match_stage_t insert_stage,

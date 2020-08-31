@@ -19,6 +19,9 @@ class node_extent_t {
   static constexpr node_offset_t EXTENT_SIZE =
     (FieldType::SIZE + DISK_BLOCK_SIZE - 1u) / DISK_BLOCK_SIZE * DISK_BLOCK_SIZE;
 
+  // TODO: remove
+  node_extent_t() = default;
+
   node_extent_t(const FieldType* p_fields) : p_fields{p_fields} {
     validate(*p_fields);
   }
@@ -90,9 +93,9 @@ class node_extent_t {
   }
 
   static void bootstrap_extent(
-      LogicalCachedExtent&, field_type_t, node_type_t, bool, level_t);
+      NodeExtentMutable&, field_type_t, node_type_t, bool, level_t);
 
-  static void update_is_level_tail(LogicalCachedExtent&, const node_extent_t&, bool);
+  static void update_is_level_tail(NodeExtentMutable&, const node_extent_t&, bool);
 
   static node_offset_t header_size() { return FieldType::HEADER_SIZE; }
 
@@ -111,7 +114,7 @@ class node_extent_t {
 
   template <KeyT KT>
   static const value_t* insert_at(
-      LogicalCachedExtent& dst, const node_extent_t&,
+      NodeExtentMutable& mut, const node_extent_t&,
       const full_key_t<KT>& key, const value_t& value,
       size_t index, node_offset_t size, const char* p_left_bound) {
     if constexpr (FIELD_TYPE == field_type_t::N3) {
@@ -123,15 +126,15 @@ class node_extent_t {
 
   template <KeyT KT>
   static memory_range_t insert_prefix_at(
-      LogicalCachedExtent& dst, const node_extent_t&,
+      NodeExtentMutable&, const node_extent_t&,
       const full_key_t<KT>& key,
       size_t index, node_offset_t size, const char* p_left_bound);
 
   static void update_size_at(
-      LogicalCachedExtent& dst, const node_extent_t&, size_t index, int change);
+      NodeExtentMutable&, const node_extent_t&, size_t index, int change);
 
-  static size_t trim_until(LogicalCachedExtent&, const node_extent_t&, size_t index);
-  static size_t trim_at(LogicalCachedExtent&, const node_extent_t&,
+  static size_t trim_until(NodeExtentMutable&, const node_extent_t&, size_t index);
+  static size_t trim_at(NodeExtentMutable&, const node_extent_t&,
                         size_t index, size_t trimmed);
 
   template <KeyT KT>
@@ -145,8 +148,8 @@ template <typename FieldType, node_type_t NODE_TYPE>
 template <KeyT KT>
 class node_extent_t<FieldType, NODE_TYPE>::Appender {
  public:
-  Appender(LogicalCachedExtent* p_dst, char* p_append)
-    : p_dst{p_dst}, p_start{p_append} {
+  Appender(NodeExtentMutable* p_mut, char* p_append)
+    : p_mut{p_mut}, p_start{p_append} {
 #ifndef NDEBUG
     auto p_fields = reinterpret_cast<const FieldType*>(p_append);
     assert(*(p_fields->header.get_field_type()) == FIELD_TYPE);
@@ -159,14 +162,14 @@ class node_extent_t<FieldType, NODE_TYPE>::Appender {
   void append(const node_extent_t& src, size_t from, size_t items);
   void append(const full_key_t<KT>&, const value_t&, const value_t*&);
   char* wrap();
-  std::tuple<LogicalCachedExtent*, char*> open_nxt(const key_get_type&);
-  std::tuple<LogicalCachedExtent*, char*> open_nxt(const full_key_t<KT>&);
+  std::tuple<NodeExtentMutable*, char*> open_nxt(const key_get_type&);
+  std::tuple<NodeExtentMutable*, char*> open_nxt(const full_key_t<KT>&);
   void wrap_nxt(char* p_append) {
     if constexpr (FIELD_TYPE != field_type_t::N3) {
       assert(p_append < p_append_right);
       assert(p_append_left < p_append);
       p_append_right = p_append;
-      FieldType::append_offset(*p_dst, p_append - p_start, p_append_left);
+      FieldType::append_offset(*p_mut, p_append - p_start, p_append_left);
       ++num_keys;
     } else {
       assert(false);
@@ -175,7 +178,7 @@ class node_extent_t<FieldType, NODE_TYPE>::Appender {
 
  private:
   const node_extent_t* p_src = nullptr;
-  LogicalCachedExtent* p_dst;
+  NodeExtentMutable* p_mut;
   char* p_start;
   char* p_append_left;
   char* p_append_right;

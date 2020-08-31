@@ -32,9 +32,9 @@ struct node_header_t {
   }
 
   static void bootstrap_extent(
-      LogicalCachedExtent&, field_type_t, node_type_t, bool, level_t);
+      NodeExtentMutable&, field_type_t, node_type_t, bool, level_t);
 
-  static void update_is_level_tail(LogicalCachedExtent&, const node_header_t&, bool);
+  static void update_is_level_tail(NodeExtentMutable&, const node_header_t&, bool);
 
   bits_t field_type : FIELD_TYPE_BITS;
   bits_t node_type : NODE_TYPE_BITS;
@@ -95,8 +95,6 @@ node_range_t fields_free_range_before(
   return {offset_start, offset_end};
 }
 
-class LogicalCachedExtent;
-
 // internal/leaf node N0, N1; leaf node N3
 template <typename SlotType>
 struct _node_fields_013_t {
@@ -144,10 +142,10 @@ struct _node_fields_013_t {
 
 #if 0
   template <node_type_t NODE_TYPE>
-  void fill_unused(LogicalCachedExtent& extent) const {
+  void fill_unused(NodeExtentMutable& mut) const {
     auto range = fields_free_range_before<NODE_TYPE>(*this, num_keys);
     for (auto i = range.start; i < range.end; ++i) {
-      extent.copy_in(uint8_t(0xc5), i);
+      mut.copy_in_relative(i, uint8_t(0xc5));
     }
   }
 
@@ -165,19 +163,19 @@ struct _node_fields_013_t {
   static node_offset_t estimate_insert_one() { return sizeof(SlotType); }
   template <KeyT KT>
   static void insert_at(
-      LogicalCachedExtent& dst, const full_key_t<KT>& key,
+      NodeExtentMutable&, const full_key_t<KT>& key,
       const me_t& node, size_t index, node_offset_t size_right);
   static void update_size_at(
-      LogicalCachedExtent& dst, const me_t& node, size_t index, int change);
+      NodeExtentMutable&, const me_t& node, size_t index, int change);
   static void append_key(
-      LogicalCachedExtent& dst, const key_t& key, char*& p_append);
+      NodeExtentMutable&, const key_t& key, char*& p_append);
   template <KeyT KT>
   static void append_key(
-      LogicalCachedExtent& dst, const full_key_t<KT>& key, char*& p_append) {
-    append_key(dst, key_t::template from_key<KT>(key), p_append);
+      NodeExtentMutable& mut, const full_key_t<KT>& key, char*& p_append) {
+    append_key(mut, key_t::template from_key<KT>(key), p_append);
   }
   static void append_offset(
-      LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append);
+      NodeExtentMutable& mut, node_offset_t offset_to_right, char*& p_append);
 
   node_header_t header;
   num_keys_t num_keys = 0u;
@@ -235,10 +233,10 @@ struct node_fields_2_t {
 
 #if 0
   template <node_type_t NODE_TYPE>
-  void fill_unused(LogicalCachedExtent& extent) const {
+  void fill_unused(NodeExtentMutable& mut) const {
     auto range = fields_free_range_before<NODE_TYPE>(*this, num_keys);
     for (auto i = range.start; i < range.end; ++i) {
-      extent.copy_in(uint8_t(0xc5), i);
+      mut.copy_in_relative(i, uint8_t(0xc5));
     }
   }
 
@@ -256,25 +254,25 @@ struct node_fields_2_t {
   static node_offset_t estimate_insert_one() { return sizeof(node_offset_t); }
   template <KeyT KT>
   static void insert_at(
-      LogicalCachedExtent& dst, const full_key_t<KT>& key,
+      NodeExtentMutable& mut, const full_key_t<KT>& key,
       const node_fields_2_t& node, size_t index, node_offset_t size_right) {
     assert(false && "not implemented");
   }
   static void update_size_at(
-      LogicalCachedExtent& dst, const node_fields_2_t& node, size_t index, int change) {
+      NodeExtentMutable& mut, const node_fields_2_t& node, size_t index, int change) {
     assert(false && "not implemented");
   }
   static void append_key(
-      LogicalCachedExtent& dst, const key_t& key, char*& p_append) {
-    ns_oid_view_t::append(dst, key, p_append);
+      NodeExtentMutable& mut, const key_t& key, char*& p_append) {
+    ns_oid_view_t::append(mut, key, p_append);
   }
   template <KeyT KT>
   static void append_key(
-      LogicalCachedExtent& dst, const full_key_t<KT>& key, char*& p_append) {
-    ns_oid_view_t::append<KT>(dst, key, p_append);
+      NodeExtentMutable& mut, const full_key_t<KT>& key, char*& p_append) {
+    ns_oid_view_t::append<KT>(mut, key, p_append);
   }
   static void append_offset(
-      LogicalCachedExtent& dst, node_offset_t offset_to_right, char*& p_append);
+      NodeExtentMutable& mut, node_offset_t offset_to_right, char*& p_append);
 
   node_header_t header;
   num_keys_t num_keys = 0u;
@@ -322,11 +320,11 @@ struct _internal_fields_3_t {
 
 #if 0
   template <node_type_t NODE_TYPE>
-  void fill_unused(LogicalCachedExtent& extent) const {
+  void fill_unused(NodeExtentMutable& mut) const {
     node_offset_t begin = (const char*)&keys[num_keys] - fields_start(*this);
     node_offset_t end = (const char*)&child_addrs[0] - fields_start(*this);
     for (auto i = begin; i < end; ++i) {
-      extent.copy_in(uint8_t(0xc5), i);
+      mut.copy_in_relative(i, uint8_t(0xc5));
     }
     begin = (const char*)&child_addrs[num_keys] - fields_start(*this);
     end = NODE_BLOCK_SIZE;
@@ -334,7 +332,7 @@ struct _internal_fields_3_t {
       begin += sizeof(laddr_t);
     }
     for (auto i = begin; i < end; ++i) {
-      extent.copy_in(uint8_t(0xc5), i);
+      mut.copy_in_relative(i, uint8_t(0xc5));
     }
   }
 
@@ -361,12 +359,12 @@ struct _internal_fields_3_t {
   }
   template <KeyT KT>
   static void insert_at(
-      LogicalCachedExtent& dst, const full_key_t<KT>& key,
+      NodeExtentMutable& mut, const full_key_t<KT>& key,
       const me_t& node, size_t index, node_offset_t size_right) {
     assert(false && "not implemented");
   }
   static void update_size_at(
-      LogicalCachedExtent& dst, const me_t& node, size_t index, int change) {
+      NodeExtentMutable& mut, const me_t& node, size_t index, int change) {
     assert(false && "not implemented");
   }
 
