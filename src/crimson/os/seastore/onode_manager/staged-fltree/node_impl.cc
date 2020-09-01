@@ -166,15 +166,11 @@ node_future<> I_NODE_T::apply_child_split(
   auto& node_stage = this->extent.read();
 
   // update pos => l_addr to r_addr
-  const laddr_t* p_rvalue = this->get_value_ptr(pos);
   auto left_laddr = left_child->laddr();
   auto right_laddr = right_child->laddr();
-  assert(*p_rvalue == left_laddr);
-
-  // TODO: must move to replayable interfaces
-  this->extent.unreplayable_mutate().copy_in_absolute(
-      const_cast<laddr_t*>(p_rvalue), right_laddr);
-
+  const laddr_t* p_rvalue = this->get_value_ptr(pos);
+  this->extent.prepare_internal_split_replayable(
+      left_laddr, right_laddr, node_stage.ptr_to_off(p_rvalue));
   this->replace_track(pos, left_child, right_child);
 
   // evaluate insertion

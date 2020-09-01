@@ -53,6 +53,7 @@ class NodeExtentT {
     return *mut;
   }
 
+  // TODO: fix the absolute modifications
   template <KeyT KT>
   const value_t* insert_replayable(
       const full_key_t<KT>& key,
@@ -87,6 +88,16 @@ class NodeExtentT {
     return layout_t::template split_insert<KT>(
         *mut, read(), split_at, key, value,
         insert_pos, insert_stage, insert_size);
+  }
+
+  const void prepare_internal_split_replayable(
+      const laddr_t left_child_addr,
+      const laddr_t right_child_addr,
+      node_offset_t off_split_addr) {
+    assert(state != state_t::PENDING_MUTATE);
+    // TODO: encode params to recorder as delta
+    return layout_t::prepare_internal_split(
+        *mut, read(), left_child_addr, right_child_addr, off_split_addr);
   }
 
   static NodeExtentT load(NodeExtent::Ref extent) {

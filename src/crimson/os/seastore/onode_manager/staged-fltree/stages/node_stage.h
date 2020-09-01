@@ -27,7 +27,19 @@ class node_extent_t {
   }
 
   const char* p_start() const { return fields_start(*p_fields); }
-  const FieldType& fields() const { return *p_fields; }
+
+  const char* off_to_ptr(node_offset_t off) const {
+    assert(off <= FieldType::SIZE);
+    return p_start() + off;
+  }
+
+  node_offset_t ptr_to_off(const void* ptr) const {
+    auto _ptr = static_cast<const char*>(ptr);
+    assert(_ptr >= p_start());
+    auto off = _ptr - p_start();
+    assert(off <= FieldType::SIZE);
+    return off;
+  }
 
   bool is_level_tail() const { return p_fields->is_level_tail(); }
   level_t level() const { return p_fields->header.level; }
@@ -141,6 +153,7 @@ class node_extent_t {
   class Appender;
 
  private:
+  const FieldType& fields() const { return *p_fields; }
   const FieldType* p_fields;
 };
 
