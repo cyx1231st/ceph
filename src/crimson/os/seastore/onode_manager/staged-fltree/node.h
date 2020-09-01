@@ -48,6 +48,7 @@ class tree_cursor_t final
   tree_cursor_t(Ref<LeafNode>, const search_position_t&, const onode_t*);
   const search_position_t& get_position() const { return position; }
   Ref<LeafNode> get_leaf_node() { return leaf_node; }
+  // TODO: version based invalidation
   void invalidate_p_value() { p_value = nullptr; }
   void update_track(Ref<LeafNode>, const search_position_t&);
   void set_p_value(const onode_t* _p_value) {
@@ -108,10 +109,12 @@ class Node
   virtual node_future<> test_clone_root(context_t, RootNodeTracker&) const {
     assert(false && "impossible path");
   }
-  virtual node_future<> test_clone_non_root(context_t, Ref<InternalNode>) const = 0;
+  virtual node_future<> test_clone_non_root(context_t, Ref<InternalNode>) const {
+    assert(false && "impossible path");
+  }
 #endif
 
- public: // used by node_impl.h, FIXME: protected
+ public: // used by node_impl.h, XXX: protected?
   virtual bool is_level_tail() const = 0;
   virtual field_type_t field_type() const = 0;
   virtual laddr_t laddr() const = 0;
@@ -157,8 +160,8 @@ class Node
   const parent_info_t& parent_info() const { return *_parent_info; }
   node_future<> insert_parent(context_t, Ref<Node> right_node);
 
-  static node_future<Ref<Node>>
-  load(context_t, laddr_t, bool expect_is_level_tail);
+  static node_future<Ref<Node>> load(
+      context_t, laddr_t, bool expect_is_level_tail);
 
  private:
   // as child/non-root
@@ -172,6 +175,7 @@ inline std::ostream& operator<<(std::ostream& os, const Node& node) {
   return node.dump_brief(os);
 }
 
+// TODO: remove virtual inheritance once decoupled with layout
 class InternalNode : virtual public Node {
  public:
   virtual ~InternalNode() { assert(tracked_child_nodes.empty()); }
@@ -288,6 +292,7 @@ class InternalNode : virtual public Node {
   friend class Node;
 };
 
+// TODO: remove virtual inheritance once decoupled with layout
 class LeafNode : virtual public Node {
  public:
   virtual ~LeafNode() { assert(tracked_cursors.empty()); }
@@ -321,6 +326,7 @@ class LeafNode : virtual public Node {
       const search_position_t& insert_pos, match_stage_t insert_stage,
       const onode_t* p_onode) {
     // invalidate cursor value
+    // TODO: version based invalidation
     auto pos_invalidate_begin = insert_pos;
     pos_invalidate_begin.index_by_stage(STAGE_RIGHT) = 0;
     auto begin_invalidate = tracked_cursors.lower_bound(pos_invalidate_begin);
@@ -351,6 +357,7 @@ class LeafNode : virtual public Node {
   void track_split(
       const search_position_t& split_pos, Ref<LeafNode> right_node) {
     // invalidate cursor value
+    // TODO: version based invalidation
     auto pos_invalidate_begin = split_pos;
     pos_invalidate_begin.index_by_stage(STAGE_RIGHT) = 0;
     auto begin_invalidate = tracked_cursors.lower_bound(pos_invalidate_begin);

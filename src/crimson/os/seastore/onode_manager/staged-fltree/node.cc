@@ -66,7 +66,6 @@ node_future<> Node::upgrade_root(context_t c) {
   assert(is_level_tail());
   assert(field_type() == field_type_t::N0);
   super->do_untrack_root(*this);
-  // TODO: bootstrap extent inside
   return InternalNode0::allocate_root(c, level(), laddr(), std::move(super)
   ).safe_then([this](auto new_root) {
     as_child(search_position_t::end(), new_root);

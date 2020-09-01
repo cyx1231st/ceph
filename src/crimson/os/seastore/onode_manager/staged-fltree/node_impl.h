@@ -49,10 +49,6 @@ class NodeT : virtual public Node {
 #ifndef NDEBUG
   void test_make_destructable(
       context_t, NodeExtentMutable&, Super::URef&&) override final;
-  node_future<> test_clone_non_root(
-      context_t, Ref<InternalNode>) const override final {
-    assert(false && "not implemented");
-  }
 #endif
 
   static Ref<Node> load(NodeExtent::Ref, bool);

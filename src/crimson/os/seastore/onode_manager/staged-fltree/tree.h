@@ -45,12 +45,13 @@ class Btree {
   btree_future<Cursor> begin(Transaction&);
   btree_future<Cursor> last(Transaction&);
   Cursor end();
+  // TODO: replace onode_key_t
   btree_future<bool> contains(Transaction&, const onode_key_t&);
   btree_future<Cursor> find(Transaction&, const onode_key_t&);
   btree_future<Cursor> lower_bound(Transaction&, const onode_key_t&);
 
   // modifiers
-  // TODO: get_or_insert onode
+  // TODO: replace onode_t
   btree_future<std::pair<Cursor, bool>>
   insert(Transaction&, const onode_key_t&, const onode_t&);
   btree_future<size_t> erase(Transaction&, const onode_key_t& key);
@@ -78,8 +79,10 @@ class Btree {
 class tree_cursor_t;
 class Btree::Cursor {
  public:
-  Cursor(const Cursor& other);
-  Cursor(Cursor&& other) noexcept;
+  Cursor(const Cursor&);
+  Cursor(Cursor&&) noexcept;
+  Cursor& operator=(const Cursor&);
+  Cursor& operator=(Cursor&&);
   ~Cursor();
 
   bool is_end() const;

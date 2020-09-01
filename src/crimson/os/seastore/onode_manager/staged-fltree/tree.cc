@@ -13,21 +13,24 @@ namespace crimson::os::seastore::onode {
 using btree_ertr = Btree::btree_ertr;
 template <class... ValuesT>
 using btree_future = Btree::btree_future<ValuesT...>;
+using Cursor = Btree::Cursor;
 
-Btree::Cursor::Cursor(Btree* p_tree, Ref<tree_cursor_t> _p_cursor)
+Cursor::Cursor(Btree* p_tree, Ref<tree_cursor_t> _p_cursor)
   : p_tree(p_tree) {
-  // for cursors indicating end of tree
-  // untrack the leaf node
-  if (!_p_cursor->is_end()) {
+  if (_p_cursor->is_end()) {
+    // for cursors indicating end of tree untrack the leaf node
+  } else {
     p_cursor = _p_cursor;
   }
 }
-Btree::Cursor::Cursor(Btree* p_tree) : p_tree{p_tree} {}
-Btree::Cursor::Cursor(const Cursor& other) = default;
-Btree::Cursor::Cursor(Cursor&& other) noexcept = default;
-Btree::Cursor::~Cursor() = default;
+Cursor::Cursor(Btree* p_tree) : p_tree{p_tree} {}
+Cursor::Cursor(const Cursor&) = default;
+Cursor::Cursor(Cursor&&) noexcept = default;
+Cursor& Cursor::operator=(const Cursor&) = default;
+Cursor& Cursor::operator=(Cursor&&) = default;
+Cursor::~Cursor() = default;
 
-bool Btree::Cursor::is_end() const {
+bool Cursor::is_end() const {
   if (p_cursor) {
     assert(!p_cursor->is_end());
     return false;
@@ -36,33 +39,31 @@ bool Btree::Cursor::is_end() const {
   }
 }
 
-const onode_key_t& Btree::Cursor::key() {
+const onode_key_t& Cursor::key() {
   // TODO
-  return {};
+  assert(false && "not implemented");
 }
 
-// might return Onode class to track the changing onode_t pointer
-// TODO: p_value might be invalid
-const onode_t* Btree::Cursor::value() const {
+const onode_t* Cursor::value() const {
   return p_cursor->get_p_value();
 }
 
-bool Btree::Cursor::operator==(const Cursor& x) const {
+bool Cursor::operator==(const Cursor& x) const {
   return p_cursor == x.p_cursor;
 }
 
-Btree::Cursor& Btree::Cursor::operator++() {
+Cursor& Cursor::operator++() {
   // TODO
   return *this;
 }
 
-Btree::Cursor Btree::Cursor::operator++(int) {
+Cursor Cursor::operator++(int) {
   Cursor tmp = *this;
   ++*this;
   return tmp;
 }
 
-Btree::Cursor Btree::Cursor::make_end(Btree* p_tree) {
+Cursor Cursor::make_end(Btree* p_tree) {
   return {p_tree};
 }
 
@@ -76,7 +77,7 @@ btree_future<> Btree::mkfs(Transaction& t) {
   return Node::mkfs(get_context(t), *root_tracker);
 }
 
-btree_future<Btree::Cursor> Btree::begin(Transaction& t) {
+btree_future<Cursor> Btree::begin(Transaction& t) {
   return get_root(t).safe_then([this, &t](auto root) {
     return root->lookup_smallest(get_context(t));
   }).safe_then([this](auto cursor) {
@@ -84,7 +85,7 @@ btree_future<Btree::Cursor> Btree::begin(Transaction& t) {
   });
 }
 
-btree_future<Btree::Cursor> Btree::last(Transaction& t) {
+btree_future<Cursor> Btree::last(Transaction& t) {
   return get_root(t).safe_then([this, &t](auto root) {
     return root->lookup_largest(get_context(t));
   }).safe_then([this](auto cursor) {
@@ -92,7 +93,7 @@ btree_future<Btree::Cursor> Btree::last(Transaction& t) {
   });
 }
 
-Btree::Cursor Btree::end() {
+Cursor Btree::end() {
   return Cursor::make_end(this);
 }
 
@@ -111,11 +112,11 @@ Btree::contains(Transaction& t, const onode_key_t& key) {
   );
 }
 
-btree_future<Btree::Cursor>
+btree_future<Cursor>
 Btree::find(Transaction& t, const onode_key_t& key) {
   return seastar::do_with(
     full_key_t<KeyT::HOBJ>(key),
-    [this, &t](auto& key) -> btree_future<Btree::Cursor> {
+    [this, &t](auto& key) -> btree_future<Cursor> {
       return get_root(t).safe_then([this, &t, &key](auto root) {
         // TODO: improve lower_bound()
         return root->lower_bound(get_context(t), key);
@@ -130,11 +131,11 @@ Btree::find(Transaction& t, const onode_key_t& key) {
   );
 }
 
-btree_future<Btree::Cursor>
+btree_future<Cursor>
 Btree::lower_bound(Transaction& t, const onode_key_t& key) {
   return seastar::do_with(
     full_key_t<KeyT::HOBJ>(key),
-    [this, &t](auto& key) -> btree_future<Btree::Cursor> {
+    [this, &t](auto& key) -> btree_future<Cursor> {
       return get_root(t).safe_then([this, &t, &key](auto root) {
         return root->lower_bound(get_context(t), key);
       }).safe_then([this](auto result) {
@@ -144,11 +145,11 @@ Btree::lower_bound(Transaction& t, const onode_key_t& key) {
   );
 }
 
-btree_future<std::pair<Btree::Cursor, bool>>
+btree_future<std::pair<Cursor, bool>>
 Btree::insert(Transaction& t, const onode_key_t& key, const onode_t& value) {
   return seastar::do_with(
     full_key_t<KeyT::HOBJ>(key),
-    [this, &t, &value](auto& key) -> btree_future<std::pair<Btree::Cursor, bool>> {
+    [this, &t, &value](auto& key) -> btree_future<std::pair<Cursor, bool>> {
       return get_root(t).safe_then([this, &t, &key, &value](auto root) {
         return root->insert(get_context(t), key, value);
       }).safe_then([this](auto ret) {
@@ -164,14 +165,14 @@ btree_future<size_t> Btree::erase(Transaction& t, const onode_key_t& key) {
   return btree_ertr::make_ready_future<size_t>(0u);
 }
 
-btree_future<Btree::Cursor> Btree::erase(Btree::Cursor& pos) {
+btree_future<Cursor> Btree::erase(Cursor& pos) {
   // TODO
   return btree_ertr::make_ready_future<Cursor>(
       Cursor::make_end(this));
 }
 
-btree_future<Btree::Cursor>
-Btree::erase(Btree::Cursor& first, Btree::Cursor& last) {
+btree_future<Cursor>
+Btree::erase(Cursor& first, Cursor& last) {
   // TODO
   return btree_ertr::make_ready_future<Cursor>(
       Cursor::make_end(this));
