@@ -98,10 +98,6 @@ class InternalNodeT : public InternalNode,
       context_t, const search_position_t&, const full_key_t<KeyT::VIEW>&,
       Ref<Node>, Ref<Node>) override final;
 
-#ifndef NDEBUG
-  node_future<> test_clone_root(context_t, Super::URef&&) const override final;
-#endif
-
   static node_future<fresh_node_t> allocate(context_t, level_t, bool is_level_tail);
 
  private:
@@ -112,12 +108,11 @@ class InternalNodeT : public InternalNode,
 };
 class InternalNode0 final : public InternalNodeT<node_fields_0_t, InternalNode0> {
  public:
+#ifndef NDEBUG
+  node_future<> test_clone_root(context_t, RootNodeTracker&) const override final;
+#endif
   static node_future<Ref<InternalNode0>> allocate_root(
       context_t, level_t, laddr_t, Super::URef&&);
-#ifndef NDEBUG
-  static node_future<Ref<InternalNode0>> test_allocate_cloned_root(
-      context_t, level_t, Super::URef&&, const NodeExtent&);
-#endif
 };
 class InternalNode1 final : public InternalNodeT<node_fields_1_t, InternalNode1> {};
 class InternalNode2 final : public InternalNodeT<node_fields_2_t, InternalNode2> {};
@@ -143,10 +138,6 @@ class LeafNodeT: public LeafNode,
       context_t, const full_key_t<KeyT::HOBJ>&, const onode_t&,
       const search_position_t&, const MatchHistory&) override final;
 
-#ifndef NDEBUG
-  node_future<> test_clone_root(context_t, Super::URef&&) const override final;
-#endif
-
   static node_future<fresh_node_t> allocate(context_t, bool is_level_tail);
 
  private:
@@ -156,16 +147,19 @@ class LeafNodeT: public LeafNode,
 };
 class LeafNode0 final : public LeafNodeT<node_fields_0_t, LeafNode0> {
  public:
-  static node_future<> mkfs(context_t c, Super::URef&& super) {
+#ifndef NDEBUG
+  node_future<> test_clone_root(context_t, RootNodeTracker&) const override final;
+#endif
+  static node_future<> mkfs(context_t c, RootNodeTracker& root_tracker) {
     return allocate(c, true
-    ).safe_then([c, super = std::move(super)](auto fresh_node) mutable {
-      fresh_node.node->make_root_new(c, std::move(super));
+    ).safe_then([c, &root_tracker](auto fresh_node) {
+      auto root = fresh_node.node;
+      return c.nm.get_super(c.t, root_tracker
+      ).safe_then([c, root](auto&& super) {
+        root->make_root_new(c, std::move(super));
+      });
     });
   }
-#ifndef NDEBUG
-  static node_future<Ref<LeafNode0>> test_allocate_cloned_root(
-      context_t, Super::URef&&, const NodeExtent&);
-#endif
 };
 class LeafNode1 final : public LeafNodeT<node_fields_1_t, LeafNode1> {};
 class LeafNode2 final : public LeafNodeT<node_fields_2_t, LeafNode2> {};

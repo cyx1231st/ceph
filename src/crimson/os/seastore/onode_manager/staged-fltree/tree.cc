@@ -3,8 +3,6 @@
 
 #include "tree.h"
 
-#include <iostream>
-
 #include "node.h"
 #include "node_extent_manager.h"
 #include "stages/key_layout.h" // full_key_t<KeyT::HOBJ>
@@ -75,9 +73,7 @@ Btree::Btree(NodeExtentManagerURef&& _nm)
 Btree::~Btree() { assert(root_tracker->is_clean()); }
 
 btree_future<> Btree::mkfs(Transaction& t) {
-  return nm->get_super(t, *root_tracker).safe_then([this, &t](auto super) {
-    return Node::mkfs(get_context(t), std::move(super));
-  });
+  return Node::mkfs(get_context(t), *root_tracker);
 }
 
 btree_future<Btree::Cursor> Btree::begin(Transaction& t) {
@@ -202,12 +198,7 @@ btree_future<Ref<Node>> Btree::get_root(Transaction& t) {
   if (root) {
     return btree_ertr::make_ready_future<Ref<Node>>(root);
   } else {
-    return nm->get_super(t, *root_tracker).safe_then([this, &t](auto&& super) {
-      return Node::load_root(get_context(t), std::move(super));
-    }).safe_then([this, &t](auto root) {
-      assert(root == root_tracker->get_root(t));
-      return root;
-    });
+    return Node::load_root(get_context(t), *root_tracker);
   }
 }
 
@@ -220,13 +211,9 @@ btree_future<> Btree::test_clone_from(
   // Note: assume the tree to clone is tracked correctly in memory.
   // In some unit tests, parts of the tree are stubbed out that they
   // should not be loaded from NodeExtentManager.
-  return nm->get_super(t, *root_tracker
-  ).safe_then([this, &t, &t_from, &from](auto super) {
-    return from.get_root(t_from
-    ).safe_then([this, &t, super = std::move(super)](auto root) mutable {
-      // XXX: reverse
-      return root->test_clone_root(get_context(t), std::move(super));
-    });
+  return from.get_root(t_from
+  ).safe_then([this, &t](auto root_from) {
+    return root_from->test_clone_root(get_context(t), *root_tracker);
   });
 }
 

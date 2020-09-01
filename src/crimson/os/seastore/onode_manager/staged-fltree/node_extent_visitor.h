@@ -27,7 +27,6 @@ class NodeExtentT {
   NodeExtentT() = default;
   NodeExtentT(NodeExtentT&&) = default;
   NodeExtentT& operator=(NodeExtentT&&) = default;
-  const NodeExtent& test_get() const { return *extent; };
 
   const node_stage_t& read() const { return node_stage; }
   laddr_t get_laddr() const { return extent->get_laddr(); }
@@ -45,12 +44,6 @@ class NodeExtentT {
           reinterpret_cast<const FieldType*>(extent->get_read()));
       mut = extent->get_mutable();
     }
-  }
-
-  // TODO: workaround, must be removed
-  NodeExtentMutable& unreplayable_mutate() {
-    assert(state != state_t::PENDING_MUTATE);
-    return *mut;
   }
 
   // TODO: fix the absolute modifications
@@ -90,7 +83,7 @@ class NodeExtentT {
         insert_pos, insert_stage, insert_size);
   }
 
-  const void prepare_internal_split_replayable(
+  void prepare_internal_split_replayable(
       const laddr_t left_child_addr,
       const laddr_t right_child_addr,
       node_offset_t off_split_addr) {
@@ -98,6 +91,11 @@ class NodeExtentT {
     // TODO: encode params to recorder as delta
     return layout_t::prepare_internal_split(
         *mut, read(), left_child_addr, right_child_addr, off_split_addr);
+  }
+
+  void test_copy_to(NodeExtentMutable& to) const {
+    assert(extent->get_length() == to.get_length());
+    std::memcpy(to.get_write(), extent->get_read(), extent->get_length());
   }
 
   static NodeExtentT load(NodeExtent::Ref extent) {

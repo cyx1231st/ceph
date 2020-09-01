@@ -290,24 +290,6 @@ node_future<> I_NODE_T::apply_child_split(
   });
 }
 
-#ifndef NDEBUG
-template <typename FieldType, typename ConcreteType>
-node_future<> I_NODE_T::test_clone_root(
-    context_t c_other, Super::URef&& super_other) const {
-  assert(is_root());
-  assert(is_level_tail());
-  assert(field_type() == field_type_t::N0);
-  Ref<const I_NODE_T> this_ref = this;
-  return InternalNode0::test_allocate_cloned_root(
-      c_other, level(), std::move(super_other), this->extent.test_get()
-  ).safe_then([this_ref, this, c_other](auto clone) {
-    // In some unit tests, the children are stubbed out that they
-    // don't exist in NodeExtentManager, and are only tracked in memory.
-    return test_clone_children(c_other, clone);
-  });
-}
-#endif
-
 template <typename FieldType, typename ConcreteType>
 node_future<typename I_NODE_T::fresh_node_t> I_NODE_T::allocate(
     context_t c, level_t level, bool is_level_tail) {
@@ -320,7 +302,6 @@ node_future<typename I_NODE_T::fresh_node_t> I_NODE_T::allocate(
   });
 }
 
-// TODO: bootstrap extent
 node_future<Ref<InternalNode0>> InternalNode0::allocate_root(
     context_t c, level_t old_root_level,
     laddr_t old_root_addr, Super::URef&& _super) {
@@ -337,16 +318,24 @@ node_future<Ref<InternalNode0>> InternalNode0::allocate_root(
 }
 
 #ifndef NDEBUG
-node_future<Ref<InternalNode0>> InternalNode0::test_allocate_cloned_root(
-    context_t c, level_t level, Super::URef&& super,
-    const NodeExtent& from_extent) {
-  // NOTE: from_extent should be alive during allocate(...)
-  return allocate(c, level, true
-  ).safe_then([c, super = std::move(super), &from_extent](auto fresh_node) mutable {
-    auto clone = fresh_node.node;
-    clone->make_root_new(c, std::move(super));
-    fresh_node.mut.test_copy_from(from_extent);
-    return clone;
+node_future<> InternalNode0::test_clone_root(
+    context_t c_other, RootNodeTracker& tracker_other) const {
+  assert(is_root());
+  assert(is_level_tail());
+  Ref<const InternalNode0> this_ref = this;
+  return InternalNode0::allocate(c_other, level(), true
+  ).safe_then([this, c_other, &tracker_other](auto fresh_other) {
+    this->extent.test_copy_to(fresh_other.mut);
+    auto cloned_root = fresh_other.node;
+    return c_other.nm.get_super(c_other.t, tracker_other
+    ).safe_then([c_other, cloned_root](auto&& super_other) {
+      cloned_root->make_root_new(c_other, std::move(super_other));
+      return cloned_root;
+    });
+  }).safe_then([this_ref, this, c_other](auto cloned_root) {
+    // In some unit tests, the children are stubbed out that they
+    // don't exist in NodeExtentManager, and are only tracked in memory.
+    return test_clone_children(c_other, cloned_root);
   });
 }
 #endif
@@ -537,32 +526,6 @@ node_future<Ref<tree_cursor_t>> L_NODE_T::insert_value(
   });
 }
 
-#ifndef NDEBUG
-template <typename FieldType, typename ConcreteType>
-node_future<> L_NODE_T::test_clone_root(
-    context_t c_other, Super::URef&& super_other) const {
-  assert(this->is_root());
-  assert(is_level_tail());
-  assert(field_type() == field_type_t::N0);
-  Ref<const L_NODE_T> this_ref = this;
-  return LeafNode0::test_allocate_cloned_root(
-      c_other, std::move(super_other), this->extent.test_get()
-  ).safe_then([this_ref](auto clone) {});
-}
-
-node_future<Ref<LeafNode0>> LeafNode0::test_allocate_cloned_root(
-    context_t c, Super::URef&& super, const NodeExtent& from_extent) {
-  // NOTE: from_extent should be alive during allocate(...)
-  return allocate(c, true
-  ).safe_then([c, super = std::move(super), &from_extent](auto fresh_node) mutable {
-    auto clone = fresh_node.node;
-    clone->make_root_new(c, std::move(super));
-    fresh_node.mut.test_copy_from(from_extent);
-    return clone;
-  });
-}
-#endif
-
 template <typename FieldType, typename ConcreteType>
 node_future<typename L_NODE_T::fresh_node_t> L_NODE_T::allocate(
     context_t c, bool is_level_tail) {
@@ -573,5 +536,23 @@ node_future<typename L_NODE_T::fresh_node_t> L_NODE_T::allocate(
     return fresh_node_t{ret, fresh_extent.mut};
   });
 }
+
+#ifndef NDEBUG
+node_future<> LeafNode0::test_clone_root(
+    context_t c_other, RootNodeTracker& tracker_other) const {
+  assert(this->is_root());
+  assert(is_level_tail());
+  Ref<const LeafNode0> this_ref = this;
+  return LeafNode0::allocate(c_other, true
+  ).safe_then([this, c_other, &tracker_other](auto fresh_other) {
+    this->extent.test_copy_to(fresh_other.mut);
+    auto cloned_root = fresh_other.node;
+    return c_other.nm.get_super(c_other.t, tracker_other
+    ).safe_then([c_other, cloned_root](auto&& super_other) {
+      cloned_root->make_root_new(c_other, std::move(super_other));
+    });
+  }).safe_then([this_ref]{});
+}
+#endif
 
 }

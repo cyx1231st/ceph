@@ -14,13 +14,6 @@ class NodeExtent;
 // the wrapper of NodeExtent which is mutable and safe to be mutated
 class NodeExtentMutable {
  public:
-  /*
-  NodeExtentMutable(const NodeExtentMutable&) = default;
-  NodeExtentMutable(NodeExtentMutable&&) = default;
-  NodeExtentMutable& operator=(const NodeExtentMutable&) = default;
-  NodeExtentMutable& operator=(NodeExtentMutable&&) = default;
-  */
-
   void copy_in_absolute(void* dst, const void* src, extent_len_t len) {
     assert((char*)dst >= get_write());
     assert((char*)dst + len <= buf_upper_bound());
@@ -65,14 +58,14 @@ class NodeExtentMutable {
   }
 
   char* get_write();
-
-  void test_copy_from(const NodeExtent&);
+  extent_len_t get_length() const;
 
  private:
   explicit NodeExtentMutable(NodeExtent&);
   const char* get_read() const;
   const char* buf_upper_bound() const;
 
+  // XXX: hold by reference?
   NodeExtent* p_extent;
 
   friend class NodeExtent;

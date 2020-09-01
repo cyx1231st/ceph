@@ -98,14 +98,16 @@ class Node
   virtual std::ostream& dump(std::ostream&) const = 0;
   virtual std::ostream& dump_brief(std::ostream&) const = 0;
 
-  static node_future<> mkfs(context_t, Super::URef&&);
+  static node_future<> mkfs(context_t, RootNodeTracker&);
 
-  static node_future<Ref<Node>> load_root(context_t, Super::URef&&);
+  static node_future<Ref<Node>> load_root(context_t, RootNodeTracker&);
 
 #ifndef NDEBUG
   virtual void test_make_destructable(
       context_t, NodeExtentMutable&, Super::URef&&) = 0;
-  virtual node_future<> test_clone_root(context_t, Super::URef&&) const = 0;
+  virtual node_future<> test_clone_root(context_t, RootNodeTracker&) const {
+    assert(false && "impossible path");
+  }
   virtual node_future<> test_clone_non_root(context_t, Ref<InternalNode>) const = 0;
 #endif
 

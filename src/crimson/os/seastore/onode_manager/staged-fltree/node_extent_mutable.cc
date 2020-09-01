@@ -21,13 +21,12 @@ char* NodeExtentMutable::get_write() {
   return p_extent->get_bptr().c_str();
 }
 
-void NodeExtentMutable::test_copy_from(const NodeExtent& from) {
-  assert(p_extent->get_length() == from.get_length());
-  std::memcpy(get_write(), from.get_read(), p_extent->get_length());
+extent_len_t NodeExtentMutable::get_length() const {
+  return p_extent->get_length();
 }
 
 const char* NodeExtentMutable::buf_upper_bound() const {
-  return get_read() + p_extent->get_length();
+  return get_read() + get_length();
 }
 
 }

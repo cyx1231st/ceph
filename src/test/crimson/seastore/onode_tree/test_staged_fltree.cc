@@ -564,7 +564,7 @@ TEST_F(b_dummy_tree_test_t, 4_split_leaf_node)
   });
 }
 
-class ChildPool {
+class DummyChildPool {
   class DummyChild final : public Node {
    public:
     virtual ~DummyChild() {
@@ -624,14 +624,14 @@ class ChildPool {
     }
 
     static Ref<DummyChild> create(
-        const std::set<onode_key_t>& keys, bool is_level_tail, ChildPool& pool) {
+        const std::set<onode_key_t>& keys, bool is_level_tail, DummyChildPool& pool) {
       static laddr_t seed = 0;
       return new DummyChild(keys, is_level_tail, seed++, pool);
     }
 
     static node_future<Ref<DummyChild>> create_initial(
         context_t c, const std::set<onode_key_t>& keys,
-        ChildPool& pool, RootNodeTracker& root_tracker) {
+        DummyChildPool& pool, RootNodeTracker& root_tracker) {
       auto initial = create(keys, true, pool);
       return c.nm.get_super(c.t, root_tracker
       ).safe_then([c, &pool, initial](auto super) {
@@ -644,7 +644,7 @@ class ChildPool {
 
     static Ref<DummyChild> create_clone(
         const std::set<onode_key_t>& keys, bool is_level_tail,
-        laddr_t addr, ChildPool& pool) {
+        laddr_t addr, DummyChildPool& pool) {
       return new DummyChild(keys, is_level_tail, addr, pool);
     }
 
@@ -670,8 +670,6 @@ class ChildPool {
     void test_make_destructable(
         context_t, NodeExtentMutable&, Super::URef&&) override {
       assert(false && "impossible path"); }
-    node_future<> test_clone_root(context_t, Super::URef&&) const override {
-      assert(false && "impossible path"); }
     node_future<> test_clone_non_root(
         context_t, Ref<InternalNode> new_parent) const override {
       assert(!is_root());
@@ -685,7 +683,7 @@ class ChildPool {
 
    private:
     DummyChild(const std::set<onode_key_t>& keys,
-               bool is_level_tail, laddr_t laddr, ChildPool& pool)
+               bool is_level_tail, laddr_t laddr, DummyChildPool& pool)
         : keys{keys}, _is_level_tail{is_level_tail}, _laddr{laddr}, pool{pool} {
       std::tie(key_view, p_mem_key_view) = build_key_view(*keys.crbegin());
       pool.track_node(this);
@@ -704,7 +702,7 @@ class ChildPool {
     std::set<onode_key_t> keys;
     bool _is_level_tail;
     laddr_t _laddr;
-    ChildPool& pool;
+    DummyChildPool& pool;
 
     key_view_t key_view;
     void* p_mem_key_view;
@@ -715,8 +713,8 @@ class ChildPool {
   template <class... ValuesT>
   using node_future = Node::node_future<ValuesT...>;
 
-  ChildPool() = default;
-  ~ChildPool() { reset(); }
+  DummyChildPool() = default;
+  ~DummyChildPool() { reset(); }
 
   node_future<> build_tree(const std::set<onode_key_t>& keys) {
     reset();
@@ -755,7 +753,7 @@ class ChildPool {
   seastar::future<> test_split(onode_key_t key, search_position_t pos) {
     return seastar::async([this, key, pos] {
       logger().info("insert {} at {}:", key, pos);
-      ChildPool pool_clone;
+      DummyChildPool pool_clone;
       pool_clone_in_progress = &pool_clone;
       auto ref_nm = NodeExtentManager::create_dummy();
       pool_clone.p_nm = ref_nm.get();
@@ -817,7 +815,7 @@ class ChildPool {
   std::random_device rd;
   std::set<Ref<DummyChild>> splitable_nodes;
 
-  ChildPool* pool_clone_in_progress = nullptr;
+  DummyChildPool* pool_clone_in_progress = nullptr;
 };
 
 struct c_dummy_children_test_t : public seastar_test_suite_t {};
@@ -825,7 +823,7 @@ struct c_dummy_children_test_t : public seastar_test_suite_t {};
 TEST_F(c_dummy_children_test_t, 5_split_internal_node)
 {
   run_async([this] {
-    ChildPool pool;
+    DummyChildPool pool;
     {
       logger().info("\n---------------------------------------------"
                     "\nbefore internal node insert:\n");

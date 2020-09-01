@@ -115,19 +115,24 @@ Node::insert(context_t c, const key_hobj_t& key, const onode_t& value) {
   );
 }
 
-node_future<> Node::mkfs(context_t c, Super::URef&& super) {
-  return LeafNode0::mkfs(c, std::move(super));
+node_future<> Node::mkfs(context_t c, RootNodeTracker& root_tracker) {
+  return LeafNode0::mkfs(c, root_tracker);
 }
 
 node_future<Ref<Node>>
-Node::load_root(context_t c, Super::URef&& _super) {
-  auto root_addr = _super->get_root_laddr();
-  assert(root_addr != L_ADDR_NULL);
-  return load_node(c, root_addr, true
-  ).safe_then([_super = std::move(_super)](auto root) mutable {
-    assert(root->field_type() == field_type_t::N0);
-    root->as_root(std::move(_super));
-    return node_ertr::make_ready_future<Ref<Node>>(root);
+Node::load_root(context_t c, RootNodeTracker& root_tracker) {
+  return c.nm.get_super(c.t, root_tracker
+  ).safe_then([c, &root_tracker](auto&& _super) {
+    auto root_addr = _super->get_root_laddr();
+    assert(root_addr != L_ADDR_NULL);
+    return load_node(c, root_addr, true
+    ).safe_then([c, _super = std::move(_super),
+                 &root_tracker](auto root) mutable {
+      assert(root->field_type() == field_type_t::N0);
+      root->as_root(std::move(_super));
+      assert(root == root_tracker.get_root(c.t));
+      return node_ertr::make_ready_future<Ref<Node>>(root);
+    });
   });
 }
 

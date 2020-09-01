@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include <optional>
 #include <ostream>
 
 #include "crimson/common/type_helpers.h"
@@ -68,13 +67,12 @@ class Btree {
 
  private:
   context_t get_context(Transaction& t) { return {*nm, t}; }
-
   btree_future<Ref<Node>> get_root(Transaction& t);
 
   NodeExtentManagerURef nm;
   RootNodeTrackerURef root_tracker;
 
-  friend class ChildPool;
+  friend class DummyChildPool;
 };
 
 class tree_cursor_t;
