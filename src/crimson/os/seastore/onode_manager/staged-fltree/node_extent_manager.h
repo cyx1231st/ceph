@@ -5,6 +5,7 @@
 
 #include "crimson/common/type_helpers.h"
 #include "crimson/os/seastore/cached_extent.h"
+#include "crimson/os/seastore/transaction_manager.h"
 
 #include "fwd.h"
 #include "super.h"
@@ -45,6 +46,7 @@ class NodeExtent : public LogicalCachedExtent {
   friend class NodeExtentMutable;
 };
 
+using crimson::os::seastore::TransactionManager;
 class NodeExtentManager {
  public:
   virtual ~NodeExtentManager() = default;
@@ -63,7 +65,8 @@ class NodeExtentManager {
   virtual tm_future<Super::URef> get_super(Transaction&, RootNodeTracker&) = 0;
 
   static NodeExtentManagerURef create_dummy();
-  static NodeExtentManagerURef create_seastore();
+  static NodeExtentManagerURef create_seastore(
+      TransactionManager& tm, laddr_t min_laddr = L_ADDR_MIN);
 };
 
 }

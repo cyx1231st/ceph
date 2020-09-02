@@ -19,6 +19,7 @@ using crimson::os::seastore::Transaction;
 using crimson::os::seastore::TransactionRef;
 using crimson::os::seastore::make_transaction;
 using crimson::os::seastore::laddr_t;
+using crimson::os::seastore::L_ADDR_MIN;
 using crimson::os::seastore::L_ADDR_NULL;
 using crimson::os::seastore::extent_len_t;
 

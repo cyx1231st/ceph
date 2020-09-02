@@ -43,6 +43,8 @@ std::ostream &operator<<(std::ostream &out, extent_types_t t)
     return out << "LADDR_INTERNAL";
   case extent_types_t::LADDR_LEAF:
     return out << "LADDR_LEAF";
+  case extent_types_t::ONODE_BLOCK_STAGED:
+    return out << "ONODE_BLOCK_STAGED";
   case extent_types_t::TEST_BLOCK:
     return out << "TEST_BLOCK";
   case extent_types_t::TEST_BLOCK_PHYSICAL:
