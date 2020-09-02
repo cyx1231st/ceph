@@ -15,24 +15,28 @@
 
 namespace crimson::os::seastore::onode {
 
-class NodeExtentMutable;
-class NodeExtentManager;
-using NodeExtentManagerURef = std::unique_ptr<NodeExtentManager>;
-class RootNodeTracker;
-using RootNodeTrackerURef = std::unique_ptr<RootNodeTracker>;
 using crimson::os::seastore::Transaction;
 using crimson::os::seastore::TransactionRef;
 using crimson::os::seastore::make_transaction;
-struct context_t {
-  NodeExtentManager& nm;
-  Transaction& t;
-};
-
 using crimson::os::seastore::laddr_t;
 using crimson::os::seastore::L_ADDR_NULL;
 using crimson::os::seastore::extent_len_t;
 
+class NodeExtentManager;
+class RootNodeTracker;
+struct context_t {
+  NodeExtentManager& nm;
+  Transaction& t;
+};
+using NodeExtentManagerURef = std::unique_ptr<NodeExtentManager>;
+using RootNodeTrackerURef = std::unique_ptr<RootNodeTracker>;
+
 constexpr auto INDEX_END = std::numeric_limits<size_t>::max();
+
+// TODO: decide by NODE_BLOCK_SIZE
+using node_offset_t = uint16_t;
+constexpr node_offset_t DISK_BLOCK_SIZE = 1u << 12;
+constexpr node_offset_t NODE_BLOCK_SIZE = DISK_BLOCK_SIZE * 1u;
 
 enum class MatchKindBS : int8_t { NE = -1, EQ = 0 };
 

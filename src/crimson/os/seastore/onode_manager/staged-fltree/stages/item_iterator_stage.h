@@ -9,6 +9,8 @@
 
 namespace crimson::os::seastore::onode {
 
+class NodeExtentMutable;
+
 /*
  * internal/leaf node N0, N1
  *

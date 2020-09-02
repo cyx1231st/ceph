@@ -13,6 +13,7 @@
 
 namespace crimson::os::seastore::onode {
 
+class NodeExtentMutable;
 class key_view_t;
 class key_hobj_t;
 enum class KeyT { VIEW, HOBJ };

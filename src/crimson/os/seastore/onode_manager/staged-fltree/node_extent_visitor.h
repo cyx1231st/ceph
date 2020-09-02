@@ -13,6 +13,7 @@ class NodeExtentT {
   using layout_t = NodeLayoutReplayableT<FieldType, NODE_TYPE>;
   using node_stage_t = typename layout_t::node_stage_t;
   using position_t = typename layout_t::position_t;
+  using StagedIterator = typename layout_t::StagedIterator;
   using value_t = typename layout_t::value_t;
   static constexpr auto FIELD_TYPE = layout_t::FIELD_TYPE;
 
@@ -46,7 +47,7 @@ class NodeExtentT {
     }
   }
 
-  // TODO: fix the absolute modifications
+  // TODO: translate absolute modifications to relative
   template <KeyT KT>
   const value_t* insert_replayable(
       const full_key_t<KT>& key,
@@ -61,8 +62,7 @@ class NodeExtentT {
         insert_pos, insert_stage, insert_size);
   }
 
-  void split_replayable(
-      typename STAGE_T::StagedIterator& split_at) {
+  void split_replayable(StagedIterator& split_at) {
     assert(state != state_t::PENDING_MUTATE);
     // TODO: encode params to recorder as delta
     layout_t::split(*mut, read(), split_at);
@@ -70,7 +70,7 @@ class NodeExtentT {
 
   template <KeyT KT>
   const value_t* split_insert_replayable(
-      typename STAGE_T::StagedIterator& split_at,
+      StagedIterator& split_at,
       const full_key_t<KT>& key,
       const value_t& value,
       position_t& insert_pos,
@@ -86,11 +86,11 @@ class NodeExtentT {
   void prepare_internal_split_replayable(
       const laddr_t left_child_addr,
       const laddr_t right_child_addr,
-      node_offset_t off_split_addr) {
+      laddr_t* p_split_addr) {
     assert(state != state_t::PENDING_MUTATE);
     // TODO: encode params to recorder as delta
     return layout_t::prepare_internal_split(
-        *mut, read(), left_child_addr, right_child_addr, off_split_addr);
+        *mut, read(), left_child_addr, right_child_addr, p_split_addr);
   }
 
   void test_copy_to(NodeExtentMutable& to) const {

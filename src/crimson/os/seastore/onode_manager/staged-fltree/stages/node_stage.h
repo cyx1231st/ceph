@@ -9,6 +9,8 @@
 
 namespace crimson::os::seastore::onode {
 
+class NodeExtentMutable;
+
 template <typename FieldType, node_type_t _NODE_TYPE>
 class node_extent_t {
  public:

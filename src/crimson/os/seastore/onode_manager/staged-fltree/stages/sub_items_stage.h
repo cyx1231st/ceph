@@ -11,6 +11,8 @@
 
 namespace crimson::os::seastore::onode {
 
+class NodeExtentMutable;
+
 struct internal_sub_item_t {
   const snap_gen_t& get_key() const { return key; }
   #pragma GCC diagnostic ignored "-Waddress-of-packed-member"

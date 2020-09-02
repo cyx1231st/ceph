@@ -35,6 +35,7 @@ namespace crimson::os::seastore::onode {
 
 class LeafNode;
 class InternalNode;
+class NodeExtentMutable;
 
 class tree_cursor_t final
   : public boost::intrusive_ref_counter<
@@ -103,7 +104,6 @@ class Node
 
   static node_future<Ref<Node>> load_root(context_t, RootNodeTracker&);
 
-#ifndef NDEBUG
   virtual void test_make_destructable(
       context_t, NodeExtentMutable&, Super::URef&&) = 0;
   virtual node_future<> test_clone_root(context_t, RootNodeTracker&) const {
@@ -112,7 +112,6 @@ class Node
   virtual node_future<> test_clone_non_root(context_t, Ref<InternalNode>) const {
     assert(false && "impossible path");
   }
-#endif
 
  public: // used by node_impl.h, XXX: protected?
   virtual bool is_level_tail() const = 0;
@@ -249,7 +248,6 @@ class InternalNode : virtual public Node {
 #endif
   }
 
-#ifndef NDEBUG
   node_future<> test_clone_children(
       context_t c_other, Ref<InternalNode> clone) const {
     Ref<const InternalNode> this_ref = this;
@@ -262,7 +260,6 @@ class InternalNode : virtual public Node {
       }
     );
   }
-#endif
 
  private:
   virtual node_future<> apply_child_split(

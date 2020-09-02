@@ -18,6 +18,7 @@ template <typename FieldType, node_type_t NODE_TYPE>
 struct NodeLayoutReplayableT {
   using node_stage_t = node_extent_t<FieldType, NODE_TYPE>;
   using position_t = typename STAGE_T::position_t;
+  using StagedIterator = typename STAGE_T::StagedIterator;
   using value_t = value_type_t<NODE_TYPE>;
   static constexpr auto FIELD_TYPE = FieldType::FIELD_TYPE;
 
@@ -38,7 +39,7 @@ struct NodeLayoutReplayableT {
   static void split(
       NodeExtentMutable& mut,
       const node_stage_t& node_stage,
-      typename STAGE_T::StagedIterator& split_at) {
+      StagedIterator& split_at) {
     node_stage_t::update_is_level_tail(mut, node_stage, false);
     STAGE_T::trim(mut, split_at);
   }
@@ -47,7 +48,7 @@ struct NodeLayoutReplayableT {
   static const value_t* split_insert(
       NodeExtentMutable& mut,
       const node_stage_t& node_stage,
-      typename STAGE_T::StagedIterator& split_at,
+      StagedIterator& split_at,
       const full_key_t<KT>& key,
       const value_t& value,
       position_t& insert_pos,
@@ -67,10 +68,8 @@ struct NodeLayoutReplayableT {
       const node_stage_t& node_stage,
       const laddr_t left_child_addr,
       const laddr_t right_child_addr,
-      node_offset_t off_split_addr) {
+      laddr_t* p_split_addr) {
     assert(NODE_TYPE == node_type_t::INTERNAL);
-    auto p_split_addr = reinterpret_cast<laddr_t*>(
-        mut.get_write() + off_split_addr);
     assert(*p_split_addr == left_child_addr);
     mut.copy_in_absolute(p_split_addr, right_child_addr);
   }

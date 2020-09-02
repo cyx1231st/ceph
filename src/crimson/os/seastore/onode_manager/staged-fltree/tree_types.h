@@ -4,20 +4,10 @@
 #pragma once
 
 #include <ostream>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
-
-#include "crimson/common/type_helpers.h"
-
-#include "fwd.h"
 
 namespace crimson::os::seastore::onode {
 
-// TODO: decide by NODE_BLOCK_SIZE
-using node_offset_t = uint16_t;
-constexpr node_offset_t DISK_BLOCK_SIZE = 1u << 12;
-constexpr node_offset_t NODE_BLOCK_SIZE = DISK_BLOCK_SIZE * 1u;
-
-// might be managed by an Onode class
+// TODO: replace
 struct onode_t {
   // onode should be smaller than a node
   uint16_t size; // address up to 64 KiB sized node

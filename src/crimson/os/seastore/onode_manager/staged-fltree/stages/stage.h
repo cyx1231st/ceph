@@ -24,7 +24,8 @@ struct search_result_bs_t {
 };
 template <typename FGetKey>
 search_result_bs_t binary_search(
-    const full_key_t<KeyT::HOBJ>& key, size_t begin, size_t end, FGetKey&& f_get_key) {
+    const full_key_t<KeyT::HOBJ>& key,
+    size_t begin, size_t end, FGetKey&& f_get_key) {
   assert(begin <= end);
   while (begin < end) {
     auto total = begin + end;
@@ -71,7 +72,7 @@ constexpr match_stat_t MSTAT_NE0 =  0; // key == index [pool/shard crush ns/oid]
 constexpr match_stat_t MSTAT_NE1 =  1; // key == index [pool/shard crush]; key < index [ns/oid]
 constexpr match_stat_t MSTAT_NE2 =  2; // key < index [pool/shard crush ns/oid] ||
                                        // key == index [pool/shard]; key < index [crush]
-constexpr match_stat_t MSTAT_NE3 =  3;  // key < index [pool/shard]
+constexpr match_stat_t MSTAT_NE3 =  3; // key < index [pool/shard]
 constexpr match_stat_t MSTAT_MIN = MSTAT_END;
 constexpr match_stat_t MSTAT_MAX = MSTAT_NE3;
 
@@ -95,7 +96,10 @@ inline bool matchable(field_type_t type, match_stat_t mstat) {
   return mstat + to_unsigned(type) < 4;
 }
 
-inline void assert_mstat(const full_key_t<KeyT::HOBJ> & key, const full_key_t<KeyT::VIEW>& index, match_stat_t mstat) {
+inline void assert_mstat(
+    const full_key_t<KeyT::HOBJ>& key,
+    const full_key_t<KeyT::VIEW>& index,
+    match_stat_t mstat) {
   assert(mstat >= MSTAT_MIN && mstat <= MSTAT_NE2);
   // key < index ...
   switch (mstat) {
@@ -152,8 +156,8 @@ struct staged_result_t {
     return {staged_position_t<STAGE>::end(), nullptr, MSTAT_END};
   }
   template <typename T = me_t>
-  static std::enable_if_t<STAGE != STAGE_BOTTOM, T>
-  from_nxt(size_t index, const staged_result_t<NODE_TYPE, STAGE - 1>& nxt_stage_result) {
+  static std::enable_if_t<STAGE != STAGE_BOTTOM, T> from_nxt(
+      size_t index, const staged_result_t<NODE_TYPE, STAGE - 1>& nxt_stage_result) {
     return {{index, nxt_stage_result.position},
             nxt_stage_result.p_value,
             nxt_stage_result.mstat};
@@ -870,8 +874,7 @@ struct staged {
    * Lookup internals (hide?)
    */
 
-  static result_t
-  smallest_result(const iterator_t& iter) {
+  static result_t smallest_result(const iterator_t& iter) {
     static_assert(!IS_BOTTOM);
     assert(!iter.is_end());
     auto pos_smallest = NXT_STAGE_T::position_t::begin();
@@ -880,8 +883,8 @@ struct staged {
     return result_t{{iter.index(), pos_smallest}, value_ptr, STAGE};
   }
 
-  static result_t
-  nxt_lower_bound(const full_key_t<KeyT::HOBJ>& key, iterator_t& iter, MatchHistory& history) {
+  static result_t nxt_lower_bound(
+      const full_key_t<KeyT::HOBJ>& key, iterator_t& iter, MatchHistory& history) {
     static_assert(!IS_BOTTOM);
     assert(!iter.is_end());
     auto nxt_container = iter.get_nxt_container();
@@ -897,8 +900,8 @@ struct staged {
     }
   }
 
-  static void
-  lookup_largest(const container_t& container, position_t& position, const value_t*& p_value) {
+  static void lookup_largest(
+      const container_t& container, position_t& position, const value_t*& p_value) {
     auto iter = iterator_t(container);
     iter.seek_last();
     position.index = iter.index();
@@ -910,7 +913,8 @@ struct staged {
     }
   }
 
-  static void lookup_largest_index(const container_t& container, full_key_t<KeyT::VIEW>& output) {
+  static void lookup_largest_index(
+      const container_t& container, full_key_t<KeyT::VIEW>& output) {
     auto iter = iterator_t(container);
     iter.seek_last();
     output.set(iter.get_key());
@@ -920,7 +924,8 @@ struct staged {
     }
   }
 
-  static const value_t* get_p_value(const container_t& container, const position_t& position) {
+  static const value_t* get_p_value(
+      const container_t& container, const position_t& position) {
     auto iter = iterator_t(container);
     iter.seek_at(position.index);
     if constexpr (!IS_BOTTOM) {
@@ -932,7 +937,9 @@ struct staged {
   }
 
   static void get_key_view(
-      const container_t& container, const position_t& position, full_key_t<KeyT::VIEW>& output) {
+      const container_t& container,
+      const position_t& position,
+      full_key_t<KeyT::VIEW>& output) {
     auto iter = iterator_t(container);
     iter.seek_at(position.index);
     output.set(iter.get_key());
@@ -942,8 +949,10 @@ struct staged {
     }
   }
 
-  static result_t
-  lower_bound(const container_t& container, const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
+  static result_t lower_bound(
+      const container_t& container,
+      const full_key_t<KeyT::HOBJ>& key,
+      MatchHistory& history) {
     bool exclude_last = false;
     if (history.get<STAGE>().has_value()) {
       if (*history.get<STAGE>() == MatchKindCMP::EQ) {
@@ -1069,7 +1078,8 @@ struct staged {
         } else {
           // insert into the current index
           auto nxt_container = iter.get_nxt_container();
-          return NXT_STAGE_T::evaluate_insert(nxt_container, key, value, position.nxt, true);
+          return NXT_STAGE_T::evaluate_insert(
+              nxt_container, key, value, position.nxt, true);
         }
       } else {
         assert(is_current && match == MatchKindCMP::NE);
@@ -1098,7 +1108,8 @@ struct staged {
       } else {
         // insert into the previous index
         auto nxt_container = iter.get_nxt_container();
-        return NXT_STAGE_T::evaluate_insert(nxt_container, key, value, position.nxt, false);
+        return NXT_STAGE_T::evaluate_insert(
+            nxt_container, key, value, position.nxt, false);
       }
     }
   }
@@ -1281,7 +1292,9 @@ struct staged {
    */
 
   static void lookup_largest_normalized(
-      const container_t& container, search_position_t& position, const value_t*& p_value) {
+      const container_t& container,
+      search_position_t& position,
+      const value_t*& p_value) {
     if constexpr (STAGE == STAGE_LEFT) {
       lookup_largest(container, position, p_value);
       return;
@@ -1302,7 +1315,9 @@ struct staged {
   }
 
   static staged_result_t<NODE_TYPE, STAGE_TOP> lower_bound_normalized(
-      const container_t& container, const full_key_t<KeyT::HOBJ>& key, MatchHistory& history) {
+      const container_t& container,
+      const full_key_t<KeyT::HOBJ>& key,
+      MatchHistory& history) {
     auto&& result = lower_bound(container, key, history);
 #ifndef NDEBUG
     if (result.is_end()) {
@@ -1317,7 +1332,8 @@ struct staged {
       // currently only internal node checks mstat
       if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
         if (result.mstat == MSTAT_NE2) {
-          auto cmp = compare_to<KeyT::HOBJ>(key, container[result.position.index].shard_pool);
+          auto cmp = compare_to<KeyT::HOBJ>(
+              key, container[result.position.index].shard_pool);
           assert(cmp != MatchKindCMP::PO);
           if (cmp != MatchKindCMP::EQ) {
             result.mstat = MSTAT_NE3;
@@ -1626,7 +1642,8 @@ struct staged {
         }
       }
     }
-    void append(const full_key_t<KT>& key, const value_t& value, const value_t*& p_value) {
+    void append(const full_key_t<KT>& key,
+                const value_t& value, const value_t*& p_value) {
       assert(!require_wrap_nxt);
       if constexpr (!IS_BOTTOM) {
         auto& nxt = open_nxt(key);

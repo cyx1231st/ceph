@@ -8,6 +8,8 @@
 
 namespace crimson::os::seastore::onode {
 
+class NodeExtentMutable;
+
 struct node_header_t {
   static constexpr unsigned FIELD_TYPE_BITS = 6u;
   static_assert(static_cast<uint8_t>(field_type_t::_MAX) <= 1u << FIELD_TYPE_BITS);

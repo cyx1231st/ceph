@@ -7,6 +7,7 @@
 
 #include "crimson/common/type_helpers.h"
 
+#include "fwd.h"
 #include "tree_types.h"
 
 namespace crimson::os::seastore::onode {
