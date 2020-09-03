@@ -26,8 +26,16 @@ class NodeExtentT {
  public:
   // TODO: remove
   NodeExtentT() = default;
-  NodeExtentT(NodeExtentT&&) = default;
-  NodeExtentT& operator=(NodeExtentT&&) = default;
+  NodeExtentT(NodeExtentT&& other) noexcept {
+    *this = std::move(other);
+  }
+  NodeExtentT& operator=(NodeExtentT&& other) noexcept {
+    extent = std::move(other.extent);
+    state = std::move(other.state);
+    node_stage = std::move(other.node_stage);
+    mut.emplace(*other.mut);
+    return *this;
+  }
 
   const node_stage_t& read() const { return node_stage; }
   laddr_t get_laddr() const { return extent->get_laddr(); }
@@ -43,7 +51,7 @@ class NodeExtentT {
       state = state_t::RECORDING;
       node_stage = node_stage_t(
           reinterpret_cast<const FieldType*>(extent->get_read()));
-      mut = extent->get_mutable();
+      mut.emplace(extent->get_mutable());
     }
   }
 
@@ -138,10 +146,12 @@ class NodeExtentT {
       : extent{extent}, state{state},
         node_stage{reinterpret_cast<const FieldType*>(extent->get_read())} {
     if (state == state_t::NO_RECORDING) {
-      mut = extent->get_mutable();
+      assert(!mut.has_value());
+      mut.emplace(extent->get_mutable());
       // TODO: recorder = nullptr;
     } else if (state == state_t::RECORDING) {
-      mut = extent->get_mutable();
+      assert(!mut.has_value());
+      mut.emplace(extent->get_mutable());
       // TODO: get recorder from extent
     } else if (state == state_t::PENDING_MUTATE) {
       // TODO: recorder = nullptr;

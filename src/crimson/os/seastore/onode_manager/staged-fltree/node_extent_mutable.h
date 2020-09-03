@@ -65,8 +65,7 @@ class NodeExtentMutable {
   const char* get_read() const;
   const char* buf_upper_bound() const;
 
-  // XXX: hold by reference?
-  NodeExtent* p_extent;
+  NodeExtent& extent;
 
   friend class NodeExtent;
 };

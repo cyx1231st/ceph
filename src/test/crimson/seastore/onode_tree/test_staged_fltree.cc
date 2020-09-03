@@ -151,14 +151,14 @@ TEST_F(a_basic_test_t, 2_node_sizes)
     oss << "\nallocated nodes:";
     auto node_tracker = RootNodeTracker::create(c.nm.is_read_isolated());
     assert(node_tracker->is_clean());
-    for (auto iter = nodes.begin(); iter != nodes.end();) {
+    for (auto iter = nodes.begin(); iter != nodes.end(); ++iter) {
       auto& ref_node = iter->first;
       auto& mut = iter->second;
       oss << "\n  " << *ref_node;
       ref_node->test_make_destructable(
           c, mut, c.nm.get_super(c.t, *node_tracker).unsafe_get0());
       assert(!node_tracker->is_clean());
-      iter = nodes.erase(iter);
+      iter->first.reset();
       assert(node_tracker->is_clean());
     }
     logger().info("{}", oss.str());
