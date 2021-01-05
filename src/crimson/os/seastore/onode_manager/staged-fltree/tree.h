@@ -80,6 +80,7 @@ class Btree {
   NodeExtentManagerURef nm;
   RootNodeTrackerURef root_tracker;
 
+  friend class Value;
   friend class DummyChildPool;
 };
 inline std::ostream& operator<<(std::ostream& os, const Btree& tree) {

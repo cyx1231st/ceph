@@ -17,6 +17,7 @@
 
 #include "test/crimson/gtest_seastar.h"
 #include "test/crimson/seastore/transaction_manager_test_state.h"
+#include "test_value.h"
 
 using namespace crimson::os::seastore::onode;
 

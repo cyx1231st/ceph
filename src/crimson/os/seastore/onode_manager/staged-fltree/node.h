@@ -15,6 +15,7 @@
 #include "stages/stage_types.h"
 #include "super.h"
 #include "tree_types.h"
+#include "value.h"
 
 /**
  * Tree example (2 levels):
@@ -62,12 +63,21 @@ class tree_cursor_t final
   : public boost::intrusive_ref_counter<
            tree_cursor_t, boost::thread_unsafe_counter> {
  public:
-  // public to Btree
+  using ertr = crimson::errorator<
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::invarg,
+    crimson::ct_error::enoent,
+    crimson::ct_error::erange>;
+  template <class ValueT=void>
+  using future = ertr::future<ValueT>;
+
   ~tree_cursor_t();
   tree_cursor_t(const tree_cursor_t&) = delete;
   tree_cursor_t(tree_cursor_t&&) = delete;
   tree_cursor_t& operator=(const tree_cursor_t&) = delete;
   tree_cursor_t& operator=(tree_cursor_t&&) = delete;
+
+  // public to Btree
 
   /**
    * is_end
@@ -83,6 +93,27 @@ class tree_cursor_t final
 
   /// Returns the value pointer in tree if it is not an end cursor.
   const onode_t* get_p_value() const;
+
+  // public to Value
+
+  const value_header_t* read_value_header() const {
+    return nullptr;
+  }
+
+  std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
+  prepare_mutate_value_payload(context_t) {
+    return {nullptr, nullptr};
+  }
+
+  /// Extend the size of value
+  future<> extend_value(context_t, value_size_t) {
+    return ertr::now();
+  }
+
+  /// Trim and shrink the size of value
+  future<> trim_value(context_t, value_size_t) {
+    return ertr::now();
+  }
 
  private:
   tree_cursor_t(Ref<LeafNode>, const search_position_t&);
@@ -110,6 +141,8 @@ class tree_cursor_t final
   // cached information
   mutable std::optional<key_view_t> key_view;
   mutable const onode_t* p_value;
+
+  // TODO: invalidate by leaf node operations
   mutable layout_version_t node_version;
 
   friend class LeafNode;
