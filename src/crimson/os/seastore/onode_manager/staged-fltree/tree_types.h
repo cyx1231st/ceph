@@ -37,6 +37,7 @@ struct onode_t {
   }
   static std::unique_ptr<char[]> allocate(const onode_t& config) {
     ceph_assert(config.size >= sizeof(onode_t) + sizeof(uint32_t));
+    ceph_assert(config.size % 8 == 0);
 
     auto ret = std::make_unique<char[]>(config.size);
     char* p_mem = ret.get();

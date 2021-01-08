@@ -529,7 +529,7 @@ TEST_F(c_dummy_test_t, 4_split_leaf_node)
       test.split(make_ghobj(5, 5, 5, "ns3", "oid3", 3, 3), onode0,
                  {2u, 2u, false, InsertType::LAST}).get0();
 
-      auto& onode1 = test.create_onode(316);
+      auto& onode1 = test.create_onode(320);
       logger().info("\n---------------------------------------------"
                     "\nsplit at stage 1; insert to left middle at stage 0, 1, 2, 1, 0\n");
       test.split(make_ghobj(2, 2, 2, "ns4", "oid4", 5, 5), onode1,
@@ -552,7 +552,7 @@ TEST_F(c_dummy_test_t, 4_split_leaf_node)
       test.split(make_ghobj(3, 3, 3, "ns3", "oid3", 1, 1), onode1,
                  {1u, 0u, true, InsertType::LAST}).get0();
 
-      auto& onode2 = test.create_onode(452);
+      auto& onode2 = test.create_onode(456);
       logger().info("\n---------------------------------------------"
                     "\nsplit at stage 1; insert to right front at stage 0, 1, 0\n");
       test.split(make_ghobj(3, 3, 3, "ns3", "oid3", 5, 5), onode2,
@@ -575,7 +575,7 @@ TEST_F(c_dummy_test_t, 4_split_leaf_node)
       test.split(make_ghobj(4, 4, 4, "ns2", "oid2", 1, 1), onode2,
                  {1u, 0u, false, InsertType::MID}).get0();
 
-      auto& onode3 = test.create_onode(834);
+      auto& onode3 = test.create_onode(832);
       logger().info("\n---------------------------------------------"
                     "\nsplit at stage 0; insert to right middle at stage 0, 1, 2, 1, 0\n");
       test.split(make_ghobj(3, 3, 3, "ns4", "oid4", 5, 5), onode3,
@@ -594,7 +594,7 @@ TEST_F(c_dummy_test_t, 4_split_leaf_node)
       test.split(make_ghobj(3, 3, 3, "ns4", "oid4", 2, 3), onode3,
                  {0u, 0u, false, InsertType::BEGIN}).get0();
 
-      auto& onode4 = test.create_onode(572);
+      auto& onode4 = test.create_onode(576);
       logger().info("\n---------------------------------------------"
                     "\nsplit at stage 0; insert to left back at stage 0\n");
       test.split(make_ghobj(3, 3, 3, "ns2", "oid2", 3, 4), onode4,
@@ -604,7 +604,7 @@ TEST_F(c_dummy_test_t, 4_split_leaf_node)
     {
       TestTree test;
       test.build_tree({2, 4}, {2, 4}, {2, 4}, 232).get0();
-      auto& onode = test.create_onode(1996);
+      auto& onode = test.create_onode(1992);
       logger().info("\n---------------------------------------------"
                     "\nsplit at [0, 0, 0]; insert to left front at stage 2, 1, 0\n");
       test.split(make_ghobj(1, 1, 1, "ns3", "oid3", 3, 3), onode,
