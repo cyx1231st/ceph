@@ -105,7 +105,7 @@ class TestValue final : public Value {
     }
   };
 
-  TestValue() : Value() {}
+  TestValue(NodeExtentManager& nm, Ref<tree_cursor_t> p_cursor) : Value(nm, p_cursor) {}
   ~TestValue() override = default;
 
   id_t get_id() const {

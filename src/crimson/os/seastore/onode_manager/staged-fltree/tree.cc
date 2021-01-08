@@ -43,8 +43,8 @@ ghobject_t Cursor::get_ghobj() const {
   return p_cursor->get_key_view().to_ghobj();
 }
 
-const onode_t* Cursor::value() const {
-  return p_cursor->get_p_value();
+Ref<Value> Cursor::value() const {
+  return Value::create_value(*p_tree->nm, p_cursor);
 }
 
 bool Cursor::operator==(const Cursor& x) const {
@@ -145,12 +145,12 @@ Btree::lower_bound(Transaction& t, const ghobject_t& obj) {
 }
 
 btree_future<std::pair<Cursor, bool>>
-Btree::insert(Transaction& t, const ghobject_t& obj, const onode_t& value) {
+Btree::insert(Transaction& t, const ghobject_t& obj, value_config_t vconf) {
   return seastar::do_with(
     full_key_t<KeyT::HOBJ>(obj),
-    [this, &t, &value](auto& key) -> btree_future<std::pair<Cursor, bool>> {
-      return get_root(t).safe_then([this, &t, &key, &value](auto root) {
-        return root->insert(get_context(t), key, value);
+    [this, &t, vconf](auto& key) -> btree_future<std::pair<Cursor, bool>> {
+      return get_root(t).safe_then([this, &t, &key, vconf](auto root) {
+        return root->insert(get_context(t), key, vconf);
       }).safe_then([this](auto ret) {
         auto& [cursor, success] = ret;
         return std::make_pair(Cursor(this, cursor), success);

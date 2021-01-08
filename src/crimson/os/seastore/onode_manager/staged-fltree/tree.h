@@ -10,6 +10,7 @@
 
 #include "fwd.h"
 #include "tree_types.h"
+#include "value.h"
 
 /**
  * tree.h
@@ -56,9 +57,8 @@ class Btree {
   btree_future<Cursor> lower_bound(Transaction&, const ghobject_t&);
 
   // modifiers
-  // TODO: replace onode_t
   btree_future<std::pair<Cursor, bool>>
-  insert(Transaction&, const ghobject_t&, const onode_t&);
+  insert(Transaction&, const ghobject_t&, value_config_t);
   btree_future<size_t> erase(Transaction&, const ghobject_t& key);
   btree_future<Cursor> erase(Cursor& pos);
   btree_future<Cursor> erase(Cursor& first, Cursor& last);
@@ -80,7 +80,7 @@ class Btree {
   NodeExtentManagerURef nm;
   RootNodeTrackerURef root_tracker;
 
-  friend class Value;
+  friend class Cursor;
   friend class DummyChildPool;
 };
 inline std::ostream& operator<<(std::ostream& os, const Btree& tree) {
@@ -99,7 +99,7 @@ class Btree::Cursor {
   bool is_end() const;
   // XXX: return key_view_t to avoid unecessary ghobject_t constructions
   ghobject_t get_ghobj() const;
-  const onode_t* value() const;
+  Ref<Value> value() const;
   bool operator==(const Cursor& x) const;
   bool operator!=(const Cursor& x) const { return !(*this == x); }
   Cursor& operator++();

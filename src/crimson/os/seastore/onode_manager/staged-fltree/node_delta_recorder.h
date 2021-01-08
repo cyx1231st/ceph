@@ -5,6 +5,7 @@
 
 #include "include/buffer.h"
 #include "node_types.h"
+#include "value.h"
 
 namespace crimson::os::seastore::onode {
 
@@ -29,6 +30,8 @@ class DeltaRecorder {
     return std::move(encoded);
   }
 
+  ValueDeltaRecorder* get_value_recorder(value_types_t);
+
   virtual node_type_t node_type() const = 0;
   virtual field_type_t field_type() const = 0;
   virtual void apply_delta(ceph::bufferlist::const_iterator&,
@@ -38,6 +41,8 @@ class DeltaRecorder {
  protected:
   DeltaRecorder() = default;
   ceph::bufferlist encoded;
+  // The tree only has one value implementation
+  std::unique_ptr<ValueDeltaRecorder> value_recorder;
 };
 
 }
