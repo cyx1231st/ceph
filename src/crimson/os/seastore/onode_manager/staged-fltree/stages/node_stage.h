@@ -100,7 +100,7 @@ class node_extent_t {
       return &p_fields->child_addrs[index];
     } else {
       auto range = get_nxt_container(index);
-      auto ret = reinterpret_cast<const raw_value_t*>(range.p_start);
+      auto ret = reinterpret_cast<const value_header_t*>(range.p_start);
       assert(range.p_start + ret->allocation_size() == range.p_end);
       return ret;
     }

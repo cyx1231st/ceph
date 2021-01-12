@@ -6,6 +6,7 @@
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <ostream>
 
+#include "crimson/common/log.h"
 #include "crimson/common/type_helpers.h"
 
 #include "include/buffer.h"
@@ -20,8 +21,8 @@ using value_size_t = uint16_t;
 // A Btree can only have one value implementation/type.
 // TODO: use strategy pattern to configure Btree to one value/recorder implementation.
 enum class value_types_t :uint8_t {
-  TEST = 0,
-  ONODE = 1,
+  TEST = 0x52,
+  ONODE,
 };
 inline std::ostream& operator<<(std::ostream& os, const value_types_t& type) {
   switch (type) {
@@ -34,51 +35,11 @@ inline std::ostream& operator<<(std::ostream& os, const value_types_t& type) {
   }
 }
 
-struct value_header_t {
-  static constexpr value_size_t ALIGNMENT = 8u;
-
-  value_types_t type;
-  uint8_t padding;
-  value_size_t payload_size;
-  uint32_t padding1;
-
-  value_size_t value_size() const {
-    return payload_size + sizeof(value_header_t);
-  }
-
-  value_size_t allocation_size() const {
-    return value_size() + ALIGNMENT;
-  }
-
-  const char* get_payload() const {
-    return reinterpret_cast<const char*>(this) + sizeof(value_header_t);
-  }
-
-  char* get_payload() {
-    return const_cast<char*>(get_payload());
-  }
-
-  static value_size_t estimate_allocation_size(value_size_t payload_size) {
-    assert(payload_size % ALIGNMENT == 0);
-    return payload_size + sizeof(value_header_t) + ALIGNMENT;
-  }
-};
-static_assert(alignof(value_header_t) <= value_header_t::ALIGNMENT);
-static_assert(sizeof(value_header_t) % value_header_t::ALIGNMENT == 0);
-
 struct value_config_t {
   value_types_t type = value_types_t::ONODE;
   value_size_t payload_size = 256;
 
-  value_size_t allocation_size() const {
-    return value_header_t::estimate_allocation_size(payload_size);
-  }
-
-  value_header_t to_header() const {
-    value_header_t header{type, 0u, payload_size, 0u};
-    assert(allocation_size() == header.allocation_size());
-    return header;
-  }
+  value_size_t allocation_size() const;
 
   void encode(ceph::bufferlist& encoded) const {
     ceph::encode(type, encoded);
@@ -94,56 +55,51 @@ struct value_config_t {
   }
 };
 inline std::ostream& operator<<(std::ostream& os, const value_config_t& conf) {
-  return os << "ValueC(" << conf.type
+  return os << "ValueConf(" << conf.type
             << ", " << conf.payload_size << "B)";
 }
 
 /**
- * raw_value_t
+ * value_header_t
  *
  * The value layout in tree leaf node.
  *
- * # <-----> | 8 bytes padding  | <-----> #
- * #         | <- value size -> |         #
- * # padding | header | payload | padding #
- *           ^        ^         ^
- *           |        |         |
- *            aligned to 8 bytes
- *
- * TODO: make raw_value_t itself aligned to 8 bytes to simplify the implementation.
+ * # <- alloc size -> #
+ * # header | payload #
  */
-struct raw_value_t {
-  static constexpr auto ALIGNMENT = value_header_t::ALIGNMENT;
-
-  const value_header_t* get_header() const {
-    uint64_t p_start = reinterpret_cast<uint64_t>(this);
-    p_start = (p_start + ALIGNMENT) / ALIGNMENT * ALIGNMENT;
-    auto ret = reinterpret_cast<const value_header_t*>(p_start);
-    assert((ret->payload_size > 0) && (ret->payload_size % ALIGNMENT == 0));
-    return ret;
-  }
-
-  value_header_t* get_header() {
-    return const_cast<value_header_t*>(get_header());
-  }
+struct value_header_t {
+  value_types_t type;
+  value_size_t payload_size;
 
   value_size_t allocation_size() const {
-    return get_header()->allocation_size();
+    return payload_size + sizeof(value_header_t);
+  }
+
+  const char* get_payload() const {
+    return reinterpret_cast<const char*>(this) + sizeof(value_header_t);
+  }
+
+  char* get_payload() {
+    return reinterpret_cast<char*>(this) + sizeof(value_header_t);
   }
 
   void initiate(NodeExtentMutable& mut, const value_config_t& config) {
-    // the paddings for alignment are not zeroed
-    auto p_header = get_header();
-    auto header = config.to_header();
-    mut.copy_in_absolute(p_header, header);
-    mut.set_absolute(p_header->get_payload(), 0, p_header->payload_size);
+    value_header_t header{config.type, config.payload_size};
+    mut.copy_in_absolute(this, header);
+    mut.set_absolute(get_payload(), 0, config.payload_size);
   }
-};
-inline std::ostream& operator<<(std::ostream& os, const raw_value_t& value) {
-  auto p_header = value.get_header();
-  return os << "ValueR(" << p_header->type
-            << ", " << p_header->payload_size
-            << "+" << p_header->allocation_size() - p_header->payload_size << "B)";
+
+  static value_size_t estimate_allocation_size(value_size_t payload_size) {
+    return payload_size + sizeof(value_header_t);
+  }
+} __attribute__((packed));
+inline std::ostream& operator<<(std::ostream& os, const value_header_t& header) {
+  return os << "Value(" << header.type
+            << ", " << header.payload_size << "B)";
+}
+
+inline value_size_t value_config_t::allocation_size() const {
+  return value_header_t::estimate_allocation_size(payload_size);
 }
 
 class ValueDeltaRecorder {
@@ -156,20 +112,9 @@ class ValueDeltaRecorder {
 
   virtual value_types_t get_type() const = 0;
 
-  void apply_delta(ceph::bufferlist::const_iterator& p,
-                   NodeExtentMutable& node_mut,
-                   laddr_t node_addr) {
-    node_offset_t value_header_offset;
-    ceph::decode(value_header_offset, p);
-    assert(value_header_offset % value_header_t::ALIGNMENT == 0);
-    auto p_header = node_mut.get_read() + value_header_offset;
-    assert((uint64_t)p_header % value_header_t::ALIGNMENT == 0);
-    auto p_header_ = reinterpret_cast<const value_header_t*>(p_header);
-    auto payload_mut = node_mut.get_mutable_absolute(
-        p_header_->get_payload(), p_header_->payload_size);
-    auto value_addr = node_addr + payload_mut.get_node_offset();
-    apply_value_delta(p, payload_mut, value_addr);
-  }
+  virtual void apply_value_delta(ceph::bufferlist::const_iterator&,
+                                 NodeExtentMutable&,
+                                 laddr_t) = 0;
 
   template <class Derived>
   Derived* cast() {
@@ -189,9 +134,9 @@ class ValueDeltaRecorder {
     return encoded;
   }
 
-  virtual void apply_value_delta(ceph::bufferlist::const_iterator&,
-                                 NodeExtentMutable&,
-                                 laddr_t) = 0;
+  seastar::logger& logger() {
+    return crimson::get_logger(ceph_subsys_test);
+  }
 
  private:
   ceph::bufferlist& encoded;
@@ -210,7 +155,7 @@ class Value : public boost::intrusive_ref_counter<
   template <class ValueT=void>
   using future = ertr::future<ValueT>;
 
-  virtual ~Value() = default;
+  virtual ~Value();
   Value(const Value&) = delete;
   Value(Value&&) = delete;
   Value& operator=(const Value&) = delete;
@@ -230,10 +175,13 @@ class Value : public boost::intrusive_ref_counter<
     return Ref<Derived>(static_cast<Derived*>(this));
   }
 
+  bool operator==(const Value& v) const { return p_cursor == v.p_cursor; }
+  bool operator!=(const Value& v) const { return !(*this == v); }
+
   static Ref<Value> create_value(NodeExtentManager&, Ref<tree_cursor_t>);
 
  protected:
-  Value(NodeExtentManager&, Ref<tree_cursor_t>);
+  Value(NodeExtentManager&, Ref<tree_cursor_t>&);
 
   future<> extend(Transaction&, value_size_t extend_size);
 
@@ -243,7 +191,6 @@ class Value : public boost::intrusive_ref_counter<
   template <typename PayloadT>
   std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
   prepare_mutate_payload(Transaction& t) {
-    static_assert(alignof(PayloadT) <= value_header_t::ALIGNMENT);
     assert(sizeof(PayloadT) <= get_payload_size());
 
     auto [p_payload_mut, p_recorder] = do_prepare_mutate_payload(t);
@@ -255,7 +202,6 @@ class Value : public boost::intrusive_ref_counter<
 
   template <typename PayloadT>
   const PayloadT* read_payload() const {
-    static_assert(alignof(PayloadT) <= value_header_t::ALIGNMENT);
     assert(sizeof(PayloadT) <= get_payload_size());
     return reinterpret_cast<const PayloadT*>(read_value_header()->get_payload());
   }

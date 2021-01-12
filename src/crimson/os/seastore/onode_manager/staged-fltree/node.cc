@@ -620,8 +620,8 @@ bool LeafNode::is_level_tail() const {
 std::tuple<key_view_t, const value_header_t*>
 LeafNode::get_kv_versioned(const search_position_t& pos) const {
   key_view_t key_view;
-  auto p_raw_value = impl->get_p_value(pos, &key_view);
-  return {key_view, p_raw_value->get_header()};
+  auto p_value_header = impl->get_p_value(pos, &key_view);
+  return {key_view, p_value_header};
 }
 
 node_future<> LeafNode::extend_value(
@@ -650,9 +650,9 @@ LeafNode::lookup_smallest(context_t) {
   }
   auto pos = search_position_t::begin();
   key_view_t index_key;
-  auto p_raw_value = impl->get_p_value(pos, &index_key);
+  auto p_value_header = impl->get_p_value(pos, &index_key);
   return node_ertr::make_ready_future<Ref<tree_cursor_t>>(
-      get_or_track_cursor(pos, index_key, p_raw_value));
+      get_or_track_cursor(pos, index_key, p_value_header));
 }
 
 node_future<Ref<tree_cursor_t>>
@@ -663,11 +663,11 @@ LeafNode::lookup_largest(context_t) {
         new tree_cursor_t(this));
   }
   search_position_t pos;
-  const raw_value_t* p_raw_value = nullptr;
+  const value_header_t* p_value_header = nullptr;
   key_view_t index_key;
-  impl->get_largest_slot(pos, index_key, &p_raw_value);
+  impl->get_largest_slot(pos, index_key, &p_value_header);
   return node_ertr::make_ready_future<Ref<tree_cursor_t>>(
-      get_or_track_cursor(pos, index_key, p_raw_value));
+      get_or_track_cursor(pos, index_key, p_value_header));
 }
 
 node_future<Node::search_result_t>
@@ -735,8 +735,7 @@ node_future<Ref<tree_cursor_t>> LeafNode::insert_value(
     // insert
     on_layout_change();
     impl->prepare_mutate(c);
-    auto p_raw_value = impl->insert(key, vconf, insert_pos, insert_stage, insert_size);
-    auto p_value_header = p_raw_value->get_header();
+    auto p_value_header = impl->insert(key, vconf, insert_pos, insert_stage, insert_size);
     assert(impl->free_size() == free_size - insert_size);
     assert(insert_pos <= pos);
     assert(p_value_header->payload_size == vconf.payload_size);
@@ -755,10 +754,9 @@ node_future<Ref<tree_cursor_t>> LeafNode::insert_value(
     // no need to bump version for right node, as it is fresh
     on_layout_change();
     impl->prepare_mutate(c);
-    auto [split_pos, is_insert_left, p_raw_value] = impl->split_insert(
+    auto [split_pos, is_insert_left, p_value_header] = impl->split_insert(
         fresh_right.mut, *right_node->impl, key, vconf,
         insert_pos, insert_stage, insert_size);
-    auto p_value_header = p_raw_value->get_header();
     assert(p_value_header->payload_size == vconf.payload_size);
     track_split(split_pos, right_node);
     Ref<tree_cursor_t> ret;
@@ -794,10 +792,9 @@ node_future<Ref<LeafNode>> LeafNode::allocate_root(
 
 Ref<tree_cursor_t> LeafNode::get_or_track_cursor(
     const search_position_t& position,
-    const key_view_t& key, const raw_value_t* p_raw_value) {
+    const key_view_t& key, const value_header_t* p_value_header) {
   assert(!position.is_end());
-  assert(p_raw_value);
-  auto p_value_header = p_raw_value->get_header();
+  assert(p_value_header);
   Ref<tree_cursor_t> p_cursor;
   auto found = tracked_cursors.find(position);
   if (found == tracked_cursors.end()) {

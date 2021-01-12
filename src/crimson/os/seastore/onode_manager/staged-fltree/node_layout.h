@@ -391,8 +391,7 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
        * - I > 2 + 2/S (S > 1)
        *
        * Now back to NODE_BLOCK_SIZE calculation, if we have limits of at most
-       * X KiB ns-oid string and Y KiB of raw_value_t to store in this BTree,
-       * then:
+       * X KiB ns-oid string and Y KiB of value to store in this BTree, then:
        * - largest_insert_size ~= X+Y KiB
        * - 1/S == X/(X+Y)
        * - I > (4X+2Y)/(X+Y)
@@ -561,7 +560,7 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
    */
   void get_largest_slot(search_position_t& pos,
                         key_view_t& index_key,
-                        const raw_value_t** pp_value) const override {
+                        const value_header_t** pp_value) const override {
     if constexpr (NODE_TYPE == node_type_t::LEAF) {
       STAGE_T::template lookup_largest_slot<true, true, true>(
           extent.read(), &cast_down_fill_0<STAGE>(pos), &index_key, pp_value);

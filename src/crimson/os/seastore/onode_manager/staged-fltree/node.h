@@ -506,7 +506,7 @@ class LeafNode final : public Node {
   // XXX: extract a common tracker for InternalNode to track Node,
   // and LeafNode to track tree_cursor_t.
   Ref<tree_cursor_t> get_or_track_cursor(
-      const search_position_t&, const key_view_t&, const raw_value_t*);
+      const search_position_t&, const key_view_t&, const value_header_t*);
   Ref<tree_cursor_t> track_insert(
       const search_position_t&, match_stage_t, const value_header_t*);
   void track_split(const search_position_t&, Ref<LeafNode>);

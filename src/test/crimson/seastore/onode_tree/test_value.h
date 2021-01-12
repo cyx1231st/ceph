@@ -11,12 +11,15 @@ class TestValue final : public Value {
  public:
   using id_t = uint16_t;
   using magic_t = uint32_t;
+  struct magic_packed_t {
+    magic_t value;
+  } __attribute__((packed));
   static constexpr auto vtype = value_types_t::TEST;
 
  private:
   struct payload_t {
     id_t id;
-  };
+  } __attribute__((packed));
 
   struct Replayable {
     static void set_id(NodeExtentMutable& payload_mut, id_t id) {
@@ -50,13 +53,13 @@ class TestValue final : public Value {
     ~Recorder() override = default;
 
     void encode_set_id(NodeExtentMutable& payload_mut, id_t id) {
-      auto encoded = get_encoded(payload_mut);
+      auto& encoded = get_encoded(payload_mut);
       ceph::encode(delta_op_t::UPDATE_ID, encoded);
       ceph::encode(id, encoded);
     }
 
     void encode_set_tail_magic(NodeExtentMutable& payload_mut, magic_t magic) {
-      auto encoded = get_encoded(payload_mut);
+      auto& encoded = get_encoded(payload_mut);
       ceph::encode(delta_op_t::UPDATE_TAIL_MAGIC, encoded);
       ceph::encode(magic, encoded);
     }
@@ -98,14 +101,9 @@ class TestValue final : public Value {
     }
 
     value_types_t get_type() const override { return rtype; }
-
-   private:
-    seastar::logger& logger() {
-      return crimson::get_logger(ceph_subsys_test);
-    }
   };
 
-  TestValue(NodeExtentManager& nm, Ref<tree_cursor_t> p_cursor) : Value(nm, p_cursor) {}
+  TestValue(NodeExtentManager& nm, Ref<tree_cursor_t>& p_cursor) : Value(nm, p_cursor) {}
   ~TestValue() override = default;
 
   id_t get_id() const {
@@ -120,11 +118,11 @@ class TestValue final : public Value {
     Replayable::set_id(*p_payload_mut, id);
   }
 
-  magic_t get_tail_magic(magic_t magic) const {
+  magic_t get_tail_magic() const {
     auto p_payload = read_payload<payload_t>();
     auto offset_magic = get_payload_size() - sizeof(magic_t);
     auto p_magic = reinterpret_cast<const char*>(p_payload) + offset_magic;
-    return *reinterpret_cast<const magic_t*>(p_magic);
+    return reinterpret_cast<const magic_packed_t*>(p_magic)->value;
   }
   void set_tail_magic_replayable(Transaction& t, magic_t magic) {
     auto [p_payload_mut, p_recorder_base] = prepare_mutate_payload<payload_t>(t);

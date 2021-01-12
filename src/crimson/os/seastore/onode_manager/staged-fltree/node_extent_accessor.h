@@ -154,6 +154,21 @@ class DeltaRecorderT final: public DeltaRecorder {
         layout_t::update_child_addr(node, new_addr, p_addr);
         break;
       }
+      case node_delta_op_t::SUBOP_UPDATE_VALUE: {
+        logger().debug("OTree::Extent::Replay: decoding SUBOP_UPDATE_VALUE ...");
+        node_offset_t value_header_offset;
+        ceph::decode(value_header_offset, delta);
+        auto p_header = node.get_read() + value_header_offset;
+        auto p_header_ = reinterpret_cast<const value_header_t*>(p_header);
+        logger().debug("OTree::Extent::Replay: update {} at {:#x} ...",
+                       *p_header_, value_header_offset);
+        auto payload_mut = node.get_mutable_absolute(
+            p_header_->get_payload(), p_header_->payload_size);
+        auto value_addr = node_laddr + payload_mut.get_node_offset();
+        get_value_recorder(p_header_->type)->apply_value_delta(
+            delta, payload_mut, value_addr);
+        break;
+      }
       default:
         logger().error("OTree::Extent::Replay: got unknown op {} when replay {:#x}",
                        op, node_laddr);

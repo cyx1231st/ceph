@@ -66,7 +66,7 @@ void internal_sub_items_t::Appender<KT>::append(
 }
 
 template <KeyT KT>
-const raw_value_t* leaf_sub_items_t::insert_at(
+const value_header_t* leaf_sub_items_t::insert_at(
     NodeExtentMutable& mut, const leaf_sub_items_t& sub_items,
     const full_key_t<KT>& key, const value_config_t& value,
     index_t index, node_offset_t size, const char* p_left_bound) {
@@ -79,7 +79,7 @@ const raw_value_t* leaf_sub_items_t::insert_at(
 
   // b. insert item
   auto p_insert = const_cast<char*>(p_shift_end - size);
-  auto p_value = reinterpret_cast<raw_value_t*>(p_insert);
+  auto p_value = reinterpret_cast<value_header_t*>(p_insert);
   p_value->initiate(mut, value);
   p_insert += value.allocation_size();
   mut.copy_in_absolute(p_insert, snap_gen_t::template from_key<KT>(key));
@@ -110,7 +110,7 @@ const raw_value_t* leaf_sub_items_t::insert_at(
 
   return p_value;
 }
-template const raw_value_t* leaf_sub_items_t::insert_at<KeyT::HOBJ>(
+template const value_header_t* leaf_sub_items_t::insert_at<KeyT::HOBJ>(
     NodeExtentMutable&, const leaf_sub_items_t&, const full_key_t<KeyT::HOBJ>&,
     const value_config_t&, index_t, node_offset_t, const char*);
 
@@ -194,7 +194,7 @@ char* leaf_sub_items_t::Appender<KT>::wrap() {
         p_cur -= sizeof(snap_gen_t);
         p_mut->copy_in_absolute(p_cur, snap_gen_t::template from_key<KT>(*arg.p_key));
         p_cur -= arg.value_config.allocation_size();
-        auto p_value = reinterpret_cast<raw_value_t*>(p_cur);
+        auto p_value = reinterpret_cast<value_header_t*>(p_cur);
         p_value->initiate(*p_mut, arg.value_config);
         *pp_value = p_value;
       }

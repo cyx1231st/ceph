@@ -22,8 +22,10 @@ using ertr = Value::ertr;
 template <class ValueT=void>
 using future = Value::future<ValueT>;
 
-Value::Value(NodeExtentManager& nm, Ref<tree_cursor_t> p_cursor)
+Value::Value(NodeExtentManager& nm, Ref<tree_cursor_t>& p_cursor)
   : nm{nm}, p_cursor{p_cursor} {}
+
+Value::~Value() {}
 
 future<> Value::extend(Transaction& t, value_size_t extend_size) {
   auto target_size = get_payload_size() + extend_size;

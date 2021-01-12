@@ -135,7 +135,7 @@ class internal_sub_items_t::Appender {
  * leaf_sub_items_t
  *
  * The STAGE_RIGHT implementation for leaf node N0/N1/N2, implements staged
- * contract as an indexable container to index snap-gen to raw_value_t.
+ * contract as an indexable container to index snap-gen to value_header_t.
  *
  * The layout of the contaner storing n sub-items:
  *
@@ -152,7 +152,7 @@ class internal_sub_items_t::Appender {
 class leaf_sub_items_t {
  public:
   // TODO: decide by NODE_BLOCK_SIZE, sizeof(snap_gen_t),
-  //       and the minimal size of raw_value_t
+  //       and the minimal size of value
   using num_keys_t = uint8_t;
 
   leaf_sub_items_t(const memory_range_t& range) {
@@ -222,10 +222,10 @@ class leaf_sub_items_t {
     return ret;
   }
   node_offset_t size_overhead_at(index_t index) const { return sizeof(node_offset_t); }
-  const raw_value_t* get_p_value(index_t index) const {
+  const value_header_t* get_p_value(index_t index) const {
     assert(index < keys());
     auto pointer = get_item_start(index);
-    auto value = reinterpret_cast<const raw_value_t*>(pointer);
+    auto value = reinterpret_cast<const value_header_t*>(pointer);
     assert(pointer + value->allocation_size() + sizeof(snap_gen_t) ==
            get_item_end(index));
     return value;
@@ -263,7 +263,7 @@ class leaf_sub_items_t {
   }
 
   template <KeyT KT>
-  static const raw_value_t* insert_at(
+  static const value_header_t* insert_at(
       NodeExtentMutable&, const leaf_sub_items_t&,
       const full_key_t<KT>&, const value_config_t&,
       index_t index, node_offset_t size, const char* p_left_bound);
@@ -316,7 +316,7 @@ class leaf_sub_items_t::Appender {
     ++cnt;
   }
   void append(const full_key_t<KT>& key,
-              const value_config_t& value, const raw_value_t*& p_value) {
+              const value_config_t& value, const value_header_t*& p_value) {
     assert(pp_value == nullptr);
     assert(cnt <= APPENDER_LIMIT);
     appends[cnt] = kv_item_t{&key, value};
@@ -327,7 +327,7 @@ class leaf_sub_items_t::Appender {
 
  private:
   std::optional<leaf_sub_items_t> op_src;
-  const raw_value_t** pp_value = nullptr;
+  const value_header_t** pp_value = nullptr;
   NodeExtentMutable* p_mut;
   char* p_append;
   var_t appends[APPENDER_LIMIT];
