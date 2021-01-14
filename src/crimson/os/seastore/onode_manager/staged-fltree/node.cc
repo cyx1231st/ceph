@@ -88,10 +88,15 @@ void tree_cursor_t::update_cache_fast(LeafNode& node,
   assert(cache.validate_is_latest(node, position));
 }
 
-void tree_cursor_t::maybe_update_cache() const {
+void tree_cursor_t::maybe_update_cache(value_magic_t magic) const {
   assert(!is_end());
   if (!cache.is_latest()) {
     auto [key_view, p_value_header] = ref_node->get_kv_versioned(position);
+    if (p_value_header->magic != magic) {
+      logger().error("OTree::Value::Load: magic mismatch, expect {} but got {}",
+                     magic, p_value_header->magic);
+      ceph_abort();
+    }
     cache.update(*ref_node, key_view, p_value_header);
   }
   assert(cache.validate_is_latest(*ref_node, position));
@@ -131,17 +136,17 @@ bool tree_cursor_t::Cache::validate_is_latest(const LeafNode& node,
   return true;
 }
 
-std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
+std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
 tree_cursor_t::Cache::prepare_mutate_value_payload(context_t c) {
   assert(is_latest());
   assert(p_node && p_value_header);
+  assert(p_value_header->magic == c.vb.get_header_magic());
   if (!value_payload_mut.has_value()) {
-    auto [p_node_mut, _p_value_recorder] = p_node->prepare_mutate_value_payload(c, p_value_header->type);
-    value_payload_mut = p_node_mut->get_mutable_absolute(
-        p_value_header->get_payload(), p_value_header->payload_size);
-    p_value_recorder = _p_value_recorder;
+    auto value_mutable = p_node->prepare_mutate_value_payload(c);
+    value_payload_mut = p_value_header->get_payload_mutable(value_mutable.first);
+    p_value_recorder = value_mutable.second;
   }
-  return {&*value_payload_mut, p_value_recorder};
+  return {*value_payload_mut, p_value_recorder};
 }
 
 /*
@@ -179,7 +184,6 @@ node_future<std::pair<Ref<tree_cursor_t>, bool>> Node::insert(
       return lower_bound_tracked(c, key, history
       ).safe_then([c, &key, vconf, &history](auto result) {
         if (result.match() == MatchKindBS::EQ) {
-          assert(result.p_cursor->read_value_header()->type == vconf.type);
           return node_ertr::make_ready_future<std::pair<Ref<tree_cursor_t>, bool>>(
               std::make_pair(result.p_cursor, false));
         } else {
@@ -636,9 +640,9 @@ node_future<> LeafNode::trim_value(
   return node_ertr::now();
 }
 
-std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
-LeafNode::prepare_mutate_value_payload(context_t c, value_types_t type) {
-  return impl->prepare_mutate_value_payload(c, type);
+std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
+LeafNode::prepare_mutate_value_payload(context_t c) {
+  return impl->prepare_mutate_value_payload(c);
 }
 
 node_future<Ref<tree_cursor_t>>
@@ -813,8 +817,9 @@ void LeafNode::validate_cursor(tree_cursor_t& cursor) const {
   assert(this == cursor.get_leaf_node().get());
   assert(!cursor.is_end());
   auto [key, p_value_header] = get_kv_versioned(cursor.get_position());
-  assert(key == cursor.get_key_view());
-  assert(p_value_header == cursor.read_value_header());
+  auto magic = p_value_header->magic;
+  assert(key == cursor.get_key_view(magic));
+  assert(p_value_header == cursor.read_value_header(magic));
 #endif
 }
 

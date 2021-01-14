@@ -17,45 +17,42 @@ namespace crimson::os::seastore::onode {
 
 // value size up to 64 KiB
 using value_size_t = uint16_t;
-
-// A Btree can only have one value implementation/type.
-// TODO: use strategy pattern to configure Btree to one value/recorder implementation.
-enum class value_types_t :uint8_t {
+enum class value_magic_t : uint8_t {
   TEST = 0x52,
   ONODE,
 };
-inline std::ostream& operator<<(std::ostream& os, const value_types_t& type) {
-  switch (type) {
-  case value_types_t::TEST:
+inline std::ostream& operator<<(std::ostream& os, const value_magic_t& magic) {
+  switch (magic) {
+  case value_magic_t::TEST:
     return os << "TEST";
-  case value_types_t::ONODE:
+  case value_magic_t::ONODE:
     return os << "ONODE";
   default:
-    return os << "UNKNOWN(" << type << ")";
+    return os << "UNKNOWN(" << magic << ")";
   }
 }
 
 struct value_config_t {
-  value_types_t type = value_types_t::ONODE;
-  value_size_t payload_size = 256;
+  value_magic_t magic;
+  value_size_t payload_size;
 
   value_size_t allocation_size() const;
 
   void encode(ceph::bufferlist& encoded) const {
-    ceph::encode(type, encoded);
+    ceph::encode(magic, encoded);
     ceph::encode(payload_size, encoded);
   }
 
   static value_config_t decode(ceph::bufferlist::const_iterator& delta) {
-    value_types_t type;
-    ceph::decode(type, delta);
+    value_magic_t magic;
+    ceph::decode(magic, delta);
     value_size_t payload_size;
     ceph::decode(payload_size, delta);
-    return value_config_t{type, payload_size};
+    return {magic, payload_size};
   }
 };
 inline std::ostream& operator<<(std::ostream& os, const value_config_t& conf) {
-  return os << "ValueConf(" << conf.type
+  return os << "ValueConf(" << conf.magic
             << ", " << conf.payload_size << "B)";
 }
 
@@ -68,7 +65,7 @@ inline std::ostream& operator<<(std::ostream& os, const value_config_t& conf) {
  * # header | payload #
  */
 struct value_header_t {
-  value_types_t type;
+  value_magic_t magic;
   value_size_t payload_size;
 
   value_size_t allocation_size() const {
@@ -79,12 +76,16 @@ struct value_header_t {
     return reinterpret_cast<const char*>(this) + sizeof(value_header_t);
   }
 
+  NodeExtentMutable get_payload_mutable(NodeExtentMutable& node) const {
+    return node.get_mutable_absolute(get_payload(), payload_size);
+  }
+
   char* get_payload() {
     return reinterpret_cast<char*>(this) + sizeof(value_header_t);
   }
 
   void initiate(NodeExtentMutable& mut, const value_config_t& config) {
-    value_header_t header{config.type, config.payload_size};
+    value_header_t header{config.magic, config.payload_size};
     mut.copy_in_absolute(this, header);
     mut.set_absolute(get_payload(), 0, config.payload_size);
   }
@@ -94,7 +95,7 @@ struct value_header_t {
   }
 } __attribute__((packed));
 inline std::ostream& operator<<(std::ostream& os, const value_header_t& header) {
-  return os << "Value(" << header.type
+  return os << "Value(" << header.magic
             << ", " << header.payload_size << "B)";
 }
 
@@ -110,17 +111,11 @@ class ValueDeltaRecorder {
   ValueDeltaRecorder& operator=(const ValueDeltaRecorder&) = delete;
   ValueDeltaRecorder& operator=(ValueDeltaRecorder&&) = delete;
 
-  virtual value_types_t get_type() const = 0;
+  virtual value_magic_t get_header_magic() const = 0;
 
   virtual void apply_value_delta(ceph::bufferlist::const_iterator&,
                                  NodeExtentMutable&,
                                  laddr_t) = 0;
-
-  template <class Derived>
-  Derived* cast() {
-    assert(get_type() == Derived::rtype);
-    return static_cast<Derived*>(this);
-  }
 
  protected:
   ValueDeltaRecorder(ceph::bufferlist& encoded) : encoded{encoded} {}
@@ -165,56 +160,80 @@ class Value : public boost::intrusive_ref_counter<
     return read_value_header()->payload_size;
   }
 
-  value_types_t get_type() const {
-    return read_value_header()->type;
-  }
-
-  template <class Derived>
-  Ref<Derived> cast() {
-    assert(get_type() == Derived::vtype);
-    return Ref<Derived>(static_cast<Derived*>(this));
-  }
-
   bool operator==(const Value& v) const { return p_cursor == v.p_cursor; }
   bool operator!=(const Value& v) const { return !(*this == v); }
 
-  static Ref<Value> create_value(NodeExtentManager&, Ref<tree_cursor_t>);
-
  protected:
-  Value(NodeExtentManager&, Ref<tree_cursor_t>&);
+  Value(NodeExtentManager&, const ValueBuilder&, Ref<tree_cursor_t>&);
 
   future<> extend(Transaction&, value_size_t extend_size);
 
   future<> trim(Transaction&, value_size_t trim_size);
 
-  // TODO: return NodeExtentMutable&
-  template <typename PayloadT>
-  std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
+  template <typename PayloadT, typename ValueDeltaRecorderT>
+  std::pair<NodeExtentMutable&, ValueDeltaRecorderT*>
   prepare_mutate_payload(Transaction& t) {
     assert(sizeof(PayloadT) <= get_payload_size());
 
-    auto [p_payload_mut, p_recorder] = do_prepare_mutate_payload(t);
-    assert(p_payload_mut->get_write() ==
+    auto value_mutable = do_prepare_mutate_payload(t);
+    assert(value_mutable.first.get_write() ==
            const_cast<const Value*>(this)->template read_payload<char>());
-    assert(p_payload_mut->get_length() == get_payload_size());
-    return std::make_pair(p_payload_mut, p_recorder);
+    assert(value_mutable.first.get_length() == get_payload_size());
+    return {value_mutable.first,
+            static_cast<ValueDeltaRecorderT*>(value_mutable.second)};
   }
 
   template <typename PayloadT>
   const PayloadT* read_payload() const {
+    // In the current implementation, we don't guarantee any alignment for
+    // value payload due to unaligned node layout and the according merge and
+    // split operations.
+    static_assert(alignof(PayloadT) == 1);
     assert(sizeof(PayloadT) <= get_payload_size());
     return reinterpret_cast<const PayloadT*>(read_value_header()->get_payload());
   }
 
  private:
   const value_header_t* read_value_header() const;
-  context_t get_context(Transaction& t) { return {nm, t}; }
+  context_t get_context(Transaction& t) { return {nm, vb, t}; }
 
-  std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
+  std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
   do_prepare_mutate_payload(Transaction&);
 
   NodeExtentManager& nm;
+  const ValueBuilder& vb;
   Ref<tree_cursor_t> p_cursor;
 };
+
+struct ValueBuilder {
+  virtual value_magic_t get_header_magic() const = 0;
+  virtual std::unique_ptr<ValueDeltaRecorder>
+  build_value_recorder(ceph::bufferlist&) const = 0;
+};
+
+template <typename ValueImpl>
+struct ValueBuilderImpl final : public ValueBuilder {
+  value_magic_t get_header_magic() const {
+    return ValueImpl::HEADER_MAGIC;
+  }
+
+  std::unique_ptr<ValueDeltaRecorder>
+  build_value_recorder(ceph::bufferlist& encoded) const override {
+    std::unique_ptr<ValueDeltaRecorder> ret =
+      std::make_unique<typename ValueImpl::Recorder>(encoded);
+    assert(ret->get_header_magic() == get_header_magic());
+    return ret;
+  }
+
+  Ref<ValueImpl> build_value(NodeExtentManager& nm,
+                             const ValueBuilder& vb,
+                             Ref<tree_cursor_t>& p_cursor) const {
+    assert(vb.get_header_magic() == get_header_magic());
+    return new ValueImpl(nm, vb, p_cursor);
+  }
+};
+
+std::unique_ptr<ValueDeltaRecorder>
+build_value_recorder_by_type(ceph::bufferlist& encoded, const value_magic_t& magic);
 
 }

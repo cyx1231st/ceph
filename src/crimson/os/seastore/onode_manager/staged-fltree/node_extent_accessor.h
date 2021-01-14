@@ -84,12 +84,17 @@ class DeltaRecorderT final: public DeltaRecorder {
     ceph::encode(static_cast<node_offset_t>(node_offset), encoded);
   }
 
-  static DeltaRecorderURef create() {
+  static DeltaRecorderURef create_for_encode(const ValueBuilder& v_builder) {
+    return std::unique_ptr<DeltaRecorder>(new DeltaRecorderT(v_builder));
+  }
+
+  static DeltaRecorderURef create_for_replay() {
     return std::unique_ptr<DeltaRecorder>(new DeltaRecorderT());
   }
 
  protected:
-  DeltaRecorderT() = default;
+  DeltaRecorderT() : DeltaRecorder() {}
+  DeltaRecorderT(const ValueBuilder& vb) : DeltaRecorder(vb) {}
   node_type_t node_type() const override { return NODE_TYPE; }
   field_type_t field_type() const override { return FIELD_TYPE; }
   void apply_delta(ceph::bufferlist::const_iterator& delta,
@@ -162,10 +167,9 @@ class DeltaRecorderT final: public DeltaRecorder {
         auto p_header_ = reinterpret_cast<const value_header_t*>(p_header);
         logger().debug("OTree::Extent::Replay: update {} at {:#x} ...",
                        *p_header_, value_header_offset);
-        auto payload_mut = node.get_mutable_absolute(
-            p_header_->get_payload(), p_header_->payload_size);
+        auto payload_mut = p_header_->get_payload_mutable(node);
         auto value_addr = node_laddr + payload_mut.get_node_offset();
-        get_value_recorder(p_header_->type)->apply_value_delta(
+        get_value_replayer(p_header_->magic)->apply_value_delta(
             delta, payload_mut, value_addr);
         break;
       }
@@ -182,7 +186,27 @@ class DeltaRecorderT final: public DeltaRecorder {
   }
 
  private:
-  static void encode_value(const value_input_t& value, ceph::bufferlist& encoded) {
+  ValueDeltaRecorder* get_value_replayer(value_magic_t magic) {
+    // Replay procedure is independent of Btree and happens at lower level in
+    // seastore. There is no ValueBuilder so the recoder needs to build the
+    // ValueDeltaRecorder by itself.
+    if (!value_replayer) {
+      value_replayer = build_value_recorder_by_type(encoded, magic);
+      if (!value_replayer) {
+        logger().error("OTree::Extent::Replay: got unexpected value magic={}",
+                       magic);
+        ceph_abort();
+      }
+    }
+    if (value_replayer->get_header_magic() != magic) {
+      logger().error("OTree::Extent::Replay: value magic mismatch {} != {}",
+                     value_replayer->get_header_magic(), magic);
+      ceph_abort();
+    }
+    return value_replayer.get();
+  }
+
+  void encode_value(const value_input_t& value, ceph::bufferlist& encoded) const {
     if constexpr (std::is_same_v<value_input_t, laddr_packed_t>) {
       // NODE_TYPE == node_type_t::INTERNAL
       ceph::encode(value.value, encoded);
@@ -194,7 +218,7 @@ class DeltaRecorderT final: public DeltaRecorder {
     }
   }
 
-  static value_input_t decode_value(ceph::bufferlist::const_iterator& delta) {
+  value_input_t decode_value(ceph::bufferlist::const_iterator& delta) const {
     if constexpr (std::is_same_v<value_input_t, laddr_packed_t>) {
       // NODE_TYPE == node_type_t::INTERNAL
       laddr_t value;
@@ -211,6 +235,8 @@ class DeltaRecorderT final: public DeltaRecorder {
   static seastar::logger& logger() {
     return crimson::get_logger(ceph_subsys_filestore);
   }
+
+  std::unique_ptr<ValueDeltaRecorder> value_replayer;
 };
 
 /**
@@ -255,7 +281,7 @@ class NodeExtentAccessorT {
       ceph_abort("impossible path");
     }
 #ifndef NDEBUG
-    auto ref_recorder = recorder_t::create();
+    auto ref_recorder = recorder_t::create_for_replay();
     test_recorder = static_cast<recorder_t*>(ref_recorder.get());
     test_extent = TestReplayExtent::create(
         extent->get_length(), std::move(ref_recorder));
@@ -274,7 +300,7 @@ class NodeExtentAccessorT {
   // for the safety of mixed read and mutate, call before read.
   void prepare_mutate(context_t c) {
     if (needs_mutate()) {
-      auto ref_recorder = recorder_t::create();
+      auto ref_recorder = recorder_t::create_for_encode(c.vb);
       recorder = static_cast<recorder_t*>(ref_recorder.get());
       extent = extent->mutate(c, std::move(ref_recorder));
       assert(needs_recording());
@@ -371,14 +397,14 @@ class NodeExtentAccessorT {
 #endif
   }
 
-  std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
-  prepare_mutate_value_payload(context_t c, value_types_t type) {
+  std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
+  prepare_mutate_value_payload(context_t c) {
     prepare_mutate(c);
     ValueDeltaRecorder* p_value_recorder = nullptr;
     if (needs_recording()) {
-      p_value_recorder = recorder->get_value_recorder(type);
+      p_value_recorder = recorder->get_value_recorder();
     }
-    return {&*mut, p_value_recorder};
+    return {*mut, p_value_recorder};
   }
 
   void test_copy_to(NodeExtentMutable& to) const {

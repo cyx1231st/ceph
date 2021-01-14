@@ -181,8 +181,8 @@ class LeafNodeImpl : public NodeImpl {
       const key_hobj_t&, const value_config_t&,
       const MatchHistory&, match_stat_t, search_position_t&) const = 0;
 
-  virtual std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
-  prepare_mutate_value_payload(context_t, value_types_t) = 0;
+  virtual std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
+  prepare_mutate_value_payload(context_t) = 0;
 
   struct fresh_impl_t {
     LeafNodeImplURef impl;
@@ -191,7 +191,8 @@ class LeafNodeImpl : public NodeImpl {
       return {std::move(impl), mut};
     }
   };
-  static alloc_ertr::future<fresh_impl_t> allocate(context_t, field_type_t, bool);
+  static alloc_ertr::future<fresh_impl_t> allocate(
+      context_t, field_type_t, bool);
   static LeafNodeImplURef load(NodeExtentRef, field_type_t, bool);
 
  protected:

@@ -3,7 +3,6 @@
 
 #include "value.h"
 
-#include "crimson/common/log.h"
 #include "node.h"
 #include "node_delta_recorder.h"
 
@@ -12,18 +11,14 @@
 
 namespace crimson::os::seastore::onode {
 
-namespace {
-  seastar::logger& logger() {
-    return crimson::get_logger(ceph_subsys_filestore);
-  }
-}
-
 using ertr = Value::ertr;
 template <class ValueT=void>
 using future = Value::future<ValueT>;
 
-Value::Value(NodeExtentManager& nm, Ref<tree_cursor_t>& p_cursor)
-  : nm{nm}, p_cursor{p_cursor} {}
+Value::Value(NodeExtentManager& nm,
+             const ValueBuilder& vb,
+             Ref<tree_cursor_t>& p_cursor)
+  : nm{nm}, vb{vb}, p_cursor{p_cursor} {}
 
 Value::~Value() {}
 
@@ -45,47 +40,32 @@ future<> Value::trim(Transaction& t, value_size_t trim_size) {
 }
 
 const value_header_t* Value::read_value_header() const {
-  return p_cursor->read_value_header();
+  return p_cursor->read_value_header(vb.get_header_magic());
 }
 
-std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
+std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
 Value::do_prepare_mutate_payload(Transaction& t) {
    return p_cursor->prepare_mutate_value_payload(get_context(t));
 }
 
-Ref<Value> Value::create_value(
-    NodeExtentManager& nm, Ref<tree_cursor_t> p_cursor) {
-  assert(p_cursor && !p_cursor->is_end());
-  auto type = p_cursor->read_value_header()->type;
-  switch (type) {
-  case value_types_t::TEST:
-    return new TestValue(nm, p_cursor);
-  case value_types_t::ONODE:
-    ceph_abort("not implemented");
+std::unique_ptr<ValueDeltaRecorder>
+build_value_recorder_by_type(ceph::bufferlist& encoded,
+                             const value_magic_t& magic) {
+  std::unique_ptr<ValueDeltaRecorder> ret;
+  switch (magic) {
+  case value_magic_t::TEST:
+    ret = std::make_unique<TestValue::Recorder>(encoded);
+    break;
+  case value_magic_t::ONODE:
+    // TODO: onode implementation
+    ret = nullptr;
+    break;
   default:
-    logger().error("OTree::Value::create: got unexpected type={}", type);
-    ceph_abort("impossible type");
+    ret = nullptr;
+    break;
   }
-}
-
-// node_delta_recorder.h
-ValueDeltaRecorder* DeltaRecorder::get_value_recorder(value_types_t type) {
-  if (!value_recorder) {
-    switch (type) {
-    case value_types_t::TEST:
-      value_recorder.reset(new TestValue::Recorder(encoded));
-      break;
-    case value_types_t::ONODE:
-      ceph_abort("not implemented");
-      break;
-    default:
-      logger().error("OTree::Recorder::value: got unexpected type={}", type);
-      ceph_abort("impossible type");
-    }
-  }
-  assert(value_recorder);
-  assert(value_recorder->get_type() == type);
-  return value_recorder.get();
+  assert(!ret || ret->get_header_magic() == magic);
+  return ret;
 }
 
 }

@@ -9,12 +9,12 @@ namespace crimson::os::seastore::onode {
 
 class TestValue final : public Value {
  public:
+  static constexpr auto HEADER_MAGIC = value_magic_t::TEST;
   using id_t = uint16_t;
   using magic_t = uint32_t;
   struct magic_packed_t {
     magic_t value;
   } __attribute__((packed));
-  static constexpr auto vtype = value_types_t::TEST;
 
  private:
   struct payload_t {
@@ -47,9 +47,8 @@ class TestValue final : public Value {
     };
 
    public:
-    static constexpr auto rtype = vtype;
-
-    Recorder(ceph::bufferlist& encoded) : ValueDeltaRecorder(encoded) {}
+    Recorder(ceph::bufferlist& encoded)
+      : ValueDeltaRecorder(encoded) {}
     ~Recorder() override = default;
 
     void encode_set_id(NodeExtentMutable& payload_mut, id_t id) {
@@ -65,6 +64,10 @@ class TestValue final : public Value {
     }
 
    protected:
+    value_magic_t get_header_magic() const override {
+      return HEADER_MAGIC;
+    }
+
     void apply_value_delta(ceph::bufferlist::const_iterator& delta,
                            NodeExtentMutable& payload_mut,
                            laddr_t value_addr) override {
@@ -99,23 +102,21 @@ class TestValue final : public Value {
         ceph_abort();
       }
     }
-
-    value_types_t get_type() const override { return rtype; }
   };
 
-  TestValue(NodeExtentManager& nm, Ref<tree_cursor_t>& p_cursor) : Value(nm, p_cursor) {}
+  TestValue(NodeExtentManager& nm, const ValueBuilder& vb, Ref<tree_cursor_t>& p_cursor)
+    : Value(nm, vb, p_cursor) {}
   ~TestValue() override = default;
 
   id_t get_id() const {
     return read_payload<payload_t>()->id;
   }
   void set_id_replayable(Transaction& t, id_t id) {
-    auto [p_payload_mut, p_recorder_base] = prepare_mutate_payload<payload_t>(t);
-    if (p_recorder_base) {
-      auto p_recorder = p_recorder_base->cast<Recorder>();
-      p_recorder->encode_set_id(*p_payload_mut, id);
+    auto value_mutable = prepare_mutate_payload<payload_t, Recorder>(t);
+    if (value_mutable.second) {
+      value_mutable.second->encode_set_id(value_mutable.first, id);
     }
-    Replayable::set_id(*p_payload_mut, id);
+    Replayable::set_id(value_mutable.first, id);
   }
 
   magic_t get_tail_magic() const {
@@ -125,12 +126,11 @@ class TestValue final : public Value {
     return reinterpret_cast<const magic_packed_t*>(p_magic)->value;
   }
   void set_tail_magic_replayable(Transaction& t, magic_t magic) {
-    auto [p_payload_mut, p_recorder_base] = prepare_mutate_payload<payload_t>(t);
-    if (p_recorder_base) {
-      auto p_recorder = p_recorder_base->cast<Recorder>();
-      p_recorder->encode_set_tail_magic(*p_payload_mut, magic);
+    auto value_mutable = prepare_mutate_payload<payload_t, Recorder>(t);
+    if (value_mutable.second) {
+      value_mutable.second->encode_set_tail_magic(value_mutable.first, magic);
     }
-    Replayable::set_tail_magic(*p_payload_mut, magic);
+    Replayable::set_tail_magic(value_mutable.first, magic);
   }
 };
 

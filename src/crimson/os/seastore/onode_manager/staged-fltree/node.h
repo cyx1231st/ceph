@@ -89,23 +89,23 @@ class tree_cursor_t final
   bool is_end() const { return position.is_end(); }
 
   /// Returns the key view in tree if it is not an end cursor.
-  const key_view_t& get_key_view() const {
-    maybe_update_cache();
+  const key_view_t& get_key_view(value_magic_t magic) const {
+    maybe_update_cache(magic);
     return cache.get_key_view();
   }
 
   // public to Value
 
   /// Reads the current pointer to value_header_t
-  const value_header_t* read_value_header() const {
-    maybe_update_cache();
+  const value_header_t* read_value_header(value_magic_t magic) const {
+    maybe_update_cache(magic);
     return cache.get_p_value_header();
   }
 
   /// Prepare the node extent to be mutable and recorded
-  std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
+  std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
   prepare_mutate_value_payload(context_t c) {
-    maybe_update_cache();
+    maybe_update_cache(c.vb.get_header_magic());
     return cache.prepare_mutate_value_payload(c);
   }
 
@@ -127,7 +127,7 @@ class tree_cursor_t final
   template <bool VALIDATE>
   void update_track(Ref<LeafNode>, const search_position_t&);
   void update_cache_fast(LeafNode&, const key_view_t&, const value_header_t*) const;
-  void maybe_update_cache() const;
+  void maybe_update_cache(value_magic_t magic) const;
 
   /**
    * Reversed resource management (tree_cursor_t)
@@ -161,7 +161,7 @@ class tree_cursor_t final
       assert(p_value_header);
       return p_value_header;
     }
-    std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
+    std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
     prepare_mutate_value_payload(context_t);
 
    private:
@@ -481,8 +481,8 @@ class LeafNode final : public Node {
   node_future<> extend_value(context_t, const search_position_t&, value_size_t);
   node_future<> trim_value(context_t, const search_position_t&, value_size_t);
 
-  std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
-  prepare_mutate_value_payload(context_t, value_types_t);
+  std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
+  prepare_mutate_value_payload(context_t);
 
  protected:
   node_future<Ref<tree_cursor_t>> lookup_smallest(context_t) override;

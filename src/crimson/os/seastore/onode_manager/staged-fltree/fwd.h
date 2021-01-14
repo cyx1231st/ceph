@@ -28,12 +28,14 @@ class DeltaRecorder;
 class NodeExtent;
 class NodeExtentManager;
 class RootNodeTracker;
+struct ValueBuilder;
 using DeltaRecorderURef = std::unique_ptr<DeltaRecorder>;
 using NodeExtentRef = crimson::os::seastore::TCachedExtentRef<NodeExtent>;
 using NodeExtentManagerURef = std::unique_ptr<NodeExtentManager>;
 using RootNodeTrackerURef = std::unique_ptr<RootNodeTracker>;
 struct context_t {
   NodeExtentManager& nm;
+  const ValueBuilder& vb;
   Transaction& t;
 };
 

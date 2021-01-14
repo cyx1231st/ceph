@@ -30,7 +30,10 @@ class DeltaRecorder {
     return std::move(encoded);
   }
 
-  ValueDeltaRecorder* get_value_recorder(value_types_t);
+  ValueDeltaRecorder* get_value_recorder() const {
+    assert(value_recorder);
+    return value_recorder.get();
+  }
 
   virtual node_type_t node_type() const = 0;
   virtual field_type_t field_type() const = 0;
@@ -40,8 +43,10 @@ class DeltaRecorder {
 
  protected:
   DeltaRecorder() = default;
+  DeltaRecorder(const ValueBuilder& vb)
+    : value_recorder{vb.build_value_recorder(encoded)} {}
+
   ceph::bufferlist encoded;
-  // The tree only has one value implementation
   std::unique_ptr<ValueDeltaRecorder> value_recorder;
 };
 

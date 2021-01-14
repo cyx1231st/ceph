@@ -138,7 +138,8 @@ TEST_F(a_basic_test_t, 2_node_sizes)
   run_async([this] {
     auto nm = NodeExtentManager::create_dummy(IS_DUMMY_SYNC);
     auto t = make_transaction();
-    context_t c{*nm, *t};
+    ValueBuilderImpl<TestValue> vb;
+    context_t c{*nm, vb, *t};
     std::array<std::pair<NodeImplURef, NodeExtentMutable>, 16> nodes = {
       InternalNode0::allocate(c, false, 1u).unsafe_get0().make_pair(),
       InternalNode1::allocate(c, false, 1u).unsafe_get0().make_pair(),
@@ -172,14 +173,15 @@ struct b_dummy_tree_test_t : public seastar_test_suite_t {
   NodeExtentManagerURef moved_nm;
   TransactionRef ref_t;
   Transaction& t;
+  ValueBuilderImpl<TestValue> vb;
   context_t c;
-  Btree tree;
+  TestBtree tree;
 
   b_dummy_tree_test_t()
     : moved_nm{NodeExtentManager::create_dummy(IS_DUMMY_SYNC)},
       ref_t{make_transaction()},
       t{*ref_t},
-      c{*moved_nm, t},
+      c{*moved_nm, vb, t},
       tree{std::move(moved_nm)} {}
 
   seastar::future<> set_up_fut() override final {
@@ -205,7 +207,7 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_leaf_node)
 
     std::vector<std::tuple<ghobject_t,
                            value_item_t,
-                           Btree::Cursor>> insert_history;
+                           TestBtree::Cursor>> insert_history;
     auto f_validate_insert_new = [this, &insert_history] (
         const ghobject_t& key, const value_item_t& value) {
       auto [cursor, success] = tree.insert(
@@ -332,12 +334,18 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_leaf_node)
       // validate values in cursors keep intact
       Values::validate_cursor(c, k, v);
     }
-    Values::validate_cursor(
-        tree.lower_bound(t, key_s).unsafe_get0(), smallest_key, smallest_value);
-    Values::validate_cursor(
-        tree.begin(t).unsafe_get0(), smallest_key, smallest_value);
-    Values::validate_cursor(
-        tree.last(t).unsafe_get0(), largest_key, largest_value);
+    {
+      auto cursor = tree.lower_bound(t, key_s).unsafe_get0();
+      Values::validate_cursor(cursor, smallest_key, smallest_value);
+    }
+    {
+      auto cursor = tree.begin(t).unsafe_get0();
+      Values::validate_cursor(cursor, smallest_key, smallest_value);
+    }
+    {
+      auto cursor = tree.last(t).unsafe_get0();
+      Values::validate_cursor(cursor, largest_key, largest_value);
+    }
 
     std::ostringstream oss;
     tree.dump(t, oss);
@@ -380,7 +388,7 @@ class TestTree {
     : moved_nm{NodeExtentManager::create_dummy(IS_DUMMY_SYNC)},
       ref_t{make_transaction()},
       t{*ref_t},
-      c{*moved_nm, t},
+      c{*moved_nm, vb, t},
       tree{std::move(moved_nm)},
       values{0} {}
 
@@ -431,7 +439,7 @@ class TestTree {
   seastar::future<> split(const ghobject_t& key, const value_item_t& value,
                           const split_expectation_t& expected) {
     return seastar::async([this, key, value, expected] {
-      Btree tree_clone(NodeExtentManager::create_dummy(IS_DUMMY_SYNC));
+      TestBtree tree_clone(NodeExtentManager::create_dummy(IS_DUMMY_SYNC));
       auto ref_t_clone = make_transaction();
       Transaction& t_clone = *ref_t_clone;
       tree_clone.test_clone_from(t_clone, t, tree).unsafe_get0();
@@ -477,11 +485,12 @@ class TestTree {
   NodeExtentManagerURef moved_nm;
   TransactionRef ref_t;
   Transaction& t;
+  ValueBuilderImpl<TestValue> vb;
   context_t c;
-  Btree tree;
+  TestBtree tree;
   Values values;
   std::vector<std::tuple<
-    ghobject_t, value_item_t, Btree::Cursor>> insert_history;
+    ghobject_t, value_item_t, TestBtree::Cursor>> insert_history;
 };
 
 struct c_dummy_test_t : public seastar_test_suite_t {};
@@ -932,14 +941,15 @@ class DummyChildPool {
 
   context_t get_context() {
     ceph_assert(p_nm != nullptr);
-    return {*p_nm, t()};
+    return {*p_nm, vb, t()};
   }
 
   Transaction& t() const { return *ref_t; }
 
   std::set<Ref<DummyChild>> tracked_children;
-  std::optional<Btree> p_btree;
+  std::optional<TestBtree> p_btree;
   NodeExtentManager* p_nm = nullptr;
+  ValueBuilderImpl<TestValue> vb;
   TransactionRef ref_t = make_transaction();
 
   std::random_device rd;

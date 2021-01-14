@@ -586,9 +586,9 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
     }
   }
 
-  std::pair<NodeExtentMutable*, ValueDeltaRecorder*>
-  prepare_mutate_value_payload(context_t c, value_types_t type) {
-    return extent.prepare_mutate_value_payload(c, type);
+  std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
+  prepare_mutate_value_payload(context_t c) {
+    return extent.prepare_mutate_value_payload(c);
   }
 
  private:

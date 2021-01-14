@@ -24,15 +24,16 @@
 
 namespace crimson::os::seastore::onode {
 
+using TestBtree = Btree<TestValue>;
+
 struct value_item_t {
   value_size_t size;
   TestValue::id_t id;
   TestValue::magic_t magic;
 
-  value_config_t get_config() const {
+  TestBtree::tree_value_config_t get_config() const {
     assert(size > sizeof(value_header_t));
-    return {value_types_t::TEST,
-            static_cast<value_size_t>(size - sizeof(value_header_t))};
+    return {static_cast<value_size_t>(size - sizeof(value_header_t))};
   }
 };
 inline std::ostream& operator<<(std::ostream& os, const value_item_t& item) {
@@ -72,22 +73,22 @@ class Values {
 
   static void initialize_cursor(
       Transaction& t,
-      Btree::Cursor& cursor,
+      TestBtree::Cursor& cursor,
       const value_item_t& item) {
     ceph_assert(!cursor.is_end());
-    auto value = cursor.value()->cast<TestValue>();
+    auto value = cursor.value();
     ceph_assert(value->get_payload_size() + sizeof(value_header_t) == item.size);
     value->set_id_replayable(t, item.id);
     value->set_tail_magic_replayable(t, item.magic);
   }
 
   static void validate_cursor(
-      const Btree::Cursor& cursor,
+      TestBtree::Cursor& cursor,
       const ghobject_t& key,
       const value_item_t& item) {
     ceph_assert(!cursor.is_end());
     ceph_assert(cursor.get_ghobj() == key);
-    auto value = cursor.value()->cast<TestValue>();
+    auto value = cursor.value();
     ceph_assert(value->get_payload_size() + sizeof(value_header_t) == item.size);
     ceph_assert(value->get_id() == item.id);
     ceph_assert(value->get_tail_magic() == item.magic);
@@ -215,7 +216,7 @@ class KVPool {
 template <bool TRACK>
 class TreeBuilder {
  public:
-  using ertr = Btree::btree_ertr;
+  using ertr = TestBtree::btree_ertr;
   template <class ValueT=void>
   using future = ertr::future<ValueT>;
 
@@ -248,7 +249,7 @@ class TreeBuilder {
 
   future<> insert(Transaction& t) {
     kv_iter = kvs.random_begin();
-    auto cursors = seastar::make_lw_shared<std::vector<Btree::Cursor>>();
+    auto cursors = seastar::make_lw_shared<std::vector<TestBtree::Cursor>>();
     logger().warn("start inserting {} kvs ...", kvs.size());
     auto start_time = mono_clock::now();
     return crimson::do_until([&t, this, cursors]() -> future<bool> {
@@ -268,7 +269,8 @@ class TreeBuilder {
 #ifndef NDEBUG
         auto [key, value] = kv_iter.get_kv();
         Values::validate_cursor(cursor, key, value);
-        return tree->lower_bound(t, key).safe_then([this, cursor](auto cursor_) {
+        return tree->lower_bound(t, key
+        ).safe_then([this, cursor](auto cursor_) mutable {
           auto [key, value] = kv_iter.get_kv();
           ceph_assert(cursor_.get_ghobj() == key);
           // TODO:
@@ -352,7 +354,7 @@ class TreeBuilder {
   }
 
   KVPool& kvs;
-  std::optional<Btree> tree;
+  std::optional<TestBtree> tree;
   KVPool::iterator_t kv_iter;
 };
 
