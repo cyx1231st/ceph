@@ -99,7 +99,7 @@ TEST_F(a_basic_test_t, 1_basic_sizes)
   value.payload_size = 8;
 #define _STAGE_T(NodeType) node_to_stage_t<typename NodeType::node_stage_t>
 #define NXT_T(StageType)  staged<typename StageType::next_param_t>
-  laddr_packed_t i_value{0};
+  laddr_t i_value = 0;
   logger().info("\n"
     "Bytes of a key-value insertion (full-string):\n"
     "  s-p-c, 'n'-'o', s-g => value_payload(8): typically internal 43B, leaf 59B\n"
@@ -217,8 +217,7 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_leaf_node)
       Values::initialize_cursor(t, cursor, value);
       insert_history.emplace_back(key, value, cursor);
       auto cursor_ = tree.lower_bound(t, key).unsafe_get0();
-      // TODO:
-      ceph_assert(*cursor_.value() == *cursor.value());
+      ceph_assert(cursor_.value() == cursor.value());
       Values::validate_cursor(cursor_, key, value);
       return cursor.value();
     };
@@ -227,14 +226,13 @@ TEST_F(b_dummy_tree_test_t, 3_random_insert_leaf_node)
     // insert key1, value1 at STAGE_LEFT
     auto key1 = make_ghobj(3, 3, 3, "ns3", "oid3", 3, 3);
     auto value1 = values.pick();
-    auto p_value1 = f_validate_insert_new(key1, value1);
+    auto test_value1 = f_validate_insert_new(key1, value1);
 
     // validate lookup
     {
       auto cursor1_s = tree.lower_bound(t, key_s).unsafe_get0();
       ASSERT_EQ(cursor1_s.get_ghobj(), key1);
-      // TODO:
-      ASSERT_EQ(*cursor1_s.value(), *p_value1);
+      ASSERT_EQ(cursor1_s.value(), test_value1);
       auto cursor1_e = tree.lower_bound(t, key_e).unsafe_get0();
       ASSERT_TRUE(cursor1_e.is_end());
     }

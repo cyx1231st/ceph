@@ -77,9 +77,9 @@ class Values {
       const value_item_t& item) {
     ceph_assert(!cursor.is_end());
     auto value = cursor.value();
-    ceph_assert(value->get_payload_size() + sizeof(value_header_t) == item.size);
-    value->set_id_replayable(t, item.id);
-    value->set_tail_magic_replayable(t, item.magic);
+    ceph_assert(value.get_payload_size() + sizeof(value_header_t) == item.size);
+    value.set_id_replayable(t, item.id);
+    value.set_tail_magic_replayable(t, item.magic);
   }
 
   static void validate_cursor(
@@ -89,9 +89,9 @@ class Values {
     ceph_assert(!cursor.is_end());
     ceph_assert(cursor.get_ghobj() == key);
     auto value = cursor.value();
-    ceph_assert(value->get_payload_size() + sizeof(value_header_t) == item.size);
-    ceph_assert(value->get_id() == item.id);
-    ceph_assert(value->get_tail_magic() == item.magic);
+    ceph_assert(value.get_payload_size() + sizeof(value_header_t) == item.size);
+    ceph_assert(value.get_id() == item.id);
+    ceph_assert(value.get_tail_magic() == item.magic);
   }
 
  private:
@@ -273,8 +273,7 @@ class TreeBuilder {
         ).safe_then([this, cursor](auto cursor_) mutable {
           auto [key, value] = kv_iter.get_kv();
           ceph_assert(cursor_.get_ghobj() == key);
-          // TODO:
-          ceph_assert(*cursor_.value() == *cursor.value());
+          ceph_assert(cursor_.value() == cursor.value());
           Values::validate_cursor(cursor_, key, value);
           ++kv_iter;
           return ertr::make_ready_future<bool>(false);

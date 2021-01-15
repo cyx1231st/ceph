@@ -32,6 +32,11 @@ inline std::ostream& operator<<(std::ostream& os, const value_magic_t& magic) {
   }
 }
 
+/**
+ * value_config_t
+ *
+ * Parameters to create a value.
+ */
 struct value_config_t {
   value_magic_t magic;
   value_size_t payload_size;
@@ -59,7 +64,9 @@ inline std::ostream& operator<<(std::ostream& os, const value_config_t& conf) {
 /**
  * value_header_t
  *
- * The value layout in tree leaf node.
+ * The header structure in value layout.
+ *
+ * Value layout:
  *
  * # <- alloc size -> #
  * # header | payload #
@@ -103,6 +110,12 @@ inline value_size_t value_config_t::allocation_size() const {
   return value_header_t::estimate_allocation_size(payload_size);
 }
 
+/**
+ * ValueDeltaRecorder
+ *
+ * An abstracted class to handle user-defined value delta encode, decode and
+ * replay.
+ */
 class ValueDeltaRecorder {
  public:
   virtual ~ValueDeltaRecorder() = default;
@@ -111,8 +124,10 @@ class ValueDeltaRecorder {
   ValueDeltaRecorder& operator=(const ValueDeltaRecorder&) = delete;
   ValueDeltaRecorder& operator=(ValueDeltaRecorder&&) = delete;
 
+  /// Returns the value header magic for validation purpose.
   virtual value_magic_t get_header_magic() const = 0;
 
+  /// Called by DeltaRecorderT to apply user-defined value delta.
   virtual void apply_value_delta(ceph::bufferlist::const_iterator&,
                                  NodeExtentMutable&,
                                  laddr_t) = 0;
@@ -120,6 +135,7 @@ class ValueDeltaRecorder {
  protected:
   ValueDeltaRecorder(ceph::bufferlist& encoded) : encoded{encoded} {}
 
+  /// Get the delta buffer to encode user-defined value delta.
   ceph::bufferlist& get_encoded(NodeExtentMutable& payload_mut) {
     ceph::encode(node_delta_op_t::SUBOP_UPDATE_VALUE, encoded);
     node_offset_t offset = payload_mut.get_node_offset();
@@ -139,6 +155,18 @@ class ValueDeltaRecorder {
 
 class NodeExtentManager;
 class tree_cursor_t;
+/**
+ * Value
+ *
+ * Value is a stateles view of the underlying value header and payload content
+ * stored in a tree leaf node, with the support to implement user-defined value
+ * deltas and to extend and trim the underlying payload data (not implemented
+ * yet).
+ *
+ * In the current implementation, we don't guarantee any alignment for value
+ * payload due to unaligned node layout and the according merge and split
+ * operations.
+ */
 class Value : public boost::intrusive_ref_counter<
                      Value, boost::thread_unsafe_counter> {
  public:
@@ -151,11 +179,12 @@ class Value : public boost::intrusive_ref_counter<
   using future = ertr::future<ValueT>;
 
   virtual ~Value();
-  Value(const Value&) = delete;
-  Value(Value&&) = delete;
-  Value& operator=(const Value&) = delete;
-  Value& operator=(Value&&) = delete;
+  Value(const Value&) = default;
+  Value(Value&&) = default;
+  Value& operator=(const Value&) = default;
+  Value& operator=(Value&&) = default;
 
+  /// Returns the value payload size.
   value_size_t get_payload_size() const {
     return read_value_header()->payload_size;
   }
@@ -166,10 +195,13 @@ class Value : public boost::intrusive_ref_counter<
  protected:
   Value(NodeExtentManager&, const ValueBuilder&, Ref<tree_cursor_t>&);
 
+  /// Extends the payload size.
   future<> extend(Transaction&, value_size_t extend_size);
 
+  /// Trim and shrink the payload.
   future<> trim(Transaction&, value_size_t trim_size);
 
+  /// Get the permission to mutate the payload with the optional value recorder.
   template <typename PayloadT, typename ValueDeltaRecorderT>
   std::pair<NodeExtentMutable&, ValueDeltaRecorderT*>
   prepare_mutate_payload(Transaction& t) {
@@ -183,11 +215,10 @@ class Value : public boost::intrusive_ref_counter<
             static_cast<ValueDeltaRecorderT*>(value_mutable.second)};
   }
 
+  /// Get the latest payload pointer for read.
   template <typename PayloadT>
   const PayloadT* read_payload() const {
-    // In the current implementation, we don't guarantee any alignment for
-    // value payload due to unaligned node layout and the according merge and
-    // split operations.
+    // see Value documentation
     static_assert(alignof(PayloadT) == 1);
     assert(sizeof(PayloadT) <= get_payload_size());
     return reinterpret_cast<const PayloadT*>(read_value_header()->get_payload());
@@ -205,12 +236,23 @@ class Value : public boost::intrusive_ref_counter<
   Ref<tree_cursor_t> p_cursor;
 };
 
+/**
+ * ValueBuilder
+ *
+ * For tree nodes to build values without the need to depend on the actual
+ * implementation.
+ */
 struct ValueBuilder {
   virtual value_magic_t get_header_magic() const = 0;
   virtual std::unique_ptr<ValueDeltaRecorder>
   build_value_recorder(ceph::bufferlist&) const = 0;
 };
 
+/**
+ * ValueBuilderImpl
+ *
+ * The concrete ValueBuilder implementation in Btree.
+ */
 template <typename ValueImpl>
 struct ValueBuilderImpl final : public ValueBuilder {
   value_magic_t get_header_magic() const {
@@ -225,14 +267,18 @@ struct ValueBuilderImpl final : public ValueBuilder {
     return ret;
   }
 
-  Ref<ValueImpl> build_value(NodeExtentManager& nm,
-                             const ValueBuilder& vb,
-                             Ref<tree_cursor_t>& p_cursor) const {
+  ValueImpl build_value(NodeExtentManager& nm,
+                        const ValueBuilder& vb,
+                        Ref<tree_cursor_t>& p_cursor) const {
     assert(vb.get_header_magic() == get_header_magic());
-    return new ValueImpl(nm, vb, p_cursor);
+    return ValueImpl(nm, vb, p_cursor);
   }
 };
 
+/**
+ * Get the value recorder by type (the magic value) when the ValueBuilder is
+ * unavailable.
+ */
 std::unique_ptr<ValueDeltaRecorder>
 build_value_recorder_by_type(ceph::bufferlist& encoded, const value_magic_t& magic);
 

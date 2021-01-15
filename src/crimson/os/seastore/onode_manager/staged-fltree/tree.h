@@ -83,8 +83,7 @@ class Btree {
           p_tree->value_builder.get_header_magic()).to_ghobj();
     }
 
-    // TODO: remove ref
-    Ref<ValueImpl> value() {
+    ValueImpl value() {
       assert(!is_end());
       return p_tree->value_builder.build_value(
           *p_tree->nm, p_tree->value_builder, p_cursor);

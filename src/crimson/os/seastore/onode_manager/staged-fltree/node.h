@@ -96,23 +96,23 @@ class tree_cursor_t final
 
   // public to Value
 
-  /// Reads the current pointer to value_header_t
+  /// Get the latest value_header_t pointer for read.
   const value_header_t* read_value_header(value_magic_t magic) const {
     maybe_update_cache(magic);
     return cache.get_p_value_header();
   }
 
-  /// Prepare the node extent to be mutable and recorded
+  /// Prepare the node extent to be mutable and recorded.
   std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
   prepare_mutate_value_payload(context_t c) {
     maybe_update_cache(c.vb.get_header_magic());
     return cache.prepare_mutate_value_payload(c);
   }
 
-  /// Extend the size of value
+  /// Extends the size of value payload.
   future<> extend_value(context_t, value_size_t);
 
-  /// Trim and shrink the size of value
+  /// Trim and shrink the value payload.
   future<> trim_value(context_t, value_size_t);
 
  private:

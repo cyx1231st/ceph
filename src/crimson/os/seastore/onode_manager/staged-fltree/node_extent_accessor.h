@@ -207,9 +207,9 @@ class DeltaRecorderT final: public DeltaRecorder {
   }
 
   void encode_value(const value_input_t& value, ceph::bufferlist& encoded) const {
-    if constexpr (std::is_same_v<value_input_t, laddr_packed_t>) {
+    if constexpr (std::is_same_v<value_input_t, laddr_t>) {
       // NODE_TYPE == node_type_t::INTERNAL
-      ceph::encode(value.value, encoded);
+      ceph::encode(value, encoded);
     } else if constexpr (std::is_same_v<value_input_t, value_config_t>) {
       // NODE_TYPE == node_type_t::LEAF
       value.encode(encoded);
@@ -219,11 +219,11 @@ class DeltaRecorderT final: public DeltaRecorder {
   }
 
   value_input_t decode_value(ceph::bufferlist::const_iterator& delta) const {
-    if constexpr (std::is_same_v<value_input_t, laddr_packed_t>) {
+    if constexpr (std::is_same_v<value_input_t, laddr_t>) {
       // NODE_TYPE == node_type_t::INTERNAL
       laddr_t value;
       ceph::decode(value, delta);
-      return laddr_packed_t{value};
+      return value;
     } else if constexpr (std::is_same_v<value_input_t, value_config_t>) {
       // NODE_TYPE == node_type_t::LEAF
       return value_config_t::decode(delta);

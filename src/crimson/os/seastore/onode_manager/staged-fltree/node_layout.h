@@ -537,17 +537,16 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
       const key_view_t& key, const laddr_t& value,
       search_position_t& insert_pos) const override {
     if constexpr (NODE_TYPE == node_type_t::INTERNAL) {
-      auto packed_value = laddr_packed_t{value};
       auto& node_stage = extent.read();
       match_stage_t insert_stage;
       node_offset_t insert_size;
       if (unlikely(!node_stage.keys())) {
         assert(insert_pos.is_end());
         insert_stage = STAGE;
-        insert_size = STAGE_T::template insert_size<KeyT::VIEW>(key, packed_value);
+        insert_size = STAGE_T::template insert_size<KeyT::VIEW>(key, value);
       } else {
         std::tie(insert_stage, insert_size) = STAGE_T::evaluate_insert(
-            node_stage, key, packed_value, cast_down<STAGE>(insert_pos), false);
+            node_stage, key, value, cast_down<STAGE>(insert_pos), false);
       }
       return {insert_stage, insert_size};
     } else {
