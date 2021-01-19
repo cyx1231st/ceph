@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -ex
 
+CEPHBUILD_CONF=" "\
+"-j70 "\
+"-DCMAKE_BUILD_TYPE=Debug "\
+"-DWITH_SEASTORE_PMEM=ON "\
+"-DWITH_RBD=OFF -DWITH_MGR=OFF "\
+"-DWITH_SPDK=OFF -DWITH_CEPHFS=OFF -DWITH_RADOSGW=OFF -DWITH_FUSE=OFF -DWITH_MGR_DASHBOARD_FRONTEND=OFF -DWITH_KRBD=OFF -DWITH_LEVELDB=OFF "\
+"-DCMAKE_CXX_FLAGS=\"-fno-omit-frame-pointer\" "\
+"-DWITH_SEASTAR=ON "\
+""
+
 if [ -d .git ]; then
     git submodule update --init --recursive
 fi
@@ -9,8 +19,7 @@ fi
 : ${CEPH_GIT_DIR:=..}
 
 if [ -e $BUILD_DIR ]; then
-    echo "'$BUILD_DIR' dir already exists; either rm -rf '$BUILD_DIR' and re-run, or set BUILD_DIR env var to a different directory name"
-    exit 1
+    echo "'$BUILD_DIR' dir already exists"
 fi
 
 PYBUILD="2"
@@ -60,13 +69,18 @@ if [[ ! "$ARGS $@" =~ "-DBOOST_J" ]] ; then
     [ -n "$ncpu" -a "$ncpu" -gt 1 ] && ARGS+=" -DBOOST_J=$(expr $ncpu / 2)"
 fi
 
-mkdir $BUILD_DIR
+ARGS+=$CEPHBUILD_CONF
+
+mkdir -p $BUILD_DIR
 cd $BUILD_DIR
 if type cmake3 > /dev/null 2>&1 ; then
     CMAKE=cmake3
 else
     CMAKE=cmake
 fi
+
+echo "${CMAKE} $ARGS $@ $CEPH_GIT_DIR"
+
 ${CMAKE} $ARGS "$@" $CEPH_GIT_DIR || exit 1
 set +x
 
