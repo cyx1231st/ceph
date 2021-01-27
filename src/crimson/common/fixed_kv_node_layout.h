@@ -460,10 +460,10 @@ public:
     FixedKVNodeLayout &right) const {
     auto piviter = get_split_pivot();
 
-    left.copy_from_foreign(left.begin(), begin(), piviter);
+    copy_from_foreign(left.begin(), begin(), piviter);
     left.set_size(piviter - begin());
 
-    right.copy_from_foreign(right.begin(), piviter, end());
+    copy_from_foreign(right.begin(), piviter, end());
     right.set_size(end() - piviter);
 
     auto [lmeta, rmeta] = get_meta().split_into(piviter->get_key());

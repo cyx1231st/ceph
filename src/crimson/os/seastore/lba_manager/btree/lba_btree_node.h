@@ -233,6 +233,7 @@ struct LBANode : CachedExtent {
   virtual ~LBANode() = default;
 
   void on_delta_write(paddr_t record_block_offset) final {
+    assert(!record_block_offset.is_relative());
     // All in-memory relative addrs are necessarily record-relative
     assert(get_prior_instance());
     pin.take_pin(get_prior_instance()->cast<LBANode>()->pin);
@@ -240,11 +241,13 @@ struct LBANode : CachedExtent {
   }
 
   void on_initial_write() final {
+    assert(!get_paddr().is_relative());
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
   }
 
   void on_clean_read() final {
+    assert(!get_paddr().is_relative());
     // From initial write of block, relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
   }

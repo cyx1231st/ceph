@@ -344,6 +344,7 @@ BtreeLBAManager::rewrite_extent_ret BtreeLBAManager::rewrite_extent(
   Transaction &t,
   CachedExtentRef extent)
 {
+  // assert(!extent->is_clean());
   if (extent->is_logical()) {
     auto lextent = extent->cast<LogicalCachedExtent>();
     cache.retire_extent(t, extent);

@@ -398,10 +398,13 @@ protected:
     if (!addr.is_relative()) {
       return addr;
     } else if (is_mutation_pending()) {
+      ceph_assert(!get_paddr().is_relative());
+      ceph_assert(addr.is_record_relative());
       return addr;
     } else {
       ceph_assert(is_initial_pending());
       ceph_assert(get_paddr().is_record_relative());
+      ceph_assert(addr.is_record_relative());
       return addr - get_paddr();
     }
   }

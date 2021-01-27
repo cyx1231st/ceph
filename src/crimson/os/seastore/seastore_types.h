@@ -127,8 +127,7 @@ struct paddr_t {
    * block_relative address.
    */
   paddr_t operator-(paddr_t rhs) const {
-    assert(rhs.is_relative() && is_relative());
-    assert(rhs.segment == segment);
+    ceph_assert(rhs.is_record_relative() && is_record_relative());
     return paddr_t{
       BLOCK_REL_SEG_ID,
       offset - rhs.offset
@@ -145,6 +144,7 @@ struct paddr_t {
    */
   paddr_t maybe_relative_to(paddr_t base) const {
     assert(!base.is_block_relative());
+    // violated: assert(!is_record_relative());
     if (is_block_relative())
       return base.add_block_relative(*this);
     else

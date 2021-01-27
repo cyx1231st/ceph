@@ -170,6 +170,7 @@ CachedExtentRef Cache::duplicate_for_write(
     ret->last_committed_crc = i->last_committed_crc;
     ret->prior_instance = i;
     t.add_mutated_extent(ret);
+    assert(!ret->get_paddr().is_relative());
   }
 
   ret->version++;
@@ -279,6 +280,7 @@ void Cache::complete_commit(
   journal_seq_t seq,
   SegmentCleaner *cleaner)
 {
+  assert(!final_block_start.is_relative());
   if (t.root) {
     remove_extent(root);
     root = t.root;
@@ -290,7 +292,9 @@ void Cache::complete_commit(
   }
 
   for (auto &i: t.fresh_block_list) {
-    i->set_paddr(final_block_start.add_relative(i->get_paddr()));
+    auto paddr = final_block_start.add_relative(i->get_paddr());
+    assert(!paddr.is_relative());
+    i->set_paddr(paddr);
     i->last_committed_crc = i->get_crc32c();
     i->on_initial_write();
 
@@ -374,6 +378,7 @@ Cache::replay_delta(
   paddr_t record_base,
   const delta_info_t &delta)
 {
+  assert(!record_base.is_relative());
   if (delta.type == extent_types_t::ROOT) {
     logger().debug("replay_delta: found root delta");
     root->apply_delta_and_adjust_crc(record_base, delta.bl);

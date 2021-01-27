@@ -237,6 +237,7 @@ struct LBAInternalNode
   void apply_delta_and_adjust_crc(
     paddr_t base, const ceph::bufferlist &_bl) final {
     assert(_bl.length());
+    assert(!base.is_relative());
     ceph::bufferlist bl = _bl;
     bl.rebuild();
     delta_buffer_t buffer;
@@ -507,6 +508,7 @@ struct LBALeafNode
   void apply_delta_and_adjust_crc(
     paddr_t base, const ceph::bufferlist &_bl) final {
     assert(_bl.length());
+    assert(!base.is_relative());
     ceph::bufferlist bl = _bl;
     bl.rebuild();
     delta_buffer_t buffer;

@@ -154,6 +154,7 @@ public:
       auto ref = CachedExtent::make_cached_extent_ref<T>(
 	alloc_cache_buf(length));
       ref->set_io_wait();
+      assert(!offset.is_relative());
       ref->set_paddr(offset);
       ref->state = CachedExtent::extent_state_t::CLEAN;
 
