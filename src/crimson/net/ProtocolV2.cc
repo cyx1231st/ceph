@@ -148,10 +148,20 @@ ProtocolV2::ProtocolV2(ChainedDispatchers& dispatchers,
                        SocketMessenger& messenger)
   : Protocol(proto_t::v2, dispatchers, conn),
     messenger{messenger},
-    protocol_timer{conn}
-{}
+    protocol_timer{conn},
+    sweep_timer{[this] {
+      if (cnt_sweep) {
+        logger().warn("{}: sweep batch is {} / {} = {}",
+                      this->conn, cnt_swept_msgs, cnt_sweep, (double) cnt_swept_msgs / cnt_sweep);
+        cnt_swept_msgs = 0;
+        cnt_sweep = 0;
+      } else {
+        assert(!cnt_swept_msgs);
+      }
+    }}
+{ sweep_timer.arm_periodic(std::chrono::seconds(1)); }
 
-ProtocolV2::~ProtocolV2() {}
+ProtocolV2::~ProtocolV2() { sweep_timer.cancel(); }
 
 bool ProtocolV2::is_connected() const {
   return state == state_t::READY ||
@@ -1846,6 +1856,9 @@ ceph::bufferlist ProtocolV2::do_sweep_messages(
     bl.append(message.get_buffer(tx_frame_asm));
     INTERCEPT_FRAME(ceph::msgr::v2::Tag::MESSAGE, bp_type_t::WRITE);
   });
+
+  cnt_swept_msgs += num_msgs;
+  ++cnt_sweep;
 
   return bl;
 }

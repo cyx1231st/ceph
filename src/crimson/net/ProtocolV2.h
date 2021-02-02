@@ -109,6 +109,10 @@ class ProtocolV2 final : public Protocol {
   };
   Timer protocol_timer;
 
+  std::size_t cnt_sweep = 0;
+  std::size_t cnt_swept_msgs = 0;
+  seastar::timer<seastar::lowres_clock> sweep_timer;
+
  // TODO: Frame related implementations, probably to a separate class.
  private:
   bool record_io = false;
