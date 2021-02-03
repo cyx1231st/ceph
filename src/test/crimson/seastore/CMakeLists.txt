@@ -45,4 +45,13 @@ target_link_libraries(
   ${CMAKE_DL_LIBS}
   crimson-seastore)
 
+if(WITH_SEASTORE_PMEM)
+  add_executable(unittest-seastore-pmem
+    test_pmem.cc)
+  target_link_libraries(
+    unittest-seastore-pmem
+    crimson::gtest
+    crimson-seastore)
+endif()
+
 add_subdirectory(onode_tree)

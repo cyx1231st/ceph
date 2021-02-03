@@ -21,6 +21,10 @@ set(crimson_common_srcs
   common/throttle.cc
   common/tri_mutex.cc)
 
+if(WITH_SEASTORE_PMEM)
+  list(APPEND crimson_common_srcs common/pmem.cc)
+endif()
+
 # the specialized version of ceph-common, where
 #  - the logging is sent to Seastar backend
 #  - and the template parameter of lock_policy is SINGLE
@@ -142,6 +146,11 @@ target_link_libraries(crimson-common
     crc32
     ${crimson_common_deps}
     OpenSSL::Crypto)
+
+if(WITH_SEASTORE_PMEM)
+  target_link_libraries(crimson-common
+    PUBLIC pmem::pmem2)
+endif()
 
 set(crimson_auth_srcs
   auth/KeyRing.cc
