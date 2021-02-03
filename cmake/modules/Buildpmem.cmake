@@ -20,16 +20,15 @@ function(build_pmem)
       GIT_SHALLOW TRUE
       SOURCE_DIR ${CMAKE_BINARY_DIR}/src/pmdk
       CONFIGURE_COMMAND ""
-      # Explicitly built w/o NDCTL, otherwise if ndtcl is present on the
-      # build system tests statically linking to librbd (which uses
-      # libpmemobj) will not link (because we don't build the ndctl
-      # static library here).
-      BUILD_COMMAND ${make_cmd} CC=${CMAKE_C_COMPILER} NDCTL_ENABLE=n DOC=n
+      BUILD_COMMAND ${make_cmd} CC=${CMAKE_C_COMPILER} DOC=n
       BUILD_IN_SOURCE 1
       BUILD_BYPRODUCTS "${PMDK_LIB}/libpmem.a"
                        "${PMDK_LIB}/libpmem2.a"
                        "${PMDK_LIB}/libpmemobj.a"
       INSTALL_COMMAND "true")
+
+  # see LIBNDCTL_LIBS
+  set(PMDK_DEPS "-lndctl -ldaxctl")
 
   # libpmem
   add_library(pmem::pmem STATIC IMPORTED)
@@ -38,7 +37,7 @@ function(build_pmem)
   set_target_properties(pmem::pmem PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES ${PMDK_INCLUDE}
     IMPORTED_LOCATION "${PMDK_LIB}/libpmem.a"
-    INTERFACE_LINK_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
+    INTERFACE_LINK_LIBRARIES "${CMAKE_THREAD_LIBS_INIT} ${PMDK_DEPS}")
 
   # libpmem2
   add_library(pmem::pmem2 STATIC IMPORTED)
@@ -47,7 +46,7 @@ function(build_pmem)
   set_target_properties(pmem::pmem2 PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES ${PMDK_INCLUDE}
     IMPORTED_LOCATION "${PMDK_LIB}/libpmem2.a"
-    INTERFACE_LINK_LIBRARIES "${CMAKE_THREAD_LIBS_INIT}")
+    INTERFACE_LINK_LIBRARIES "${CMAKE_THREAD_LIBS_INIT} ${PMDK_DEPS}")
 
   # libpmemobj
   add_library(pmem::pmemobj STATIC IMPORTED)
@@ -55,6 +54,6 @@ function(build_pmem)
   set_target_properties(pmem::pmemobj PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES ${PMDK_INCLUDE}
     IMPORTED_LOCATION "${PMDK_LIB}/libpmemobj.a"
-    INTERFACE_LINK_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
+    INTERFACE_LINK_LIBRARIES "${CMAKE_THREAD_LIBS_INIT} ${PMDK_DEPS}")
 
 endfunction()
