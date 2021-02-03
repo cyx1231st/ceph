@@ -26,7 +26,9 @@ function(build_pmem)
       # static library here).
       BUILD_COMMAND ${make_cmd} CC=${CMAKE_C_COMPILER} NDCTL_ENABLE=n DOC=n
       BUILD_IN_SOURCE 1
-      BUILD_BYPRODUCTS "${PMDK_LIB}/libpmem.a" "${PMDK_LIB}/libpmemobj.a"
+      BUILD_BYPRODUCTS "${PMDK_LIB}/libpmem.a"
+                       "${PMDK_LIB}/libpmem2.a"
+                       "${PMDK_LIB}/libpmemobj.a"
       INSTALL_COMMAND "true")
 
   # libpmem
@@ -37,6 +39,15 @@ function(build_pmem)
     INTERFACE_INCLUDE_DIRECTORIES ${PMDK_INCLUDE}
     IMPORTED_LOCATION "${PMDK_LIB}/libpmem.a"
     INTERFACE_LINK_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
+
+  # libpmem2
+  add_library(pmem::pmem2 STATIC IMPORTED)
+  add_dependencies(pmem::pmem2 pmdk_ext)
+  file(MAKE_DIRECTORY ${PMDK_INCLUDE})
+  set_target_properties(pmem::pmem2 PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES ${PMDK_INCLUDE}
+    IMPORTED_LOCATION "${PMDK_LIB}/libpmem2.a"
+    INTERFACE_LINK_LIBRARIES "${CMAKE_THREAD_LIBS_INIT}")
 
   # libpmemobj
   add_library(pmem::pmemobj STATIC IMPORTED)
