@@ -117,9 +117,14 @@ class Btree {
       assert(!is_end());
       auto this_obj = *this;
       return p_cursor->erase(p_tree->get_context(t), true
-      ).safe_then([this_obj] (Ref<tree_cursor_t> next_cursor) {
-        assert(this_obj.p_cursor->is_invalid());
-        return Cursor{this_obj.p_tree, next_cursor};
+      ).safe_then([this_obj, this] (Ref<tree_cursor_t> next_cursor) {
+        assert(p_cursor->is_invalid());
+        if (next_cursor) {
+          assert(!next_cursor->is_end());
+          return Cursor{p_tree, next_cursor};
+        } else {
+          return Cursor{p_tree};
+        }
       });
     }
 
