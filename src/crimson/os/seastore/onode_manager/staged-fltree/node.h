@@ -430,13 +430,13 @@ class Node
   };
   const parent_info_t& parent_info() const { return *_parent_info; }
 
-  node_future<> apply_split_to_parent(context_t, Ref<Node>, bool);
+  node_future<> apply_split_to_parent(context_t, Ref<Node>&&, Ref<Node>&&, bool);
   node_future<Ref<tree_cursor_t>> get_next_cursor_from_parent(context_t);
   template <bool FORCE_MERGE = false>
-  node_future<> try_merge_adjacent(context_t, bool);
+  node_future<> try_merge_adjacent(context_t, bool, Ref<Node>&&);
   node_future<> erase_node(context_t, Ref<Node>&&);
   template <bool FORCE_MERGE = false>
-  node_future<> fix_parent_index(context_t);
+  node_future<> fix_parent_index(context_t, Ref<Node>&&, bool);
   node_future<NodeExtentMutable> rebuild_extent(context_t);
   node_future<> retire(context_t, Ref<Node>&&);
   void make_tail(context_t);
@@ -485,7 +485,7 @@ class InternalNode final : public Node {
 
   node_future<Ref<tree_cursor_t>> get_next_cursor(context_t, const search_position_t&);
 
-  node_future<> apply_child_split(context_t, Ref<Node> left, Ref<Node> right, bool);
+  node_future<> apply_child_split(context_t, Ref<Node>&& left, Ref<Node>&& right, bool);
 
   template <bool VALIDATE>
   void do_track_child(Node& child) {
@@ -520,11 +520,11 @@ class InternalNode final : public Node {
   node_future<> erase_child(context_t, Ref<Node>&&);
 
   template <bool FORCE_MERGE = false>
-  node_future<> fix_index(context_t, Ref<Node>);
+  node_future<> fix_index(context_t, Ref<Node>&&, bool);
 
   template <bool FORCE_MERGE = false>
   node_future<> apply_children_merge(
-      context_t, Ref<Node>&& left, Ref<Node>&& right, bool update_index);
+      context_t, Ref<Node>&& left, laddr_t, Ref<Node>&& right, bool update_index);
 
   void validate_child_tracked(const Node& child) const {
     validate_child(child);
@@ -572,6 +572,7 @@ class InternalNode final : public Node {
   // XXX: extract a common tracker for InternalNode to track Node,
   // and LeafNode to track tree_cursor_t.
   node_future<Ref<Node>> get_or_track_child(context_t, const search_position_t&, laddr_t);
+  template <bool VALIDATE = true>
   void track_insert(
       const search_position_t&, match_stage_t, Ref<Node>, Ref<Node> nxt_child = nullptr);
   void replace_track(Ref<Node> new_child, Ref<Node> old_child, bool);

@@ -477,12 +477,16 @@ template void Node::as_child<true>(const search_position_t&, Ref<InternalNode>);
 template void Node::as_child<false>(const search_position_t&, Ref<InternalNode>);
 
 node_future<> Node::apply_split_to_parent(
-    context_t c, Ref<Node> split_right, bool update_right_index)
+    context_t c,
+    Ref<Node>&& this_ref,
+    Ref<Node>&& split_right,
+    bool update_right_index)
 {
   assert(!is_root());
+  assert(this == this_ref.get());
   // TODO(cross-node string dedup)
   return parent_info().ptr->apply_child_split(
-      c, this, split_right, update_right_index);
+      c, std::move(this_ref), std::move(split_right), update_right_index);
 }
 
 node_future<Ref<tree_cursor_t>>
@@ -495,15 +499,16 @@ Node::get_next_cursor_from_parent(context_t c)
 
 template <bool FORCE_MERGE>
 node_future<>
-Node::try_merge_adjacent(context_t c, bool update_parent_index)
+Node::try_merge_adjacent(
+    context_t c, bool update_parent_index, Ref<Node>&& this_ref)
 {
+  assert(this == this_ref.get());
   impl->validate_non_empty();
   assert(!is_root());
-  Ref<Node> this_ref = this;
   if constexpr (!FORCE_MERGE) {
     if (!impl->is_size_underflow()) {
       if (update_parent_index) {
-        return fix_parent_index(c);
+        return fix_parent_index(c, std::move(this_ref), false);
       } else {
         parent_info().ptr->validate_child_tracked(*this);
         return node_ertr::now();
@@ -517,26 +522,32 @@ Node::try_merge_adjacent(context_t c, bool update_parent_index)
     auto& [lnode, rnode] = lr_nodes;
     Ref<Node> left_for_merge;
     Ref<Node> right_for_merge;
+    Ref<Node>* p_this_ref;
     bool is_left;
     if (!lnode && !rnode) {
       // XXX: this is possible before node rebalance is implemented,
       // when its parent cannot merge with its peers and has only one child
       // (this node).
+      p_this_ref = &this_ref;
     } else if (!lnode) {
       left_for_merge = std::move(this_ref);
+      p_this_ref = &left_for_merge;
       right_for_merge = std::move(rnode);
       is_left = true;
     } else if (!rnode) {
       left_for_merge = std::move(lnode);
       right_for_merge = std::move(this_ref);
+      p_this_ref = &right_for_merge;
       is_left = false;
     } else { // lnode && rnode
       if (lnode->impl->free_size() > rnode->impl->free_size()) {
         left_for_merge = std::move(lnode);
         right_for_merge = std::move(this_ref);
+        p_this_ref = &right_for_merge;
         is_left = false;
       } else { // lnode free size <= rnode free size
         left_for_merge = std::move(this_ref);
+        p_this_ref = &left_for_merge;
         right_for_merge = std::move(rnode);
         is_left = true;
       }
@@ -555,14 +566,16 @@ Node::try_merge_adjacent(context_t c, bool update_parent_index)
           update_index_after_merge = update_parent_index;
         }
         logger().info("OTree::Node::MergeAdjacent: merge {} and {} "
-                      "at merge_stage={}, merge_size={}B, update_index={} ...",
+                      "at merge_stage={}, merge_size={}B, update_index={}, is_left={} ...",
                       left_for_merge->get_name(), right_for_merge->get_name(),
-                      merge_stage, merge_size, update_index_after_merge);
+                      merge_stage, merge_size, update_index_after_merge, is_left);
         // we currently cannot generate delta depends on another extent content,
         // so use rebuild_extent() as a workaround to rebuild the node from a
         // fresh extent, thus no need to generate delta.
+        auto left_addr = left_for_merge->impl->laddr();
         return left_for_merge->rebuild_extent(c
         ).safe_then([c, merge_stage, merge_size, update_index_after_merge,
+                     left_addr,
                      left_for_merge = std::move(left_for_merge),
                      right_for_merge = std::move(right_for_merge)] (auto left_mut) mutable {
           if (left_for_merge->impl->node_type() == node_type_t::LEAF) {
@@ -573,7 +586,7 @@ Node::try_merge_adjacent(context_t c, bool update_parent_index)
               left_mut, *right_for_merge->impl, merge_stage, merge_size);
           left_for_merge->track_merge(right_for_merge, merge_stage, left_last_pos);
           return left_for_merge->parent_info().ptr->apply_children_merge(
-              c, std::move(left_for_merge),
+              c, std::move(left_for_merge), left_addr,
               std::move(right_for_merge), update_index_after_merge);
         });
       } else {
@@ -583,7 +596,7 @@ Node::try_merge_adjacent(context_t c, bool update_parent_index)
 
     // cannot merge
     if (update_parent_index) {
-      return fix_parent_index(c);
+      return fix_parent_index(c, std::move(*p_this_ref), false);
     } else {
       parent_info().ptr->validate_child_tracked(*this);
       return node_ertr::now();
@@ -591,8 +604,8 @@ Node::try_merge_adjacent(context_t c, bool update_parent_index)
     // XXX: rebalance
   });
 }
-template node_future<> Node::try_merge_adjacent<true>(context_t, bool);
-template node_future<> Node::try_merge_adjacent<false>(context_t, bool);
+template node_future<> Node::try_merge_adjacent<true>(context_t, bool, Ref<Node>&&);
+template node_future<> Node::try_merge_adjacent<false>(context_t, bool, Ref<Node>&&);
 
 node_future<> Node::erase_node(context_t c, Ref<Node>&& this_ref)
 {
@@ -604,18 +617,20 @@ node_future<> Node::erase_node(context_t c, Ref<Node>&& this_ref)
 }
 
 template <bool FORCE_MERGE = false>
-node_future<> Node::fix_parent_index(context_t c)
+node_future<> Node::fix_parent_index(
+    context_t c, Ref<Node>&& this_ref, bool check_downgrade)
 {
   assert(!is_root());
+  assert(this == this_ref.get());
   auto& parent = parent_info().ptr;
   // one-way unlink
   parent->do_untrack_child(*this);
   // the rest of parent tracks should be correct
   parent->validate_tracked_children();
-  return parent->fix_index<FORCE_MERGE>(c, this);
+  return parent->fix_index<FORCE_MERGE>(c, std::move(this_ref), check_downgrade);
 }
-template node_future<> Node::fix_parent_index<true>(context_t);
-template node_future<> Node::fix_parent_index<false>(context_t);
+template node_future<> Node::fix_parent_index<true>(context_t, Ref<Node>&&, bool);
+template node_future<> Node::fix_parent_index<false>(context_t, Ref<Node>&&, bool);
 
 node_future<Ref<Node>> Node::load(
     context_t c, laddr_t addr, bool expect_is_level_tail)
@@ -711,7 +726,7 @@ InternalNode::get_next_cursor(context_t c, const search_position_t& pos)
 }
 
 node_future<> InternalNode::apply_child_split(
-    context_t c, Ref<Node> left_child, Ref<Node> right_child,
+    context_t c, Ref<Node>&& left_child, Ref<Node>&& right_child,
     bool update_right_index)
 {
   auto& left_pos = left_child->parent_info().position;
@@ -742,23 +757,27 @@ node_future<> InternalNode::apply_child_split(
   replace_track(right_child, left_child, update_right_index);
 
   auto left_key = *left_child->impl->get_pivot_index();
-  Ref<InternalNode> this_ref = this;
+  Ref<Node> this_ref = this;
   return insert_or_split(
       c, left_pos, left_key, left_child,
       (update_right_index ? right_child : nullptr)
-  ).safe_then([this, c, this_ref = std::move(this_ref)] (auto split_right) {
+  ).safe_then([this, c,
+               this_ref = std::move(this_ref)] (auto split_right) mutable {
     if (split_right) {
       // even if update_right_index could be true,
       // we haven't fixed the right_child index of this node yet,
       // so my parent index should be correct now.
-      return apply_split_to_parent(c, split_right, false);
+      return apply_split_to_parent(
+          c, std::move(this_ref), std::move(split_right), false);
     } else {
       return node_ertr::now();
     }
-  }).safe_then([c, update_right_index, right_child] {
+  }).safe_then([c, update_right_index,
+                right_child = std::move(right_child)] () mutable {
     if (update_right_index) {
       // right_child must be already untracked by insert_or_split()
-      return right_child->parent_info().ptr->fix_index(c, right_child);
+      return right_child->parent_info().ptr->fix_index(
+          c, std::move(right_child), false);
     } else {
       // there is no need to call try_merge_adjacent() because
       // the filled size of the inserted node or the split right node
@@ -810,7 +829,7 @@ node_future<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
     }
 
     do_untrack_child(*child_ref);
-    Ref<InternalNode> this_ref = this;
+    Ref<Node> this_ref = this;
     child_ref->_parent_info.reset();
     return child_ref->retire(c, std::move(child_ref)
     ).safe_then([c, this, child_pos, this_ref = std::move(this_ref)] () mutable {
@@ -849,9 +868,7 @@ node_future<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
 
         // no child should be referencing this node now, this_ref is the last one.
         assert(this_ref->use_count() == 1);
-        Ref<Node> node_ref = this_ref;
-        this_ref.reset();
-        return Node::erase_node(c, std::move(node_ref));
+        return Node::erase_node(c, std::move(this_ref));
       }
 
       impl->prepare_mutate(c);
@@ -876,13 +893,14 @@ node_future<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
           next_or_last_pos.is_end() ? update_parent_index = true
                                     : update_parent_index = false;
         }
-        return try_merge_adjacent(c, update_parent_index);
+        return try_merge_adjacent(c, update_parent_index, std::move(this_ref));
       }
-    }).safe_then([c, new_tail_child = std::move(new_tail_child)] {
+    }).safe_then([c, new_tail_child = std::move(new_tail_child)] () mutable {
       // finally, check if the new tail child needs to merge
       if (new_tail_child && !new_tail_child->is_root()) {
         assert(new_tail_child->impl->is_level_tail());
-        return new_tail_child->try_merge_adjacent(c, false);
+        return new_tail_child->try_merge_adjacent(
+            c, false, std::move(new_tail_child));
       } else {
         return node_ertr::now();
       }
@@ -891,7 +909,8 @@ node_future<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
 }
 
 template <bool FORCE_MERGE>
-node_future<> InternalNode::fix_index(context_t c, Ref<Node> child)
+node_future<> InternalNode::fix_index(
+    context_t c, Ref<Node>&& child, bool check_downgrade)
 {
   impl->validate_non_empty();
 
@@ -921,24 +940,31 @@ node_future<> InternalNode::fix_index(context_t c, Ref<Node> child)
                       : update_parent_index = false;
   }
 
-  Ref<InternalNode> this_ref = this;
+  Ref<Node> this_ref = this;
   return insert_or_split(c, next_pos, new_key, child
-  ).safe_then([this, c, update_parent_index,
-               this_ref = std::move(this_ref)] (auto split_right) {
+  ).safe_then([this, c, update_parent_index, check_downgrade,
+               this_ref = std::move(this_ref)] (auto split_right) mutable {
     if (split_right) {
       // after split, the parent index to the split_right will be incorrect
       // if update_parent_index is true.
-      return apply_split_to_parent(c, split_right, update_parent_index);
+      return apply_split_to_parent(
+          c, std::move(this_ref), std::move(split_right), update_parent_index);
     } else {
       // no split path
       if (is_root()) {
-        // no need to call try_downgrade_root() because the number of keys
-        // has not changed.
-        return node_ertr::now();
+        if (check_downgrade) {
+          return try_downgrade_root(c, std::move(this_ref));
+        } else {
+          // no need to call try_downgrade_root() because the number of keys
+          // has not changed, and I must have at least 2 keys.
+          assert(!impl->is_keys_empty());
+          return node_ertr::now();
+        }
       } else {
         // for non-root, maybe need merge adjacent or fix parent,
         // because the filled node size may be reduced.
-        return try_merge_adjacent<FORCE_MERGE>(c, update_parent_index);
+        return try_merge_adjacent<FORCE_MERGE>(
+            c, update_parent_index, std::move(this_ref));
       }
     }
   });
@@ -946,16 +972,16 @@ node_future<> InternalNode::fix_index(context_t c, Ref<Node> child)
 
 template <bool FORCE_MERGE>
 node_future<> InternalNode::apply_children_merge(
-    context_t c, Ref<Node>&& left_child,
+    context_t c, Ref<Node>&& left_child, laddr_t origin_left_addr,
     Ref<Node>&& right_child, bool update_index)
 {
   auto left_pos = left_child->parent_info().position;
   auto left_addr = left_child->impl->laddr();
   auto& right_pos = right_child->parent_info().position;
   auto right_addr = right_child->impl->laddr();
-  logger().debug("OTree::Internal::ApplyChildMerge: apply {}'s child "
-                 "{} at pos({}), to merge with {} at pos({}), update_index={} ...",
-                 get_name(), left_child->get_name(), left_pos,
+  logger().debug("OTree::Internal::ApplyChildMerge: apply {}'s child {} (was {:#x}) "
+                 "at pos({}), to merge with {} at pos({}), update_index={} ...",
+                 get_name(), left_child->get_name(), origin_left_addr, left_pos,
                  right_child->get_name(), right_pos, update_index);
 
 #ifndef NDEBUG
@@ -963,7 +989,7 @@ node_future<> InternalNode::apply_children_merge(
   assert(!left_pos.is_end());
   const laddr_packed_t* p_value_left;
   impl->get_slot(left_pos, nullptr, &p_value_left);
-  assert(p_value_left->value == left_addr);
+  assert(p_value_left->value == origin_left_addr);
 
   assert(right_child->use_count() == 1);
   assert(right_child->parent_info().ptr == this);
@@ -1002,38 +1028,31 @@ node_future<> InternalNode::apply_children_merge(
   return right_child->retire(c, std::move(right_child)
   ).safe_then([c, this, update_index,
                left_child = std::move(left_child)] () mutable {
-    Ref<InternalNode> this_ref = this;
     if (update_index) {
-      return left_child->fix_parent_index<FORCE_MERGE>(c
-      ).safe_then([c, this, this_ref = std::move(this_ref)] {
-        // I'm all good but:
-        // - my number of keys is reduced by 1
-        // - my size may underflow,
-        //   but try_merge_adjacent() is already part of fix_index()
-        if (is_root()) {
-          return try_downgrade_root(c, std::move(this_ref));
-        } else {
-          return node_ertr::now();
-        }
-      });
+      // I'm all good but:
+      // - my number of keys is reduced by 1
+      // - my size may underflow, but try_merge_adjacent() is already part of fix_index()
+      return left_child->fix_parent_index<FORCE_MERGE>(c, std::move(left_child), true);
     } else {
-      left_child.reset();
       validate_tracked_children();
+      Ref<Node> this_ref = this;
+      left_child.reset();
       // I'm all good but:
       // - my number of keys is reduced by 1
       // - my size may underflow
       if (is_root()) {
         return try_downgrade_root(c, std::move(this_ref));
       } else {
-        return try_merge_adjacent<FORCE_MERGE>(c, false);
+        return try_merge_adjacent<FORCE_MERGE>(
+            c, false, std::move(this_ref));
       }
     }
   });
 }
 template node_future<> InternalNode::apply_children_merge<true>(
-    context_t, Ref<Node>&&, Ref<Node>&&, bool);
+    context_t, Ref<Node>&&, laddr_t, Ref<Node>&&, bool);
 template node_future<> InternalNode::apply_children_merge<false>(
-    context_t, Ref<Node>&&, Ref<Node>&&, bool);
+    context_t, Ref<Node>&&, laddr_t, Ref<Node>&&, bool);
 
 node_future<std::pair<Ref<Node>, Ref<Node>>> InternalNode::get_child_peers(
     context_t c, const search_position_t& pos)
@@ -1173,7 +1192,7 @@ node_future<> InternalNode::do_get_tree_stats(
   stats.num_kvs_internal += nstats.num_kvs;
   stats.num_nodes_internal += 1;
 
-  Ref<const InternalNode> this_ref = this;
+  Ref<Node> this_ref = this;
   return seastar::do_with(
     search_position_t(), (const laddr_packed_t*)(nullptr),
     [this, this_ref, c, &stats](auto& pos, auto& p_child_addr) {
@@ -1266,7 +1285,7 @@ node_future<> InternalNode::test_clone_root(
   assert(is_root());
   assert(impl->is_level_tail());
   assert(impl->field_type() == field_type_t::N0);
-  Ref<const InternalNode> this_ref = this;
+  Ref<const Node> this_ref = this;
   return InternalNode::allocate(c_other, field_type_t::N0, true, impl->level()
   ).safe_then([this, c_other, &tracker_other](auto fresh_other) {
     impl->test_copy_to(fresh_other.mut);
@@ -1353,14 +1372,16 @@ node_future<Ref<InternalNode>> InternalNode::insert_or_split(
     assert(impl->free_size() == free_size - insert_size);
     assert(insert_pos <= pos);
     assert(p_value->value == insert_value);
-    track_insert(insert_pos, insert_stage, insert_child);
 
     if (outdated_child) {
+      track_insert<false>(insert_pos, insert_stage, insert_child);
       // untrack the inaccurate child after updated its position
       // before validate, and before fix_index()
       validate_child_inconsistent(*outdated_child);
       // we will need its parent_info valid for the following fix_index()
       do_untrack_child(*outdated_child);
+    } else {
+      track_insert(insert_pos, insert_stage, insert_child);
     }
 
     validate_tracked_children();
@@ -1389,19 +1410,25 @@ node_future<Ref<InternalNode>> InternalNode::insert_or_split(
         insert_pos, insert_stage, insert_size);
     assert(p_value->value == insert_value);
     track_split(split_pos, right_node);
-    if (is_insert_left) {
-      track_insert(insert_pos, insert_stage, insert_child);
-    } else {
-      right_node->track_insert(insert_pos, insert_stage, insert_child);
-    }
 
     if (outdated_child) {
+      if (is_insert_left) {
+        track_insert<false>(insert_pos, insert_stage, insert_child);
+      } else {
+        right_node->template track_insert<false>(insert_pos, insert_stage, insert_child);
+      }
       // untrack the inaccurate child after updated its position
       // before validate, and before fix_index()
       auto& _parent = outdated_child->parent_info().ptr;
       _parent->validate_child_inconsistent(*outdated_child);
       // we will need its parent_info valid for the following fix_index()
       _parent->do_untrack_child(*outdated_child);
+    } else {
+      if (is_insert_left) {
+        track_insert(insert_pos, insert_stage, insert_child);
+      } else {
+        right_node->track_insert(insert_pos, insert_stage, insert_child);
+      }
     }
 
     validate_tracked_children();
@@ -1416,7 +1443,7 @@ node_future<Ref<Node>> InternalNode::get_or_track_child(
   bool level_tail = position.is_end();
   Ref<Node> child;
   auto found = tracked_child_nodes.find(position);
-  Ref<InternalNode> this_ref = this;
+  Ref<Node> this_ref = this;
   return (found == tracked_child_nodes.end()
     ? (Node::load(c, child_addr, level_tail
        ).safe_then([this, position] (auto child) {
@@ -1438,6 +1465,7 @@ node_future<Ref<Node>> InternalNode::get_or_track_child(
   });
 }
 
+template <bool VALIDATE>
 void InternalNode::track_insert(
       const search_position_t& insert_pos, match_stage_t insert_stage,
       Ref<Node> insert_child, Ref<Node> nxt_child)
@@ -1456,7 +1484,7 @@ void InternalNode::track_insert(
     auto _pos = node->parent_info().position;
     assert(!_pos.is_end());
     ++_pos.index_by_stage(insert_stage);
-    node->as_child(_pos, this);
+    node->as_child<VALIDATE>(_pos, this);
   }
   // track insert
   insert_child->as_child(insert_pos, this);
@@ -1470,6 +1498,8 @@ void InternalNode::track_insert(
   }
 #endif
 }
+template void InternalNode::track_insert<true>(const search_position_t&, match_stage_t, Ref<Node>, Ref<Node>);
+template void InternalNode::track_insert<false>(const search_position_t&, match_stage_t, Ref<Node>, Ref<Node>);
 
 void InternalNode::replace_track(
     Ref<Node> new_child, Ref<Node> old_child, bool is_new_child_outdated)
@@ -1664,7 +1694,7 @@ LeafNode::erase(context_t c, const search_position_t& pos, bool get_next)
 {
   assert(!pos.is_end());
   assert(!impl->is_keys_empty());
-  Ref<LeafNode> this_ref = this;
+  Ref<Node> this_ref = this;
   logger().debug("OTree::Leaf::Erase: erase {}'s pos({}), get_next={} ...",
                  get_name(), pos, get_next);
 
@@ -1703,9 +1733,7 @@ LeafNode::erase(context_t c, const search_position_t& pos, bool get_next)
 
         // no cursor should be referencing this node now, this_ref is the last one.
         assert(this_ref->use_count() == 1);
-        Ref<Node> node_ref = this_ref;
-        this_ref.reset();
-        return Node::erase_node(c, std::move(node_ref));
+        return Node::erase_node(c, std::move(this_ref));
       }
 
       on_layout_change();
@@ -1724,7 +1752,8 @@ LeafNode::erase(context_t c, const search_position_t& pos, bool get_next)
           next_pos.is_end() ? update_parent_index = true
                             : update_parent_index = false;
         }
-        return try_merge_adjacent<FORCE_MERGE>(c, update_parent_index);
+        return try_merge_adjacent<FORCE_MERGE>(
+            c, update_parent_index, std::move(this_ref));
       }
     }).safe_then([next_cursor] {
       return next_cursor;
@@ -1868,7 +1897,7 @@ node_future<> LeafNode::test_clone_root(
   assert(is_root());
   assert(impl->is_level_tail());
   assert(impl->field_type() == field_type_t::N0);
-  Ref<const LeafNode> this_ref = this;
+  Ref<const Node> this_ref = this;
   return LeafNode::allocate(c_other, field_type_t::N0, true
   ).safe_then([this, c_other, &tracker_other](auto fresh_other) {
     impl->test_copy_to(fresh_other.mut);
@@ -1911,11 +1940,11 @@ node_future<Ref<tree_cursor_t>> LeafNode::insert_value(
     return node_ertr::make_ready_future<Ref<tree_cursor_t>>(ret);
   }
   // split and insert
-  Ref<LeafNode> this_ref = this;
+  Ref<Node> this_ref = this;
   return (is_root() ? upgrade_root(c) : node_ertr::now()
   ).safe_then([this, c] {
     return LeafNode::allocate(c, impl->field_type(), impl->is_level_tail());
-  }).safe_then([this_ref, this, c, &key, vconf,
+  }).safe_then([this_ref = std::move(this_ref), this, c, &key, vconf,
                 insert_pos, insert_stage=insert_stage, insert_size=insert_size](auto fresh_right) mutable {
     auto right_node = fresh_right.node;
     logger().info("OTree::Leaf::InsertValue: proceed split {} to fresh {} ...",
@@ -1937,7 +1966,8 @@ node_future<Ref<tree_cursor_t>> LeafNode::insert_value(
     validate_tracked_cursors();
     right_node->validate_tracked_cursors();
 
-    return apply_split_to_parent(c, right_node, false
+    return apply_split_to_parent(
+        c, std::move(this_ref), std::move(right_node), false
     ).safe_then([ret] {
       return ret;
     });

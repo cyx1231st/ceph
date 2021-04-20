@@ -937,7 +937,9 @@ class DummyChildPool {
       if (right_child->can_split()) {
         splitable_nodes.insert(right_child);
       }
-      return apply_split_to_parent(c, right_child, false);
+      Ref<Node> this_ref = this;
+      return apply_split_to_parent(
+          c, std::move(this_ref), std::move(right_child), false);
     }
 
     node_future<> insert_and_split(
@@ -989,7 +991,8 @@ class DummyChildPool {
       std::set<ghobject_t> new_keys;
       new_keys.insert(new_key);
       impl->reset(new_keys, impl->is_level_tail());
-      return fix_parent_index<true>(c);
+      Ref<Node> this_ref = this;
+      return fix_parent_index<true>(c, std::move(this_ref), false);
     }
 
     bool match_pos(const search_position_t& pos) const {
@@ -1071,7 +1074,7 @@ class DummyChildPool {
       }
       left->impl->reset(*p_keys, left_is_tail);
       return left->parent_info().ptr->apply_children_merge<true>(
-          c, std::move(left), std::move(right), !stole_key);
+          c, std::move(left), left->impl->laddr(), std::move(right), !stole_key);
     }
 
     DummyChildImpl* impl;
@@ -1520,15 +1523,19 @@ TEST_F(d_seastore_tm_test_t, 6_random_insert_leaf_node)
         {8, 11, 64, 256, 301, 320},
         {8, 16, 128, 512, 576, 640},
         {0, 32}, {0, 10}, {0, 4});
-    auto tree = std::make_unique<TreeBuilder<TRACK_CURSORS, test_item_t>>(kvs,
-        (TEST_SEASTORE ? NodeExtentManager::create_seastore(*tm)
-                       : NodeExtentManager::create_dummy(IS_DUMMY_SYNC)));
+    auto moved_nm = (TEST_SEASTORE ? NodeExtentManager::create_seastore(*tm)
+                                   : NodeExtentManager::create_dummy(IS_DUMMY_SYNC));
+    auto p_nm = moved_nm.get();
+    auto tree = std::make_unique<TreeBuilder<TRACK_CURSORS, test_item_t>>(
+        kvs, std::move(moved_nm));
     {
       auto t = tm->create_transaction();
       tree->bootstrap(*t).unsafe_get();
       tm->submit_transaction(std::move(t)).unsafe_get();
       segment_cleaner->run_until_halt().get0();
     }
+
+    // test insert
     {
       auto t = tm->create_transaction();
       tree->insert(*t).unsafe_get();
@@ -1538,19 +1545,67 @@ TEST_F(d_seastore_tm_test_t, 6_random_insert_leaf_node)
     {
       auto t = tm->create_transaction();
       tree->get_stats(*t).unsafe_get();
-      tm->submit_transaction(std::move(t)).unsafe_get();
-      segment_cleaner->run_until_halt().get0();
     }
     if constexpr (TEST_SEASTORE) {
-      logger().info("seastore replay begin");
+      logger().info("seastore replay insert begin");
       restart();
       tree->reload(NodeExtentManager::create_seastore(*tm));
-      logger().info("seastore replay end");
+      logger().info("seastore replay insert end");
     }
     {
       // Note: tm->create_weak_transaction() can also work, but too slow.
       auto t = tm->create_transaction();
       tree->validate(*t).unsafe_get();
+    }
+
+    // test erase 3/4
+    {
+      auto t = tm->create_transaction();
+      tree->erase(*t, kvs.size() / 4 * 3).unsafe_get();
+      tm->submit_transaction(std::move(t)).unsafe_get();
+      segment_cleaner->run_until_halt().get0();
+    }
+    {
+      auto t = tm->create_transaction();
+      tree->get_stats(*t).unsafe_get();
+    }
+    if constexpr (TEST_SEASTORE) {
+      logger().info("seastore replay erase-1 begin");
+      restart();
+      tree->reload(NodeExtentManager::create_seastore(*tm));
+      logger().info("seastore replay erase-1 end");
+    }
+    {
+      auto t = tm->create_transaction();
+      tree->validate(*t).unsafe_get();
+    }
+
+    // test erase remaining
+    {
+      auto t = tm->create_transaction();
+      tree->erase(*t, kvs.size()).unsafe_get();
+      tm->submit_transaction(std::move(t)).unsafe_get();
+      segment_cleaner->run_until_halt().get0();
+    }
+    {
+      auto t = tm->create_transaction();
+      tree->get_stats(*t).unsafe_get();
+    }
+    if constexpr (TEST_SEASTORE) {
+      logger().info("seastore replay erase-2 begin");
+      restart();
+      tree->reload(NodeExtentManager::create_seastore(*tm));
+      logger().info("seastore replay erase-2 end");
+    }
+    {
+      auto t = tm->create_transaction();
+      tree->validate(*t).unsafe_get();
+      EXPECT_EQ(tree->height(*t).unsafe_get0(), 1);
+    }
+
+    if constexpr (!TEST_SEASTORE) {
+      auto p_dummy = static_cast<DummyManager*>(p_nm);
+      EXPECT_EQ(p_dummy->size(), 1);
     }
     tree.reset();
   });
