@@ -36,7 +36,7 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
     DEBUG("about to do_with");
     segment_cleaner->init_mkfs(addr);
     return seastar::do_with(
-      create_transaction(),
+      create_transaction(Transaction::src_t::SEASTORE_MUTATE),
       [this, FNAME](auto &transaction) {
 	DEBUGT(
 	  "about to cache->mkfs",

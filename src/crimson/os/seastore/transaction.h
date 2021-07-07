@@ -141,8 +141,24 @@ public:
     return retired_set;
   }
 
+  enum class src_t : uint8_t {
+    SEASTORE_MUTATE,
+    SEASTORE_READ,
+    CLEANER,
+    // including tests and tools that bypass seastore
+    TEST,
+    /**
+     * If set, *this may not be used to perform writes and will not provide
+     * consistentency allowing operations using to avoid maintaining a read_set.
+     */
+    WEAK
+  };
+  src_t get_src() const {
+    return src;
+  }
+
   bool is_weak() const {
-    return weak;
+    return src == src_t::WEAK;
   }
 
   bool is_conflicted() const {
@@ -155,11 +171,11 @@ public:
 
   Transaction(
     OrderingHandle &&handle,
-    bool weak,
+    src_t src,
     journal_seq_t initiated_after
-  ) : weak(weak),
-      retired_gate_token(initiated_after),
-      handle(std::move(handle))
+  ) : retired_gate_token(initiated_after),
+      handle(std::move(handle)),
+      src(src)
   {}
 
 
@@ -191,12 +207,6 @@ private:
   friend class Cache;
   friend Ref make_test_transaction();
 
-  /**
-   * If set, *this may not be used to perform writes and will not provide
-   * consistentency allowing operations using to avoid maintaining a read_set.
-   */
-  const bool weak;
-
   RootBlockRef root;        ///< ref to root if read or written by transaction
 
   segment_off_t offset = 0; ///< relative offset of next block
@@ -217,14 +227,34 @@ private:
   bool conflicted = false;
 
   OrderingHandle handle;
+
+  const src_t src;
 };
 using TransactionRef = Transaction::Ref;
+
+inline std::ostream& operator<<(std::ostream& os,
+                                const Transaction::src_t& src) {
+  switch (src) {
+  case Transaction::src_t::SEASTORE_MUTATE:
+    return os << "SEASTORE_MUTATE";
+  case Transaction::src_t::SEASTORE_READ:
+    return os << "SEASTORE_READ";
+  case Transaction::src_t::CLEANER:
+    return os << "CLEANER";
+  case Transaction::src_t::TEST:
+    return os << "TEST";
+  case Transaction::src_t::WEAK:
+    return os << "WEAK";
+  default:
+    ceph_abort("impossible");
+  }
+}
 
 /// Should only be used with dummy staged-fltree node extent manager
 inline TransactionRef make_test_transaction() {
   return std::make_unique<Transaction>(
     get_dummy_ordering_handle(),
-    false,
+    Transaction::src_t::TEST,
     journal_seq_t{}
   );
 }
