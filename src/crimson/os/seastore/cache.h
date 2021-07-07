@@ -560,9 +560,12 @@ private:
    */
   CachedExtent::list dirty;
 
+  using src_ext_t = std::pair<Transaction::src_t, extent_types_t>;
   struct {
     std::unordered_map<Transaction::src_t, uint64_t> trans_created;
     std::unordered_map<Transaction::src_t, uint64_t> trans_committed;
+    std::unordered_map<src_ext_t, uint64_t,
+                       boost::hash<src_ext_t>> trans_invalidated;
   } stats;
   seastar::metrics::metric_group metrics;
   void register_metrics();
