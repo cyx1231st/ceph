@@ -562,6 +562,7 @@ private:
 
   struct {
     std::unordered_map<Transaction::src_t, uint64_t> trans_created;
+    std::unordered_map<Transaction::src_t, uint64_t> trans_committed;
   } stats;
   seastar::metrics::metric_group metrics;
   void register_metrics();
