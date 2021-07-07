@@ -4,6 +4,8 @@
 #pragma once
 
 #include <iostream>
+#include <unordered_map>
+#include <boost/functional/hash.hpp>
 
 #include "seastar/core/shared_future.hh"
 
@@ -98,6 +100,10 @@ public:
   TransactionRef create_transaction(
       Transaction::src_t src = Transaction::src_t::TEST) {
     LOG_PREFIX(Cache::create_transaction);
+
+    assert(stats.trans_created.count(src));
+    ++(stats.trans_created[src]);
+
     auto ret = std::make_unique<Transaction>(
       get_dummy_ordering_handle(),
       src,
@@ -115,6 +121,10 @@ public:
 
   /// Resets transaction preserving
   void reset_transaction_preserve_handle(Transaction &t) {
+    if (t.did_reset()) {
+      assert(stats.trans_created.count(t.get_src()));
+      ++(stats.trans_created[t.get_src()]);
+    }
     t.reset_preserve_handle(last_commit);
   }
 
@@ -549,6 +559,12 @@ private:
    * holds refs to dirty extents.  Ordered by CachedExtent::get_dirty_from().
    */
   CachedExtent::list dirty;
+
+  struct {
+    std::unordered_map<Transaction::src_t, uint64_t> trans_created;
+  } stats;
+  seastar::metrics::metric_group metrics;
+  void register_metrics();
 
   /// alloc buffer for cached extent
   bufferptr alloc_cache_buf(size_t size) {
