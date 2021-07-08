@@ -101,8 +101,7 @@ public:
       Transaction::src_t src = Transaction::src_t::TEST) {
     LOG_PREFIX(Cache::create_transaction);
 
-    assert(stats.trans_created.count(src));
-    ++(stats.trans_created[src]);
+    ++(get_counter(stats.trans_created_by_src, src));
 
     auto ret = std::make_unique<Transaction>(
       get_dummy_ordering_handle(),
@@ -122,8 +121,7 @@ public:
   /// Resets transaction preserving
   void reset_transaction_preserve_handle(Transaction &t) {
     if (t.did_reset()) {
-      assert(stats.trans_created.count(t.get_src()));
-      ++(stats.trans_created[t.get_src()]);
+      ++(get_counter(stats.trans_created_by_src, t.get_src()));
     }
     t.reset_preserve_handle(last_commit);
   }
@@ -562,11 +560,18 @@ private:
 
   using src_ext_t = std::pair<Transaction::src_t, extent_types_t>;
   struct {
-    std::unordered_map<Transaction::src_t, uint64_t> trans_created;
-    std::unordered_map<Transaction::src_t, uint64_t> trans_committed;
+    std::array<uint64_t, Transaction::SRC_MAX> trans_created_by_src;
+    std::array<uint64_t, Transaction::SRC_MAX> trans_committed_by_src;
     std::unordered_map<src_ext_t, uint64_t,
                        boost::hash<src_ext_t>> trans_invalidated;
   } stats;
+  uint64_t& get_counter(
+      std::array<uint64_t, Transaction::SRC_MAX>& counters_by_src,
+      Transaction::src_t src) {
+    assert(static_cast<std::size_t>(src) < counters_by_src.size());
+    return counters_by_src[static_cast<std::size_t>(src)];
+  }
+
   seastar::metrics::metric_group metrics;
   void register_metrics();
 

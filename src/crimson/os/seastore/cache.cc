@@ -116,8 +116,8 @@ void Cache::register_metrics()
   /*
    * trans_created
    */
+  stats.trans_created_by_src.fill(0);
   auto register_trans_created = [this, &labels_by_src](src_t src) {
-    stats.trans_created[src] = 0;
     std::ostringstream oss_desc;
     oss_desc << "total number of transaction created (src="
              << src << ")";
@@ -126,7 +126,7 @@ void Cache::register_metrics()
       {
         sm::make_counter(
           "trans_created",
-          stats.trans_created.find(src)->second,
+          get_counter(stats.trans_created_by_src, src),
           sm::description(oss_desc.str()),
           {labels_by_src.find(src)->second}
         ),
@@ -144,7 +144,7 @@ void Cache::register_metrics()
         "trans_created",
         [this] {
           uint64_t total = 0;
-          for (auto& [k, v] : stats.trans_created) {
+          for (auto& v : stats.trans_created_by_src) {
             total += v;
           }
           return total;
@@ -158,8 +158,8 @@ void Cache::register_metrics()
   /*
    * trans_committed
    */
+  stats.trans_committed_by_src.fill(0);
   auto register_trans_committed = [this, &labels_by_src](src_t src) {
-    stats.trans_committed[src] = 0;
     std::ostringstream oss_desc;
     oss_desc << "total number of transaction committed (src="
              << src << ")";
@@ -168,7 +168,7 @@ void Cache::register_metrics()
       {
         sm::make_counter(
           "trans_committed",
-          stats.trans_committed.find(src)->second,
+          get_counter(stats.trans_committed_by_src, src),
           sm::description(oss_desc.str()),
           {labels_by_src.find(src)->second}
         ),
@@ -188,7 +188,7 @@ void Cache::register_metrics()
         "trans_committed",
         [this] {
           uint64_t total = 0;
-          for (auto& [k, v] : stats.trans_committed) {
+          for (auto& v : stats.trans_committed_by_src) {
             total += v;
           }
           return total;
@@ -437,8 +437,7 @@ record_t Cache::prepare_record(Transaction &t)
 
   assert(t.get_src() != Transaction::src_t::WEAK &&
          t.get_src() != Transaction::src_t::SEASTORE_READ);
-  assert(stats.trans_committed.count(t.get_src()));
-  ++(stats.trans_committed[t.get_src()]);
+  ++(get_counter(stats.trans_committed_by_src, t.get_src()));
 
   // Should be valid due to interruptible future
   for (auto &i: t.read_set) {

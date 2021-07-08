@@ -142,7 +142,7 @@ public:
   }
 
   enum class src_t : uint8_t {
-    SEASTORE_MUTATE,
+    SEASTORE_MUTATE = 0,
     SEASTORE_READ,
     CLEANER,
     // including tests and tools that bypass seastore
@@ -151,8 +151,10 @@ public:
      * If set, *this may not be used to perform writes and will not provide
      * consistentency allowing operations using to avoid maintaining a read_set.
      */
-    WEAK
+    WEAK,
+    MAX
   };
+  static constexpr auto SRC_MAX = static_cast<std::size_t>(src_t::MAX);
   src_t get_src() const {
     return src;
   }
