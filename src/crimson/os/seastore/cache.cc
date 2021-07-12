@@ -355,7 +355,7 @@ void Cache::invalidate(CachedExtent &extent) {
   DEBUG("invalidate begin -- extent {}", extent);
   for (auto &&i: extent.transactions) {
     if (!i.t->conflicted) {
-      DEBUGT("", i.t);
+      DEBUGT("set conflict", *i.t);
       i.t->conflicted = true;
       assert(i.t->get_src() != Transaction::src_t::WEAK);
       auto m_key = std::make_pair(i.t->get_src(), extent.get_type());
