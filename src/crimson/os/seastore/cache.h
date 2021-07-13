@@ -105,6 +105,7 @@ public:
 
     auto ret = std::make_unique<Transaction>(
       get_dummy_ordering_handle(),
+      false,
       src,
       last_commit
     );
@@ -113,9 +114,22 @@ public:
     return ret;
   }
 
-  /// Creates empty weak transaction (test usage only)
-  TransactionRef create_weak_transaction() {
-    return create_transaction(Transaction::src_t::WEAK);
+  /// Creates empty weak transaction by source
+  TransactionRef create_weak_transaction(
+      Transaction::src_t src = Transaction::src_t::TEST) {
+    LOG_PREFIX(Cache::create_weak_transaction);
+
+    ++(get_counter(stats.trans_created_by_src, src));
+
+    auto ret = std::make_unique<Transaction>(
+      get_dummy_ordering_handle(),
+      true,
+      src,
+      last_commit
+    );
+    retired_extent_gate.add_token(ret->retired_gate_token);
+    DEBUGT("created source={}", *ret, src);
+    return ret;
   }
 
   /// Resets transaction preserving

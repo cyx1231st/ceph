@@ -147,11 +147,6 @@ public:
     CLEANER,
     // including tests and tools that bypass seastore
     TEST,
-    /**
-     * If set, *this may not be used to perform writes and will not provide
-     * consistentency allowing operations using to avoid maintaining a read_set.
-     */
-    WEAK,
     MAX
   };
   static constexpr auto SRC_MAX = static_cast<std::size_t>(src_t::MAX);
@@ -160,7 +155,7 @@ public:
   }
 
   bool is_weak() const {
-    return src == src_t::WEAK;
+    return weak;
   }
 
   bool is_conflicted() const {
@@ -173,10 +168,12 @@ public:
 
   Transaction(
     OrderingHandle &&handle,
+    bool weak,
     src_t src,
     journal_seq_t initiated_after
   ) : retired_gate_token(initiated_after),
       handle(std::move(handle)),
+      weak(weak),
       src(src)
   {}
 
@@ -239,6 +236,12 @@ private:
 
   OrderingHandle handle;
 
+  /**
+   * If set, *this may not be used to perform writes and will not provide
+   * consistentency allowing operations using to avoid maintaining a read_set.
+   */
+  const bool weak;
+
   const src_t src;
 };
 using TransactionRef = Transaction::Ref;
@@ -254,8 +257,6 @@ inline std::ostream& operator<<(std::ostream& os,
     return os << "CLEANER";
   case Transaction::src_t::TEST:
     return os << "TEST";
-  case Transaction::src_t::WEAK:
-    return os << "WEAK";
   default:
     ceph_abort("impossible");
   }
@@ -265,6 +266,7 @@ inline std::ostream& operator<<(std::ostream& os,
 inline TransactionRef make_test_transaction() {
   return std::make_unique<Transaction>(
     get_dummy_ordering_handle(),
+    false,
     Transaction::src_t::TEST,
     journal_seq_t{}
   );

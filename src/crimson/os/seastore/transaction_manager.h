@@ -109,13 +109,13 @@ public:
   /// Creates empty transaction
   TransactionRef create_transaction(
       Transaction::src_t src = Transaction::src_t::TEST) final {
-    assert(src != Transaction::src_t::WEAK);
     return cache->create_transaction(src);
   }
 
   /// Creates empty weak transaction
-  TransactionRef create_weak_transaction() {
-    return cache->create_transaction(Transaction::src_t::WEAK);
+  TransactionRef create_weak_transaction(
+      Transaction::src_t src = Transaction::src_t::TEST) {
+    return cache->create_weak_transaction(src);
   }
 
   /// Resets transaction

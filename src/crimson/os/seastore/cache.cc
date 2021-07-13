@@ -94,7 +94,6 @@ void Cache::register_metrics()
     {src_t::SEASTORE_READ,   src_label("SEASTORE_READ")},
     {src_t::CLEANER,         src_label("CLEANER")},
     {src_t::TEST,            src_label("TEST")},
-    {src_t::WEAK,            src_label("WEAK")}
   };
 
   auto ext_label = sm::label("ext");
@@ -357,7 +356,7 @@ void Cache::invalidate(CachedExtent &extent) {
     if (!i.t->conflicted) {
       DEBUGT("set conflict", *i.t);
       i.t->conflicted = true;
-      assert(i.t->get_src() != Transaction::src_t::WEAK);
+      assert(!i.t->is_weak());
       auto m_key = std::make_pair(i.t->get_src(), extent.get_type());
       assert(stats.trans_invalidated.count(m_key));
       ++(stats.trans_invalidated[m_key]);
@@ -435,8 +434,8 @@ record_t Cache::prepare_record(Transaction &t)
   LOG_PREFIX(Cache::prepare_record);
   DEBUGT("enter", t);
 
-  assert(t.get_src() != Transaction::src_t::WEAK &&
-         t.get_src() != Transaction::src_t::SEASTORE_READ);
+  assert(!t.is_weak());
+  assert(t.get_src() != Transaction::src_t::SEASTORE_READ);
   ++(get_counter(stats.trans_committed_by_src, t.get_src()));
 
   // Should be valid due to interruptible future
