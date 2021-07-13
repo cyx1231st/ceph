@@ -90,10 +90,10 @@ void Cache::register_metrics()
 
   auto src_label = sm::label("src");
   std::map<src_t, sm::label_instance> labels_by_src {
-    {src_t::SEASTORE_MUTATE, src_label("SEASTORE_MUTATE")},
-    {src_t::SEASTORE_READ,   src_label("SEASTORE_READ")},
-    {src_t::CLEANER,         src_label("CLEANER")},
-    {src_t::TEST,            src_label("TEST")},
+    {src_t::MUTATE,  src_label("MUTATE")},
+    {src_t::READ,    src_label("READ")},
+    {src_t::INIT,    src_label("INIT")},
+    {src_t::CLEANER, src_label("CLEANER")},
   };
 
   auto ext_label = sm::label("ext");
@@ -174,9 +174,9 @@ void Cache::register_metrics()
       }
     );
   };
-  for (auto& src : {src_t::SEASTORE_MUTATE,
-                    src_t::CLEANER,
-                    src_t::TEST}) {
+  for (auto& src : {src_t::MUTATE,
+                    src_t::INIT,
+                    src_t::CLEANER}) {
     register_trans_committed(src);
   }
 
@@ -222,11 +222,8 @@ void Cache::register_metrics()
         }
       );
     };
-  for (auto& src : {src_t::SEASTORE_MUTATE,
-                    src_t::SEASTORE_READ,
-                    src_t::CLEANER,
-                    src_t::TEST}) {
-    for (auto& [ext, label] : labels_by_ext) {
+  for (auto& [src, label] : labels_by_src) {
+    for (auto& [ext, _label] : labels_by_ext) {
       register_trans_invalidated(src, ext);
     }
   }
@@ -435,7 +432,7 @@ record_t Cache::prepare_record(Transaction &t)
   DEBUGT("enter", t);
 
   assert(!t.is_weak());
-  assert(t.get_src() != Transaction::src_t::SEASTORE_READ);
+  assert(t.get_src() != Transaction::src_t::READ);
   ++(get_counter(stats.trans_committed_by_src, t.get_src()));
 
   // Should be valid due to interruptible future

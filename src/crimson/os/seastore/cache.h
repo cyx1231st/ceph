@@ -98,7 +98,7 @@ public:
 
   /// Creates empty transaction by source
   TransactionRef create_transaction(
-      Transaction::src_t src = Transaction::src_t::TEST) {
+      Transaction::src_t src) {
     LOG_PREFIX(Cache::create_transaction);
 
     ++(get_counter(stats.trans_created_by_src, src));
@@ -116,7 +116,7 @@ public:
 
   /// Creates empty weak transaction by source
   TransactionRef create_weak_transaction(
-      Transaction::src_t src = Transaction::src_t::TEST) {
+      Transaction::src_t src) {
     LOG_PREFIX(Cache::create_weak_transaction);
 
     ++(get_counter(stats.trans_created_by_src, src));

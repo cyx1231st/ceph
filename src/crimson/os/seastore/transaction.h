@@ -142,11 +142,12 @@ public:
   }
 
   enum class src_t : uint8_t {
-    SEASTORE_MUTATE = 0,
-    SEASTORE_READ,
+    // normal IO operations at seastore boundary or within a test
+    MUTATE = 0,
+    READ,
+    // transaction manager level operations
+    INIT,
     CLEANER,
-    // including tests and tools that bypass seastore
-    TEST,
     MAX
   };
   static constexpr auto SRC_MAX = static_cast<std::size_t>(src_t::MAX);
@@ -249,14 +250,14 @@ using TransactionRef = Transaction::Ref;
 inline std::ostream& operator<<(std::ostream& os,
                                 const Transaction::src_t& src) {
   switch (src) {
-  case Transaction::src_t::SEASTORE_MUTATE:
-    return os << "SEASTORE_MUTATE";
-  case Transaction::src_t::SEASTORE_READ:
-    return os << "SEASTORE_READ";
+  case Transaction::src_t::MUTATE:
+    return os << "MUTATE";
+  case Transaction::src_t::READ:
+    return os << "READ";
+  case Transaction::src_t::INIT:
+    return os << "INIT";
   case Transaction::src_t::CLEANER:
     return os << "CLEANER";
-  case Transaction::src_t::TEST:
-    return os << "TEST";
   default:
     ceph_abort("impossible");
   }
@@ -267,7 +268,7 @@ inline TransactionRef make_test_transaction() {
   return std::make_unique<Transaction>(
     get_dummy_ordering_handle(),
     false,
-    Transaction::src_t::TEST,
+    Transaction::src_t::MUTATE,
     journal_seq_t{}
   );
 }

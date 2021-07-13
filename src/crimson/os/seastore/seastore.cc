@@ -84,7 +84,7 @@ seastar::future<> SeaStore::mkfs(uuid_d new_osd_fsid)
   }).safe_then([this] {
     return seastar::do_with(
       transaction_manager->create_transaction(
-        Transaction::src_t::SEASTORE_MUTATE),
+        Transaction::src_t::MUTATE),
       [this](auto &t) {
 	return onode_manager->mkfs(*t
 	).safe_then([this, &t] {
@@ -132,7 +132,7 @@ SeaStore::list_objects(CollectionRef ch,
     return repeat_eagain2([this, start, end, limit, &ret] {
       return seastar::do_with(
           transaction_manager->create_transaction(
-            Transaction::src_t::SEASTORE_READ),
+            Transaction::src_t::READ),
           [this, start, end, limit, &ret] (auto& t) {
         return onode_manager->list_onodes(*t, start, end, limit
         ).safe_then([&ret] (auto&& _ret) {
@@ -175,7 +175,7 @@ seastar::future<std::vector<coll_t>> SeaStore::list_collections()
 
 	return seastar::do_with(
 	  transaction_manager->create_transaction(
-            Transaction::src_t::SEASTORE_READ),
+            Transaction::src_t::READ),
 	  [this, &ret](auto &t) {
 	    return transaction_manager->read_collection_root(*t
 	    ).safe_then([this, &t](auto coll_root) {
@@ -215,7 +215,7 @@ SeaStore::read_errorator::future<ceph::bufferlist> SeaStore::read(
   return repeat_with_onode<ceph::bufferlist>(
     ch,
     oid,
-    Transaction::src_t::SEASTORE_READ,
+    Transaction::src_t::READ,
     [=](auto &t, auto &onode) -> ObjectDataHandler::read_ret {
       size_t size = onode.get_layout().size;
 
@@ -260,7 +260,7 @@ SeaStore::get_attr_errorator::future<ceph::bufferlist> SeaStore::get_attr(
   return repeat_with_onode<ceph::bufferlist>(
     c,
     oid,
-    Transaction::src_t::SEASTORE_READ,
+    Transaction::src_t::READ,
     [=](auto &t, auto& onode) -> _omap_get_value_ertr::future<ceph::bufferlist> {
       auto& layout = onode.get_layout();
       if (name == OI_ATTR && layout.oi_size) {
@@ -294,7 +294,7 @@ SeaStore::get_attrs_ertr::future<SeaStore::attrs_t> SeaStore::get_attrs(
   return repeat_with_onode<attrs_t>(
     c,
     oid,
-    Transaction::src_t::SEASTORE_READ,
+    Transaction::src_t::READ,
     [=](auto &t, auto& onode) {
       auto& layout = onode.get_layout();
       return _omap_list(layout.xattr_root, t, std::nullopt,
@@ -328,7 +328,7 @@ seastar::future<struct stat> SeaStore::stat(
   return repeat_with_onode<struct stat>(
     c,
     oid,
-    Transaction::src_t::SEASTORE_READ,
+    Transaction::src_t::READ,
     [=, &oid](auto &t, auto &onode) {
       struct stat st;
       auto &olayout = onode.get_layout();
@@ -365,7 +365,7 @@ SeaStore::omap_get_values(
   return repeat_with_onode<omap_values_t>(
     c,
     oid,
-    Transaction::src_t::SEASTORE_READ,
+    Transaction::src_t::READ,
     [this, keys](auto &t, auto &onode) {
       omap_root_t omap_root = onode.get_layout().omap_root.get();
       return _omap_get_values(
@@ -482,7 +482,7 @@ SeaStore::omap_get_values_ret_t SeaStore::omap_list(
   return repeat_with_onode<ret_bare_t>(
     c,
     oid,
-    Transaction::src_t::SEASTORE_READ,
+    Transaction::src_t::READ,
     [this, config, &start](auto &t, auto &onode) {
       return _omap_list(
 	onode.get_layout().omap_root,
@@ -632,7 +632,7 @@ seastar::future<> SeaStore::do_transaction(
   return repeat_with_internal_context(
     _ch,
     std::move(_t),
-    Transaction::src_t::SEASTORE_MUTATE,
+    Transaction::src_t::MUTATE,
     [this](auto &ctx) {
       return onode_manager->get_or_create_onodes(
 	*ctx.transaction, ctx.iter.get_objects()
@@ -1099,7 +1099,7 @@ seastar::future<> SeaStore::write_meta(const std::string& key,
     [this, FNAME](auto &t, auto& key, auto& value) {
       return repeat_eagain([this, FNAME, &t, &key, &value] {
 	t = transaction_manager->create_transaction(
-            Transaction::src_t::SEASTORE_MUTATE);
+            Transaction::src_t::MUTATE);
 	DEBUGT("Have transaction, key: {}; value: {}", *t, key, value);
         return transaction_manager->update_root_meta(
 	  *t, key, value
@@ -1123,7 +1123,7 @@ seastar::future<std::tuple<int, std::string>> SeaStore::read_meta(const std::str
     [this](auto &ret, auto &t, auto& key) {
       return repeat_eagain([this, &ret, &t, &key] {
 	t = transaction_manager->create_transaction(
-            Transaction::src_t::SEASTORE_READ);
+            Transaction::src_t::READ);
 	return transaction_manager->read_root_meta(
 	  *t, key
 	).safe_then([&ret](auto v) {
