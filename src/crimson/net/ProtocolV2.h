@@ -123,6 +123,7 @@ class ProtocolV2 final : public Protocol {
   seastar::future<> write_flush(bufferlist&& buf);
 
   ceph::crypto::onwire::rxtx_t session_stream_handlers;
+  CompConnectionMeta comp_meta;
   ceph::compression::onwire::rxtx_t session_comp_handlers;
   ceph::msgr::v2::FrameAssembler tx_frame_asm{&session_stream_handlers, false, &session_comp_handlers};
   ceph::msgr::v2::FrameAssembler rx_frame_asm{&session_stream_handlers, false, &session_comp_handlers};

@@ -843,6 +843,8 @@ void ProtocolV2::execute_connecting()
         }).then([this] {
           auth_meta = seastar::make_lw_shared<AuthConnectionMeta>();
           session_stream_handlers = { nullptr, nullptr };
+          comp_meta = {};
+          session_comp_handlers = { nullptr, nullptr };
           enable_recording();
           return banner_exchange(true);
         }).then([this] (auto&& ret) {
@@ -870,6 +872,37 @@ void ProtocolV2::execute_connecting()
         }).then([this] {
           return client_auth();
         }).then([this] {
+          if (HAVE_MSGR2_FEATURE(peer_supported_features, COMPRESSION)) {
+            // send_compression_request()
+            auto peer_type = conn.get_peer_type();
+            auto& comp_registry = messenger->get_comp_registry();
+            comp_meta.con_mode = static_cast<Compressor::CompressionMode>(
+                comp_registry.get_mode(peer_type, auth_meta->is_mode_secure()));
+            const auto preferred_methods = comp_registry.get_methods(peer_type);
+            auto comp_req_frame = CompressionRequestFrame::Encode(
+                comp_meta.is_compress(), preferred_methods);
+            return write_frame(comp_req_frame
+            ).then([this]() {
+              return read_main_preamble();
+            }).then([this](Tag tag) {
+              expect_tag(Tag::COMPRESSION_DONE, tag, conn, "execute_connection");
+              return read_frame_payload();
+            }).then([this] {
+              // handle_compression_done()
+              auto response = CompressionDoneFrame::Decode(rx_segments_data.back());
+              comp_meta.con_method = static_cast<Compressor::CompressionAlgorithm>(
+                  response.method());
+              if (comp_meta.is_compress() != response.is_compress()) {
+                comp_meta.con_mode = Compressor::COMP_NONE;
+              }
+              auto& comp_registry = messenger->get_comp_registry();
+              auto peer_type = conn.get_peer_type();
+              session_comp_handlers = ceph::compression::onwire::rxtx_t::create_handler_pair(
+                  nullptr, comp_meta, comp_registry.get_min_compression_size(peer_type));
+            });
+          }
+        }).then([this] {
+          // start_session_connect()
           if (server_cookie == 0) {
             ceph_assert(connect_seq == 0);
             return client_connect();
@@ -1473,6 +1506,7 @@ void ProtocolV2::execute_accepting()
           INTERCEPT_N_RW(custom_bp_t::SOCKET_ACCEPTED);
           auth_meta = seastar::make_lw_shared<AuthConnectionMeta>();
           session_stream_handlers = { nullptr, nullptr };
+          comp_meta = {};
           session_comp_handlers = { nullptr, nullptr };
           enable_recording();
           return banner_exchange(false);

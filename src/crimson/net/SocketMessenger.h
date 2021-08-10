@@ -48,6 +48,9 @@ class SocketMessenger final : public Messenger {
   uint32_t global_seq = 0;
   bool started = false;
 
+  crimson::common::CephContext cct; // for comp_registry
+  CompressorRegistry comp_registry;
+
   bind_ertr::future<> do_bind(const entity_addrvec_t& addr);
 
  public:
@@ -116,6 +119,10 @@ class SocketMessenger final : public Messenger {
   seastar::shard_id shard_id() const {
     assert(seastar::this_shard_id() == master_sid);
     return master_sid;
+  }
+
+  CompressorRegistry& get_comp_registry() {
+    return comp_registry;
   }
 };
 

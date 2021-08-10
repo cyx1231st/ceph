@@ -35,8 +35,11 @@ SocketMessenger::SocketMessenger(const entity_name_t& myname,
   : Messenger{myname},
     master_sid{seastar::this_shard_id()},
     logic_name{logic_name},
-    nonce{nonce}
-{}
+    nonce{nonce},
+    comp_registry{&cct}
+{
+  comp_registry.refresh_config();
+}
 
 SocketMessenger::~SocketMessenger()
 {
