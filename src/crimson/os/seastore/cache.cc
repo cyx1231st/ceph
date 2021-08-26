@@ -50,6 +50,11 @@ Cache::retire_extent_ret Cache::retire_extent_addr(
     ceph_abort();
   }
 
+  if (!addr.is_real() || addr.is_relative()) {
+    INFOT("non-absolute paddr {} should be already retired", t, addr);
+    return retire_extent_iertr::now();
+  }
+
   // absent from transaction
   // retiring is not included by the cache hit metrics
   ext = query_cache(addr, nullptr);
