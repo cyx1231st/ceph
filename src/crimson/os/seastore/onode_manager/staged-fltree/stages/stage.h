@@ -116,8 +116,7 @@ inline void assert_mstat(
    case MSTAT_LT0:
     if (!index.has_ns_oid())
       break;
-    assert(index.ns_oid_view().type() == ns_oid_view_t::Type::MAX ||
-           compare_to<KeyT::HOBJ>(key, index.ns_oid_view()) == MatchKindCMP::EQ);
+    assert(compare_to<KeyT::HOBJ>(key, index.ns_oid_view()) == MatchKindCMP::EQ);
    case MSTAT_LT1:
     if (!index.has_crush())
       break;
@@ -1056,8 +1055,6 @@ struct staged {
             auto iter = iterator_t(container);
             bool test_key_equal;
             if constexpr (STAGE == STAGE_STRING) {
-              // TODO(cross-node string dedup)
-              // test_key_equal = (iter.get_key().type() == ns_oid_view_t::Type::MIN);
               auto cmp = compare_to<KeyT::HOBJ>(key, iter.get_key());
               assert(cmp != MatchKindCMP::GT);
               test_key_equal = (cmp == MatchKindCMP::EQ);
@@ -1081,8 +1078,6 @@ struct staged {
         auto iter = iterator_t(container);
         iter.seek_last();
         if constexpr (STAGE == STAGE_STRING) {
-          // TODO(cross-node string dedup)
-          // assert(iter.get_key().type() == ns_oid_view_t::Type::MAX);
           assert(compare_to<KeyT::HOBJ>(key, iter.get_key()) == MatchKindCMP::EQ);
         } else {
           assert(compare_to<KeyT::HOBJ>(key, iter.get_key()) == MatchKindCMP::EQ);

@@ -724,7 +724,6 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
     }
 
     auto append_at = split_at;
-    // TODO(cross-node string dedup)
     typename STAGE_T::template StagedAppender<KEY_TYPE> right_appender;
     right_appender.init_empty(&right_mut, right_mut.get_write());
     const value_t* p_value = nullptr;

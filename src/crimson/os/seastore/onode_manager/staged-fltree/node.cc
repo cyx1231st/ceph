@@ -513,7 +513,6 @@ eagain_ifuture<> Node::apply_split_to_parent(
 {
   assert(!is_root());
   assert(this == this_ref.get());
-  // TODO(cross-node string dedup)
   return parent_info().ptr->apply_child_split(
       c, std::move(this_ref), std::move(split_right), update_right_index);
 }
