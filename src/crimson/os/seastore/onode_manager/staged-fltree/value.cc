@@ -87,6 +87,11 @@ laddr_t Value::get_hint() const
   return p_cursor->get_key_view(vb.get_header_magic()).get_hint();
 }
 
+ghobject_t Value::get_key() const
+{
+  return p_cursor->get_key_view(vb.get_header_magic()).to_ghobj();
+}
+
 std::unique_ptr<ValueDeltaRecorder>
 build_value_recorder_by_type(ceph::bufferlist& encoded,
                              const value_magic_t& magic)

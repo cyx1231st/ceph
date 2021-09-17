@@ -27,6 +27,8 @@
 #include "crimson/os/seastore/onode_manager.h"
 #include "crimson/os/seastore/object_data_handler.h"
 
+#include "crimson/os/seastore/onode_manager/staged-fltree/stages/key_layout.h"
+
 using std::string;
 using crimson::common::local_conf;
 
@@ -716,7 +718,13 @@ SeaStore::tm_ret SeaStore::_do_transaction_step(
 
   using ceph::os::Transaction;
   try {
-    switch (auto op = i.decode_op(); op->op) {
+    auto op = i.decode_op();
+    auto operation = op->op;
+    std::cout << "!!!!! coll=" << col->get_cid()
+              << "; onode=" << onode::key_hobj_t{get_onode(op->oid)->get_oid()}
+              << "; op=" << (int)operation
+              << std::endl;
+    switch (operation) {
     case Transaction::OP_NOP:
       return tm_iertr::now();
     case Transaction::OP_REMOVE:

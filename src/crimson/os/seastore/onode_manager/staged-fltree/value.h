@@ -6,6 +6,7 @@
 #include <ostream>
 
 #include "include/buffer.h"
+#include "common/hobject.h"
 #include "crimson/common/type_helpers.h"
 
 #include "fwd.h"
@@ -202,6 +203,7 @@ class Value {
   }
 
   laddr_t get_hint() const;
+  ghobject_t get_key() const;
 
   bool operator==(const Value& v) const { return p_cursor == v.p_cursor; }
   bool operator!=(const Value& v) const { return !(*this == v); }

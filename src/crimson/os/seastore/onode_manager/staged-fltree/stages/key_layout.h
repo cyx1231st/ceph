@@ -559,9 +559,9 @@ class key_hobj_t {
 
   std::ostream& dump(std::ostream& os) const {
     os << "key_hobj(" << (int)shard() << ","
-       << pool() << "," << crush() << "; "
-       << string_view_masked_t{nspace()} << ","
-       << string_view_masked_t{oid()} << "; "
+       << pool() << "," << crush() << ",\""
+       << nspace() << "\",\""
+       << oid() << "\","
        << snap() << "," << gen() << ")";
     return os;
   }

@@ -97,6 +97,11 @@ struct FLTreeOnode final : Onode, Value {
   laddr_t get_hint() const final {
     return Value::get_hint();
   }
+
+  ghobject_t get_oid() const final {
+    return Value::get_key();
+  }
+
   ~FLTreeOnode() final {}
 };
 

@@ -8,6 +8,8 @@
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
+#include "common/hobject.h"
+
 #include "include/byteorder.h"
 #include "seastore_types.h"
 
@@ -59,6 +61,7 @@ public:
   virtual onode_layout_t &get_mutable_layout(Transaction &t) = 0;
   virtual ~Onode() = default;
   virtual laddr_t get_hint() const = 0;
+  virtual ghobject_t get_oid() const = 0;
 };
 
 
