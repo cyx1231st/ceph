@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
 range="$1"
+range2="$2"
+range3="$3"
 TMP=/tmp/credits
 declare -A mail2author
 declare -A mail2organization
 remap="s/'/ /g"
-git log --pretty='%ae %aN <%aE>' $range | sed -e "$remap" | sort -u > $TMP
+git log --pretty='%aE %aN <%aE>' $range $range2 $range3 | sed -e "$remap" | sort -u > $TMP
 while read mail who ; do
     author=$(echo $who | git -c mailmap.file=.peoplemap check-mailmap --stdin)
     mail2author[$mail]="$author"
@@ -14,9 +16,9 @@ while read mail who ; do
 done < $TMP
 declare -A author2lines
 declare -A organization2lines
-git log --no-merges --pretty='%ae' $range | sed -e "$remap" | sort -u > $TMP
+git log --no-merges --pretty='%aE' $range $range2 $range3 | sed -e "$remap" | sort -u > $TMP
 while read mail ; do
-    count=$(git log --numstat --author="$mail" --pretty='%h' $range |
+    count=$(git log --numstat --author="$mail" --pretty='%h' $range $range2 $range3 |
         egrep -v 'package-lock\.json|\.xlf' | # generated files that should be excluded from line counting
         perl -e 'while(<STDIN>) { if(/(\d+)\t(\d+)/) { $added += $1; $deleted += $2 } }; print $added + $deleted;')
     (( author2lines["${mail2author[$mail]}"] += $count ))
@@ -34,13 +36,13 @@ for organization in "${!organization2lines[@]}" ; do
 done | sort -rn | nl
 echo
 echo "Commits, by authors"
-git log --no-merges --pretty='%aN <%aE>' $range | git -c mailmap.file=.peoplemap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
+git log --no-merges --pretty='%aN <%aE>' $range $range2 $range3 | git -c mailmap.file=.peoplemap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
 echo
 echo "Commits, by organizations"
-git log --no-merges --pretty='%aN <%aE>' $range | git -c mailmap.file=.organizationmap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
+git log --no-merges --pretty='%aN <%aE>' $range $range2 $range3 | git -c mailmap.file=.organizationmap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
 echo
 echo "Reviews, by authors (one review spans multiple commits)"
-git log --pretty=%b $range | perl -n -e 'print "$_\n" if(s/^\s*Reviewed-by:\s*(.*<.*>)\s*$/\1/i)' | git check-mailmap --stdin | git -c mailmap.file=.peoplemap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
+git log --pretty=%b $range $range2 $range3 | perl -n -e 'print "$_\n" if(s/^\s*Reviewed-by:\s*(.*<.*>)\s*$/\1/i)' | git check-mailmap --stdin | git -c mailmap.file=.peoplemap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
 echo
 echo "Reviews, by organizations (one review spans multiple commits)"
-git log --pretty=%b $range | perl -n -e 'print "$_\n" if(s/^\s*Reviewed-by:\s*(.*<.*>)\s*$/\1/i)' | git check-mailmap --stdin | git -c mailmap.file=.organizationmap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
+git log --pretty=%b $range $range2 $range3 | perl -n -e 'print "$_\n" if(s/^\s*Reviewed-by:\s*(.*<.*>)\s*$/\1/i)' | git check-mailmap --stdin | git -c mailmap.file=.organizationmap check-mailmap --stdin | sort | uniq -c | sort -rn | nl
