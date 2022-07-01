@@ -735,7 +735,6 @@ EOF
         osd max object namespace len = 64"
     fi
     if [ "$objectstore" == "bluestore" ]; then
-        if [ "$spdk_enabled" -eq 1 ] || [ "$pmem_enabled" -eq 1 ]; then
             BLUESTORE_OPTS="        bluestore_block_db_path = \"\"
         bluestore_block_db_size = 0
         bluestore_block_db_create = false
@@ -743,14 +742,6 @@ EOF
         bluestore_block_wal_size = 0
         bluestore_block_wal_create = false
         bluestore_spdk_mem = 2048"
-        else
-            BLUESTORE_OPTS="        bluestore block db path = $CEPH_DEV_DIR/osd\$id/block.db.file
-        bluestore block db size = 1073741824
-        bluestore block db create = true
-        bluestore block wal path = $CEPH_DEV_DIR/osd\$id/block.wal.file
-        bluestore block wal size = 1048576000
-        bluestore block wal create = true"
-        fi
         if [ "$zoned_enabled" -eq 1 ]; then
             BLUESTORE_OPTS+="
         bluestore min alloc size = 65536
