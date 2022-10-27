@@ -55,16 +55,24 @@ private:
 
 seastar::future<> CyanStore::start()
 {
-  return shard_stores.start(this);
+  return shard_stores.start(path);
 }
 
 seastar::future<store_statfs_t> CyanStore::stat() const
 {
   logger().debug("{}", __func__);
-  store_statfs_t st;
-  st.total = crimson::common::local_conf().get_val<Option::size_t>("memstore_device_bytes");
-  st.available = st.total - used_bytes;
-  return seastar::make_ready_future<store_statfs_t>(std::move(st));
+  return shard_stores.map_reduce0(
+    [](const CyanStore::ShardStores &local_store) {
+      return local_store.used_bytes;
+    },
+    (uint64_t)0,
+    std::plus<uint64_t>()
+  ).then([](uint64_t used_bytes) {
+    store_statfs_t st;
+    st.total = crimson::common::local_conf().get_val<Option::size_t>("memstore_device_bytes");
+    st.available = st.total - used_bytes;
+    return seastar::make_ready_future<store_statfs_t>(std::move(st));
+  });
 }
 
 
@@ -152,7 +160,6 @@ CyanStore::mount_ertr::future<> CyanStore::ShardStores::mount()
     c->decode(p);
     coll_map[coll] = c;
     used_bytes += c->used_bytes();
-    cyan_store->used_bytes += c->used_bytes();
   }
   return mount_ertr::now();
 }

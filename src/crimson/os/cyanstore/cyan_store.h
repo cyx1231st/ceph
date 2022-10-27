@@ -28,19 +28,16 @@ namespace crimson::os {
 using coll_core_t = FuturizedStore::coll_core_t;
 class CyanStore final : public FuturizedStore {
   const std::string path;
-  uint64_t used_bytes = 0;
   uuid_d osd_fsid;
 
   class ShardStores {
-    CyanStore *cyan_store;
     const std::string path;
     std::unordered_map<coll_t, boost::intrusive_ptr<Collection>> coll_map;
     std::map<coll_t, boost::intrusive_ptr<Collection>> new_coll_map;
-    uint64_t used_bytes = 0;
   public:
-    ShardStores(CyanStore *cyanstore)
-      :cyan_store(cyanstore),
-       path(cyanstore->path){}
+    uint64_t used_bytes = 0;
+    ShardStores(std::string path)
+      :path(path){}
 
     mount_ertr::future<> mount();
     seastar::future<> umount();
