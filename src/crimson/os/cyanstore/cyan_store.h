@@ -25,7 +25,7 @@ class Transaction;
 }
 
 namespace crimson::os {
-
+using coll_core_t = FuturizedStore::coll_core_t;
 class CyanStore final : public FuturizedStore {
   const std::string path;
   uint64_t used_bytes = 0;
@@ -91,7 +91,7 @@ class CyanStore final : public FuturizedStore {
 
     seastar::future<CollectionRef> create_new_collection(const coll_t& cid);
     seastar::future<CollectionRef> open_collection(const coll_t& cid);
-    seastar::future<std::vector<coll_t>> list_collections();
+    seastar::future<std::vector<coll_core_t>> list_collections();
   
     seastar::future<> do_transaction_no_callbacks(
       CollectionRef ch,
@@ -157,7 +157,7 @@ public:
   mkfs_ertr::future<> mkfs(uuid_d new_osd_fsid);
 
   seastar::future<store_statfs_t> stat() const final;
-  seastar::future<std::vector<coll_t>> list_collections() final;
+  seastar::future<std::vector<coll_core_t>> list_collections() final;
 
   seastar::future<> write_meta(const std::string& key,
 		  const std::string& value) final;
