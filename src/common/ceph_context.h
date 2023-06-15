@@ -195,7 +195,7 @@ public:
 		  std::ostream& errss,
 		  ceph::bufferlist *out);
 
-  static constexpr std::size_t largest_singleton = 8 * 72;
+  static constexpr std::size_t largest_singleton = 16 * 72;
 
   template<typename T, typename... Args>
   T& lookup_or_create_singleton_object(std::string_view name,
