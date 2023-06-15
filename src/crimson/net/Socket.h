@@ -74,6 +74,8 @@ public:
 
   seastar::future<bufferptr> read_exactly(size_t bytes);
 
+  seastar::future<seastar::temporary_buffer<char>> read_exactly_bare(size_t bytes);
+
   seastar::future<> write(bufferlist);
 
   seastar::future<> flush();

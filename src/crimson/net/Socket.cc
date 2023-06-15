@@ -174,6 +174,35 @@ Socket::read_exactly(size_t bytes) {
 #endif
 }
 
+seastar::future<tmp_buf>
+Socket::read_exactly_bare(size_t bytes) {
+  assert(seastar::this_shard_id() == sid);
+#ifdef UNIT_TESTS_BUILT
+  return try_trap_pre(next_trap_read).then([bytes, this] {
+#endif
+    if (bytes == 0) {
+      return seastar::make_ready_future<tmp_buf>();
+    }
+    return in.read_exactly(bytes).then([bytes](auto buf) {
+      if (buf.size() < bytes) {
+        throw std::system_error(make_error_code(error::read_eof));
+      }
+      inject_failure();
+      return inject_delay(
+      ).then([buf = std::move(buf)]() mutable {
+        return seastar::make_ready_future<tmp_buf>(std::move(buf));
+      });
+    });
+#ifdef UNIT_TESTS_BUILT
+  }).then([this](auto buf) {
+    return try_trap_post(next_trap_read
+    ).then([buf = std::move(buf)]() mutable {
+      return std::move(buf);
+    });
+  });
+#endif
+}
+
 seastar::future<>
 Socket::write(bufferlist buf)
 {

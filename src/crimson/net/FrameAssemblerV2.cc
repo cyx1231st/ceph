@@ -18,6 +18,8 @@ using ceph::msgr::v2::Tag;
 
 namespace {
 
+constexpr std::size_t LEN_SMALL_READ = 64;
+
 seastar::logger& logger() {
   return crimson::get_logger(ceph_subsys_ms);
 }
@@ -358,8 +360,26 @@ FrameAssemblerV2::read_main_preamble()
 {
   assert(seastar::this_shard_id() == sid);
   rx_preamble.clear();
-  return read_exactly<may_cross_core>(
-    rx_frame_asm.get_preamble_onwire_len()
+  auto read_len = rx_frame_asm.get_preamble_onwire_len();
+  assert(read_len <= LEN_SMALL_READ);
+  if constexpr (!may_cross_core) {
+    return socket->read_exactly_bare(read_len
+    ).then([this](auto buf) {
+      try {
+        rx_preamble.append(buf.get(), buf.size());
+        const Tag tag = rx_frame_asm.disassemble_preamble(rx_preamble);
+#ifdef UNIT_TESTS_BUILT
+        intercept_frame(tag, false);
+#endif
+        return read_main_t{tag, &rx_frame_asm};
+      } catch (FrameError& e) {
+        logger().warn("{} read_main_preamble: {}", conn, e.what());
+        throw std::system_error(make_error_code(crimson::net::error::negotiation_failure));
+      }
+    });
+  }
+
+  return read_exactly<may_cross_core>(read_len
   ).then([this](auto bptr) {
     try {
       rx_preamble.append(std::move(bptr));
@@ -397,6 +417,19 @@ FrameAssemblerV2::read_frame_payload()
       }
       uint32_t onwire_len = rx_frame_asm.get_segment_onwire_len(seg_idx);
       // TODO: create aligned and contiguous buffer from socket
+      if constexpr (!may_cross_core) {
+        if (onwire_len <= LEN_SMALL_READ) {
+          return socket->read_exactly_bare(onwire_len
+          ).then([this](auto buf) {
+            logger().trace("{} RECV({}) frame segment[{}] (bare)",
+                           conn, buf.size(), rx_segments_data.size());
+            bufferlist segment;
+            segment.append(buf.get(), buf.size());
+            rx_segments_data.emplace_back(std::move(segment));
+          });
+        }
+      }
+
       return read_exactly<may_cross_core>(onwire_len
       ).then([this](auto bptr) {
         logger().trace("{} RECV({}) frame segment[{}]",
@@ -407,28 +440,57 @@ FrameAssemblerV2::read_frame_payload()
       });
     }
   ).then([this] {
-    return read_exactly<may_cross_core>(rx_frame_asm.get_epilogue_onwire_len());
-  }).then([this](auto bptr) {
-    logger().trace("{} RECV({}) frame epilogue", conn, bptr.length());
-    bool ok = false;
-    try {
-      bufferlist rx_epilogue;
-      rx_epilogue.append(std::move(bptr));
-      ok = rx_frame_asm.disassemble_segments(rx_preamble, rx_segments_data.data(), rx_epilogue);
-    } catch (FrameError& e) {
-      logger().error("read_frame_payload: {} {}", conn, e.what());
-      throw std::system_error(make_error_code(crimson::net::error::negotiation_failure));
-    } catch (ceph::crypto::onwire::MsgAuthError&) {
-      logger().error("read_frame_payload: {} bad auth tag", conn);
-      throw std::system_error(make_error_code(crimson::net::error::negotiation_failure));
+    auto read_len = rx_frame_asm.get_epilogue_onwire_len();
+    assert(read_len <= LEN_SMALL_READ);
+    if constexpr (!may_cross_core) {
+      return socket->read_exactly_bare(read_len
+      ).then([this](auto buf) {
+        logger().trace("{} RECV({}) frame epilogue (bare)", conn, buf.size());
+        bool ok = false;
+        try {
+          bufferlist rx_epilogue;
+          rx_epilogue.append(buf.get(), buf.size());
+          ok = rx_frame_asm.disassemble_segments(rx_preamble, rx_segments_data.data(), rx_epilogue);
+        } catch (FrameError& e) {
+          logger().error("read_frame_payload: {} {}", conn, e.what());
+          throw std::system_error(make_error_code(crimson::net::error::negotiation_failure));
+        } catch (ceph::crypto::onwire::MsgAuthError&) {
+          logger().error("read_frame_payload: {} bad auth tag", conn);
+          throw std::system_error(make_error_code(crimson::net::error::negotiation_failure));
+        }
+        // we do have a mechanism that allows transmitter to start sending message
+        // and abort after putting entire data field on wire. This will be used by
+        // the kernel client to avoid unnecessary buffering.
+        if (!ok) {
+          ceph_abort("TODO");
+        }
+        return &rx_segments_data;
+      });
     }
-    // we do have a mechanism that allows transmitter to start sending message
-    // and abort after putting entire data field on wire. This will be used by
-    // the kernel client to avoid unnecessary buffering.
-    if (!ok) {
-      ceph_abort("TODO");
-    }
-    return &rx_segments_data;
+
+    return read_exactly<may_cross_core>(read_len
+    ).then([this](auto bptr) {
+      logger().trace("{} RECV({}) frame epilogue", conn, bptr.length());
+      bool ok = false;
+      try {
+        bufferlist rx_epilogue;
+        rx_epilogue.append(std::move(bptr));
+        ok = rx_frame_asm.disassemble_segments(rx_preamble, rx_segments_data.data(), rx_epilogue);
+      } catch (FrameError& e) {
+        logger().error("read_frame_payload: {} {}", conn, e.what());
+        throw std::system_error(make_error_code(crimson::net::error::negotiation_failure));
+      } catch (ceph::crypto::onwire::MsgAuthError&) {
+        logger().error("read_frame_payload: {} bad auth tag", conn);
+        throw std::system_error(make_error_code(crimson::net::error::negotiation_failure));
+      }
+      // we do have a mechanism that allows transmitter to start sending message
+      // and abort after putting entire data field on wire. This will be used by
+      // the kernel client to avoid unnecessary buffering.
+      if (!ok) {
+        ceph_abort("TODO");
+      }
+      return &rx_segments_data;
+    });
   });
 }
 template seastar::future<FrameAssemblerV2::read_payload_t*> FrameAssemblerV2::read_frame_payload<true>();
