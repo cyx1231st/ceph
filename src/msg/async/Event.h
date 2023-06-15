@@ -91,7 +91,7 @@ class EventDriver {
 class EventCenter {
  public:
   // should be enough;
-  static const int MAX_EVENTCENTER = 24;
+  static const int MAX_EVENTCENTER = 48;
 
  private:
   using clock_type = ceph::coarse_mono_clock;
