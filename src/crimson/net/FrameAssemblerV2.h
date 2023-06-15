@@ -96,7 +96,7 @@ public:
    */
 
   template <bool may_cross_core = true>
-  seastar::future<ceph::bufferptr> read_exactly(std::size_t bytes);
+  seastar::future<ceph::bufferptr> read_exactly(std::size_t bytes, __le16 alignment=alignof(char));
 
   template <bool may_cross_core = true>
   seastar::future<ceph::bufferlist> read(std::size_t bytes);

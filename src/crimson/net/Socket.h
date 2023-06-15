@@ -72,7 +72,7 @@ public:
   /// read the requested number of bytes into a bufferlist
   seastar::future<bufferlist> read(size_t bytes);
 
-  seastar::future<bufferptr> read_exactly(size_t bytes);
+  seastar::future<bufferptr> read_exactly(size_t bytes, __le16 alignment=alignof(char));
 
   seastar::future<> write(bufferlist);
 

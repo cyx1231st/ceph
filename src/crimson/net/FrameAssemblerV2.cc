@@ -238,15 +238,15 @@ seastar::future<> FrameAssemblerV2::close_shutdown_socket()
 
 template <bool may_cross_core>
 seastar::future<ceph::bufferptr>
-FrameAssemblerV2::read_exactly(std::size_t bytes)
+FrameAssemblerV2::read_exactly(std::size_t bytes, __le16 alignment)
 {
   assert(seastar::this_shard_id() == sid);
   assert(has_socket());
   if constexpr (may_cross_core) {
     assert(conn.get_messenger_shard_id() == sid);
     return seastar::smp::submit_to(
-        socket->get_shard_id(), [this, bytes] {
-      return socket->read_exactly(bytes);
+        socket->get_shard_id(), [this, bytes, alignment] {
+      return socket->read_exactly(bytes, alignment);
     }).then([this](auto bptr) {
       if (record_io) {
         rxbuf.append(bptr);
@@ -255,11 +255,11 @@ FrameAssemblerV2::read_exactly(std::size_t bytes)
     });
   } else {
     assert(socket->get_shard_id() == sid);
-    return socket->read_exactly(bytes);
+    return socket->read_exactly(bytes, alignment);
   }
 }
-template seastar::future<ceph::bufferptr> FrameAssemblerV2::read_exactly<true>(std::size_t);
-template seastar::future<ceph::bufferptr> FrameAssemblerV2::read_exactly<false>(std::size_t);
+template seastar::future<ceph::bufferptr> FrameAssemblerV2::read_exactly<true>(std::size_t, __le16);
+template seastar::future<ceph::bufferptr> FrameAssemblerV2::read_exactly<false>(std::size_t, __le16);
 
 template <bool may_cross_core>
 seastar::future<ceph::bufferlist>
@@ -390,14 +390,15 @@ FrameAssemblerV2::read_frame_payload()
     [this] {
       // TODO: create aligned and contiguous buffer from socket
       const size_t seg_idx = rx_segments_data.size();
+      __le16 _alignment = alignof(char);
       if (uint16_t alignment = rx_frame_asm.get_segment_align(seg_idx);
           alignment != segment_t::DEFAULT_ALIGNMENT) {
-        logger().trace("{} cannot allocate {} aligned buffer at segment desc index {}",
-                       conn, alignment, rx_segments_data.size());
+        ceph_assert(alignment == segment_t::PAGE_SIZE_ALIGNMENT);
+        _alignment = alignment;
       }
       uint32_t onwire_len = rx_frame_asm.get_segment_onwire_len(seg_idx);
       // TODO: create aligned and contiguous buffer from socket
-      return read_exactly<may_cross_core>(onwire_len
+      return read_exactly<may_cross_core>(onwire_len, _alignment
       ).then([this](auto bptr) {
         logger().trace("{} RECV({}) frame segment[{}]",
                        conn, bptr.length(), rx_segments_data.size());

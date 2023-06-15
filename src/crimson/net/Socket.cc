@@ -145,15 +145,15 @@ Socket::read(size_t bytes)
 }
 
 seastar::future<bufferptr>
-Socket::read_exactly(size_t bytes) {
+Socket::read_exactly(size_t bytes, __le16 alignment) {
   assert(seastar::this_shard_id() == sid);
 #ifdef UNIT_TESTS_BUILT
-  return try_trap_pre(next_trap_read).then([bytes, this] {
+  return try_trap_pre(next_trap_read).then([bytes, alignment, this] {
 #endif
     if (bytes == 0) {
       return seastar::make_ready_future<bufferptr>();
     }
-    return in.read_exactly(bytes).then([bytes](auto buf) {
+    return in.read_exactly2(bytes, alignment).then([bytes](auto buf) {
       bufferptr ptr(buffer::create(buf.share()));
       if (ptr.length() < bytes) {
         throw std::system_error(make_error_code(error::read_eof));

@@ -927,6 +927,11 @@ IOHandler::read_message(
     ceph_msg_footer footer{ceph_le32(0), ceph_le32(0),
                            ceph_le32(0), ceph_le64(0), current_header.flags};
 
+    ceph_assert(msg_frame.data().get_num_buffers() <= 1);
+    if (msg_frame.data().length() >= segment_t::PAGE_SIZE_ALIGNMENT) {
+      ceph_assert(msg_frame.data().is_aligned(segment_t::PAGE_SIZE_ALIGNMENT));
+    }
+
     Message *message = decode_message(nullptr, 0, header, footer,
         msg_frame.front(), msg_frame.middle(), msg_frame.data(), nullptr);
     if (!message) {
