@@ -315,19 +315,19 @@ static ceph::spinlock debug_lock;
       _off(0),
       _len(_raw->get_len())
   {
-    _raw->nref.store(1, std::memory_order_release);
+    _raw->nref = 1;
     bdout << "ptr " << this << " get " << _raw << bendl;
   }
   buffer::ptr::ptr(unsigned l) : _off(0), _len(l)
   {
     _raw = buffer::create(l).release();
-    _raw->nref.store(1, std::memory_order_release);
+    _raw->nref = 1;
     bdout << "ptr " << this << " get " << _raw << bendl;
   }
   buffer::ptr::ptr(const char *d, unsigned l) : _off(0), _len(l)    // ditto.
   {
     _raw = buffer::copy(d, l).release();
-    _raw->nref.store(1, std::memory_order_release);
+    _raw->nref = 1;
     bdout << "ptr " << this << " get " << _raw << bendl;
   }
   buffer::ptr::ptr(const ptr& p) : _raw(p._raw), _off(p._off), _len(p._len)
@@ -355,7 +355,7 @@ static ceph::spinlock debug_lock;
       _off(p._off),
       _len(p._len)
   {
-    _raw->nref.store(1, std::memory_order_release);
+    _raw->nref = 1;
     bdout << "ptr " << this << " get " << _raw << bendl;
   }
   buffer::ptr& buffer::ptr::operator= (const ptr& p)
@@ -420,15 +420,11 @@ static ceph::spinlock debug_lock;
       // (which doesn't impose a memory barrier on the strongly-ordered
       // x86), this allows to avoid all atomical operations in such case.
       const bool last_one = \
-        (1 == cached_raw->nref.load(std::memory_order_acquire));
+        (1 == cached_raw->nref);
       if (likely(last_one) || --cached_raw->nref == 0) {
 	bdout << "deleting raw " << static_cast<void*>(cached_raw)
 	      << " len " << cached_raw->get_len() << bendl;
-	ANNOTATE_HAPPENS_AFTER(&cached_raw->nref);
-	ANNOTATE_HAPPENS_BEFORE_FORGET_ALL(&cached_raw->nref);
 	delete cached_raw;  // dealloc old (if any)
-      } else {
-	ANNOTATE_HAPPENS_BEFORE(&cached_raw->nref);
       }
     }
   }
@@ -2218,7 +2214,7 @@ buffer::ptr_node* buffer::ptr_node::cloner::operator()(
 std::ostream& buffer::operator<<(std::ostream& out, const buffer::raw &r) {
   return out << "buffer::raw("
              << (void*)r.get_data() << " len " << r.get_len()
-             << " nref " << r.nref.load() << ")";
+             << " nref " << r.nref << ")";
 }
 
 std::ostream& buffer::operator<<(std::ostream& out, const buffer::ptr& bp) {
