@@ -95,9 +95,11 @@ size_t mempool::pool_t::allocated_items() const
 
 void mempool::pool_t::adjust_count(ssize_t items, ssize_t bytes)
 {
+#ifndef WITH_SEASTAR
   thread_shard_index = (thread_shard_index == num_shards) ? pick_a_shard_int() : thread_shard_index;
   shard[thread_shard_index].items += items;
   shard[thread_shard_index].bytes += bytes;
+#endif
 }
 
 void mempool::pool_t::get_stats(

@@ -323,10 +323,12 @@ public:
   };
 
   void init(bool force_register) {
+#ifndef WITH_SEASTAR
     pool = &get_pool(pool_ix);
     if (debug_mode || force_register) {
       type = pool->get_type(typeid(T), sizeof(T));
     }
+#endif
   }
 
   pool_allocator(bool force_register=false) {
@@ -339,17 +341,20 @@ public:
 
   T* allocate(size_t n, void *p = nullptr) {
     size_t total = sizeof(T) * n;
+#ifndef WITH_SEASTAR
     shard_t *shard = pool->pick_a_shard();
     shard->bytes += total;
     shard->items += n;
     if (type) {
       type->items += n;
     }
+#endif
     T* r = reinterpret_cast<T*>(new char[total]);
     return r;
   }
 
   void deallocate(T* p, size_t n) {
+#ifndef WITH_SEASTAR
     size_t total = sizeof(T) * n;
     shard_t *shard = pool->pick_a_shard();
     shard->bytes -= total;
@@ -357,17 +362,20 @@ public:
     if (type) {
       type->items -= n;
     }
+#endif
     delete[] reinterpret_cast<char*>(p);
   }
 
   T* allocate_aligned(size_t n, size_t align, void *p = nullptr) {
     size_t total = sizeof(T) * n;
+#ifndef WITH_SEASTAR
     shard_t *shard = pool->pick_a_shard();
     shard->bytes += total;
     shard->items += n;
     if (type) {
       type->items += n;
     }
+#endif
     char *ptr;
     int rc = ::posix_memalign((void**)(void*)&ptr, align, total);
     if (rc)
@@ -377,6 +385,7 @@ public:
   }
 
   void deallocate_aligned(T* p, size_t n) {
+#ifndef WITH_SEASTAR
     size_t total = sizeof(T) * n;
     shard_t *shard = pool->pick_a_shard();
     shard->bytes -= total;
@@ -384,6 +393,7 @@ public:
     if (type) {
       type->items -= n;
     }
+#endif
     aligned_free(p);
   }
 
