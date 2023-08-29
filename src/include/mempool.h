@@ -356,9 +356,12 @@ public:
     shard_t *shard = pool->pick_a_shard();
     shard->bytes += total;
     shard->items += n;
+    // FIXME: type_t::items isn't sharded
+#if !defined(WITH_SEASTAR) || defined(WITH_ALIEN)
     if (type) {
       type->items += n;
     }
+#endif
     T* r = reinterpret_cast<T*>(new char[total]);
     return r;
   }
@@ -368,9 +371,12 @@ public:
     shard_t *shard = pool->pick_a_shard();
     shard->bytes -= total;
     shard->items -= n;
+    // FIXME: type_t::items isn't sharded
+#if !defined(WITH_SEASTAR) || defined(WITH_ALIEN)
     if (type) {
       type->items -= n;
     }
+#endif
     delete[] reinterpret_cast<char*>(p);
   }
 
@@ -379,9 +385,12 @@ public:
     shard_t *shard = pool->pick_a_shard();
     shard->bytes += total;
     shard->items += n;
+    // FIXME: type_t::items isn't sharded
+#if !defined(WITH_SEASTAR) || defined(WITH_ALIEN)
     if (type) {
       type->items += n;
     }
+#endif
     char *ptr;
     int rc = ::posix_memalign((void**)(void*)&ptr, align, total);
     if (rc)
@@ -395,9 +404,12 @@ public:
     shard_t *shard = pool->pick_a_shard();
     shard->bytes -= total;
     shard->items -= n;
+    // FIXME: type_t::items isn't sharded
+#if !defined(WITH_SEASTAR) || defined(WITH_ALIEN)
     if (type) {
       type->items -= n;
     }
+#endif
     aligned_free(p);
   }
 
