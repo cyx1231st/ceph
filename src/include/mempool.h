@@ -30,6 +30,10 @@
 #  include <sched.h>
 #endif
 
+#if defined(WITH_SEASTAR) && !defined(WITH_ALIEN)
+#  include <seastar/core/smp.hh>
+#endif
+
 #include "common/Formatter.h"
 #include "common/ceph_atomic.h"
 #include "include/ceph_assert.h"
@@ -270,12 +274,18 @@ public:
 
   static size_t pick_a_shard_int() {
 #ifndef _GNU_SOURCE
+#if defined(WITH_SEASTAR) && !defined(WITH_ALIEN)
+    ceph_abort("Sharding strategy isn't correct for crimson!");
+#endif
     // Dirt cheap, see:
     //   https://fossies.org/dox/glibc-2.32/pthread__self_8c_source.html
     size_t me = (size_t)pthread_self();
     size_t i = (me >> CEPH_PAGE_SHIFT) & ((1 << num_shard_bits) - 1);
     return i;
 #else
+#if defined(WITH_SEASTAR) && !defined(WITH_ALIEN)
+    assert((1 << num_shard_bits) >= seastar::smp::count);
+#endif
     // a thread local storage is actually just an approximation;
     // what we truly want is a _cpu local storage_.
     //
