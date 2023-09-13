@@ -234,9 +234,9 @@ static size_t pick_a_shard_int() {
 // bytes.
 //
 struct shard_t {
-  ceph::atomic<size_t> bytes = {0};
-  ceph::atomic<size_t> items = {0};
-  char __padding[128 - sizeof(ceph::atomic<size_t>)*2];
+  size_t bytes = {0};
+  size_t items = {0};
+  char __padding[128 - sizeof(size_t)*2];
 } __attribute__ ((aligned (128)));
 
 static_assert(sizeof(shard_t) == 128, "shard_t should be cacheline-sized");
@@ -263,7 +263,7 @@ struct type_t {
   const char *type_name;
   size_t item_size;
   struct type_shard_t {
-    ceph::atomic<ssize_t> items = {0}; // signed
+    ssize_t items = {0}; // signed
     char __padding[128 - sizeof(ceph::atomic<ssize_t>)];
   } __attribute__ ((aligned (128)));
   type_shard_t shards[num_shards];
