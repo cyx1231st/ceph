@@ -200,7 +200,7 @@ class pool_t;
 // we shard pool stats across many shard_t's to reduce the amount
 // of cacheline ping pong.
 enum {
-  num_shard_bits = 5
+  num_shard_bits = 7
 };
 enum {
   num_shards = 1 << num_shard_bits
