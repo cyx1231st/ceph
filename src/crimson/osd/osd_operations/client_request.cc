@@ -190,11 +190,13 @@ ClientRequest::process_pg_op(
   return pg->do_pg_ops(
     m
   ).then_interruptible([this, pg=std::move(pg)](MURef<MOSDOpReply> reply) {
-    return conn->send(std::move(reply));
+    // TODO: gate the send future
+    std::ignore = conn->send(std::move(reply));
+    return seastar::now();
   });
 }
 
-auto ClientRequest::reply_op_error(const Ref<PG>& pg, int err)
+void ClientRequest::reply_op_error(const Ref<PG>& pg, int err)
 {
   logger().debug("{}: replying with error {}", *this, err);
   auto reply = crimson::make_message<MOSDOpReply>(
@@ -203,7 +205,9 @@ auto ClientRequest::reply_op_error(const Ref<PG>& pg, int err)
     !m->has_flag(CEPH_OSD_FLAG_RETURNVEC));
   reply->set_reply_versions(eversion_t(), 0);
   reply->set_op_returns(std::vector<pg_log_op_return_item_t>{});
-  return conn->send(std::move(reply));
+  // TODO: gate the send future
+  std::ignore = conn->send(std::move(reply));
+  return seastar::now();
 }
 
 ClientRequest::interruptible_future<>
@@ -230,7 +234,9 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
           m.get(), completed->err, pg->get_osdmap_epoch(),
           CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
 	reply->set_reply_versions(completed->version, completed->user_version);
-        return conn->send(std::move(reply));
+        // TODO: gate the send future
+        std::ignore = conn->send(std::move(reply));
+        return seastar::now();
       } else {
         return ihref.enter_stage<interruptor>(client_pp(*pg).get_obc, *this
 	).then_interruptible(
@@ -254,7 +260,8 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
     PG::load_obc_ertr::all_same_way([this, pg=std::move(pg)](const auto &code) {
       logger().error("ClientRequest saw error code {}", code);
       assert(code.value() > 0);
-      return reply_op_error(pg, -code.value());
+      reply_op_error(pg, -code.value());
+      return seastar::now();
   }));
 }
 
@@ -264,48 +271,56 @@ ClientRequest::do_process(
   Ref<PG>& pg, crimson::osd::ObjectContextRef obc)
 {
   if (m->has_flag(CEPH_OSD_FLAG_PARALLELEXEC)) {
-    return reply_op_error(pg, -EINVAL);
+    reply_op_error(pg, -EINVAL);
+    return seastar::now();
   }
   const pg_pool_t pool = pg->get_pgpool().info;
   if (pool.has_flag(pg_pool_t::FLAG_EIO)) {
     // drop op on the floor; the client will handle returning EIO
     if (m->has_flag(CEPH_OSD_FLAG_SUPPORTSPOOLEIO)) {
       logger().debug("discarding op due to pool EIO flag");
-      return seastar::now();
     } else {
       logger().debug("replying EIO due to pool EIO flag");
-      return reply_op_error(pg, -EIO);
+      reply_op_error(pg, -EIO);
     }
+    return seastar::now();
   }
   if (m->get_oid().name.size()
     > crimson::common::local_conf()->osd_max_object_name_len) {
-    return reply_op_error(pg, -ENAMETOOLONG);
+    reply_op_error(pg, -ENAMETOOLONG);
+    return seastar::now();
   } else if (m->get_hobj().get_key().size()
     > crimson::common::local_conf()->osd_max_object_name_len) {
-    return reply_op_error(pg, -ENAMETOOLONG);
+    reply_op_error(pg, -ENAMETOOLONG);
+    return seastar::now();
   } else if (m->get_hobj().nspace.size()
     > crimson::common::local_conf()->osd_max_object_namespace_len) {
-    return reply_op_error(pg, -ENAMETOOLONG);
+    reply_op_error(pg, -ENAMETOOLONG);
+    return seastar::now();
   } else if (m->get_hobj().oid.name.empty()) {
-    return reply_op_error(pg, -EINVAL);
+    reply_op_error(pg, -EINVAL);
+    return seastar::now();
   } else if (pg->get_osdmap()->is_blocklisted(conn->get_peer_addr())) {
     logger().info("{} is blocklisted", conn->get_peer_addr());
-    return reply_op_error(pg, -EBLOCKLISTED);
+    reply_op_error(pg, -EBLOCKLISTED);
+    return seastar::now();
   }
 
   if (!obc->obs.exists && !op_info.may_write()) {
-    return reply_op_error(pg, -ENOENT);
+    reply_op_error(pg, -ENOENT);
+    return seastar::now();
   }
 
   SnapContext snapc = get_snapc(pg,obc);
 
   if ((m->has_flag(CEPH_OSD_FLAG_ORDERSNAP)) &&
        snapc.seq < obc->ssc->snapset.seq) {
-        logger().debug("{} ORDERSNAP flag set and snapc seq {}",
-                       " < snapset seq {} on {}",
-                       __func__, snapc.seq, obc->ssc->snapset.seq,
-                       obc->obs.oi.soid);
-     return reply_op_error(pg, -EOLDSNAPC);
+    logger().debug("{} ORDERSNAP flag set and snapc seq {}",
+                   " < snapset seq {} on {}",
+                   __func__, snapc.seq, obc->ssc->snapset.seq,
+                   obc->obs.oi.soid);
+    reply_op_error(pg, -EOLDSNAPC);
+    return seastar::now();
   }
 
   if (!pg->is_primary()) {
@@ -318,7 +333,8 @@ ClientRequest::do_process(
       logger().debug("{}: unstable write on replica, "
 	             "bouncing to primary",
                      __func__);
-      return reply_op_error(pg, -EAGAIN);
+      reply_op_error(pg, -EAGAIN);
+      return seastar::now();
     } else {
       logger().debug("{}: serving replica read on oid {}",
                      __func__, m->get_hobj());
@@ -336,7 +352,9 @@ ClientRequest::do_process(
 	      ).then_interruptible(
 		[this, reply=std::move(reply)]() mutable {
 		  logger().debug("{}: sending response", *this);
-		  return conn->send(std::move(reply));
+		  // TODO: gate the send future
+		  std::ignore = conn->send(std::move(reply));
+		  return seastar::now();
 		});
 	    }, crimson::ct_error::eagain::handle([this, pg, &ihref]() mutable {
 	      return process_op(ihref, pg);
