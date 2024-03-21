@@ -30,22 +30,53 @@ struct block_delta_t {
   }
 };
 
+struct overwrite_buf_t {
+  size_t add(block_delta_t &b) {
+    changes.push_back(b);
+    return changes.size();
+  }
+  bool is_empty() const {
+    return changes.empty();
+  }
+  void clear() const {
+    if (changes.size()) {
+      changes.clear();
+    }
+  }
+  void apply_changes_to(bufferptr &b) {
+    for (auto p : changes) {
+      auto iter = p.bl.cbegin();
+      iter.copy(p.bl.length(), b.c_str() + p.offset);
+    }
+  }
+  void apply_changes_to() const {
+    for (auto p : changes) {
+      auto iter = p.bl.cbegin();
+      iter.copy(p.bl.length(), (*ptr).c_str() + p.offset);
+    }
+  }
+  mutable std::vector<block_delta_t> changes = {};
+  mutable std::optional<ceph::bufferptr> ptr = std::nullopt;
+};
+
 struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
   using Ref = TCachedExtentRef<ObjectDataBlock>;
 
   std::vector<block_delta_t> delta = {};
 
   interval_set<extent_len_t> modified_region;
+  // to provide the local modified view during transaction
+  overwrite_buf_t overwrites; 
 
   explicit ObjectDataBlock(ceph::bufferptr &&ptr)
     : LogicalCachedExtent(std::move(ptr)) {}
-  explicit ObjectDataBlock(const ObjectDataBlock &other)
-    : LogicalCachedExtent(other), modified_region(other.modified_region) {}
+  explicit ObjectDataBlock(const ObjectDataBlock &other, share_buffer_t s)
+    : LogicalCachedExtent(other, s), modified_region(other.modified_region) {}
   explicit ObjectDataBlock(extent_len_t length)
     : LogicalCachedExtent(length) {}
 
   CachedExtentRef duplicate_for_write(Transaction&) final {
-    return CachedExtentRef(new ObjectDataBlock(*this));
+    return CachedExtentRef(new ObjectDataBlock(*this, share_buffer_t{}));
   };
 
   static constexpr extent_types_t TYPE = extent_types_t::OBJECT_DATA_BLOCK;
@@ -54,9 +85,9 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
   }
 
   void overwrite(extent_len_t offset, bufferlist bl) {
-    auto iter = bl.cbegin();
-    iter.copy(bl.length(), get_bptr().c_str() + offset);
-    delta.push_back({offset, bl.length(), bl});
+    block_delta_t b {offset, bl.length(), bl};
+    overwrites.add(b);
+    delta.push_back(b);
     modified_region.union_insert(offset, bl.length());
   }
 
@@ -76,8 +107,51 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
     modified_region.clear();
   }
 
+  void prepare_commit() final {
+    if (!overwrites.is_empty()) {
+      assert(!overwrites.ptr.has_value());
+      overwrites.apply_changes_to(CachedExtent::get_bptr());
+      overwrites.clear();
+    } else if (overwrites.ptr.has_value()) {
+      overwrites.apply_changes_to();
+      overwrites.clear();
+      set_bptr(std::move(*overwrites.ptr));
+    }
+    overwrites.ptr = std::nullopt;
+  }
+
   void logical_on_delta_write() final {
     delta.clear();
+  }
+
+  template<typename R>
+  R get_recent_change() const {
+    overwrites.ptr = ceph::buffer::copy(CachedExtent::get_bptr().c_str(), get_length()); 
+    overwrites.apply_changes_to();
+    overwrites.clear();
+    return *overwrites.ptr;
+  }
+
+  bufferptr &get_bptr() override {
+    if (overwrites.is_empty()) {
+      if (!overwrites.ptr.has_value()) {
+	return CachedExtent::get_bptr();
+      }
+      assert(overwrites.ptr.has_value());
+      return *overwrites.ptr;
+    }
+    return get_recent_change<ceph::bufferptr&>();
+  }
+
+  const bufferptr &get_bptr() const override {
+    if (overwrites.is_empty()) {
+      if (!overwrites.ptr.has_value()) {
+	return CachedExtent::get_bptr();
+      }
+      assert(overwrites.ptr.has_value());
+      return *overwrites.ptr;
+    }
+    return get_recent_change<const bufferptr&>();
   }
 };
 using ObjectDataBlockRef = TCachedExtentRef<ObjectDataBlock>;

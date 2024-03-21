@@ -713,6 +713,51 @@ TEST_P(object_data_handler_test_t, random_overwrite) {
   });
 }
 
+TEST_P(object_data_handler_test_t, overwrite_then_read_within_transaction) {
+  run_async([this] {
+    set_overwrite_threshold();
+    auto t = create_mutate_transaction();
+    write(*t, 0, 4096 * 3, 'a');
+    submit_transaction(std::move(t));
+    t = create_mutate_transaction();
+    write(*t, 4096, 4096, 'b');
+    read(*t, 1024, 4096 + 1024);
+    write(*t, 8192, 4096, 'c');
+    read(*t, 2048, 8192);
+    write(*t, 0, 4096, 'd');
+    write(*t, 4096, 4096, 'x');
+    submit_transaction(std::move(t));
+    read(1024, 8192 - 1024);
+    read(0, 4096 * 3);
+    restart();
+    epm->check_usage();
+
+    auto t1 = create_mutate_transaction();
+    write(*t1, 4096, 4096, 'e');
+    read(*t1, 4096, 4096);
+    auto t2 = create_read_transaction();
+    bufferlist bl = with_trans_intr(*t2, [&](auto &t) {
+      return ObjectDataHandler(MAX_OBJECT_SIZE).read(
+        ObjectDataHandler::context_t{
+          *tm,
+          t,
+          *onode
+        },
+        4096,
+        4096);
+    }).unsafe_get0();
+    bufferlist known;
+    known.append(
+      bufferptr(
+	known_contents,
+	4096,
+	4096));
+    EXPECT_EQ(bl.length(), known.length());
+    EXPECT_NE(bl, known);
+    unset_overwrite_threshold();
+  });
+}
+
 INSTANTIATE_TEST_SUITE_P(
   object_data_handler_test,
   object_data_handler_test_t,
