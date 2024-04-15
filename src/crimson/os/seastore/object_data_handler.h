@@ -30,29 +30,47 @@ struct block_delta_t {
   }
 };
 
-struct overwrite_buf_t {
-  size_t add(block_delta_t &b) {
-    changes.push_back(b);
-    return changes.size();
-  }
+class overwrite_buf_t {
+public:
+  overwrite_buf_t() = default;
   bool is_empty() const {
-    return changes.empty();
+    return changes.empty() && !has_cached_bptr();
   }
-  void clear() const {
-    if (changes.size()) {
-      changes.clear();
-    }
+  bool has_cached_bptr() const {
+    return ptr.has_value();
   }
-  void apply_changes_to(bufferptr &b) {
+  void add(const block_delta_t &b) {
+    changes.push_back(b);
+  }
+  void apply_changes_to(bufferptr &b) const {
+    assert(!changes.empty());
     for (auto p : changes) {
       auto iter = p.bl.cbegin();
       iter.copy(p.bl.length(), b.c_str() + p.offset);
     }
+    changes.clear();
   }
-  void apply_changes_to() const {
-    for (auto p : changes) {
-      auto iter = p.bl.cbegin();
-      iter.copy(p.bl.length(), (*ptr).c_str() + p.offset);
+  const bufferptr &get_cached_bptr(const bufferptr &_ptr) const {
+    apply_changes_to_cache(_ptr);
+    return *ptr;
+  }
+  bufferptr &get_cached_bptr(const bufferptr &_ptr) {
+    apply_changes_to_cache(_ptr);
+    return *ptr;
+  }
+  bufferptr &&move_cached_bptr() {
+    assert(has_cached_bptr());
+    apply_changes_to(*ptr);
+    return std::move(*ptr);
+  }
+private:
+  void apply_changes_to_cache(const bufferptr &_ptr) const {
+    assert(!is_empty());
+    if (!has_cached_bptr()) {
+      ptr = ceph::buffer::copy(_ptr.c_str(), _ptr.length());
+    }
+    if (!changes.empty()) {
+      apply_changes_to(*ptr);
     }
   }
   mutable std::vector<block_delta_t> changes = {};
@@ -65,8 +83,9 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
   std::vector<block_delta_t> delta = {};
 
   interval_set<extent_len_t> modified_region;
+
   // to provide the local modified view during transaction
-  overwrite_buf_t overwrites; 
+  overwrite_buf_t cached_overwrites;
 
   explicit ObjectDataBlock(ceph::bufferptr &&ptr)
     : LogicalCachedExtent(std::move(ptr)) {}
@@ -86,7 +105,7 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
 
   void overwrite(extent_len_t offset, bufferlist bl) {
     block_delta_t b {offset, bl.length(), bl};
-    overwrites.add(b);
+    cached_overwrites.add(b);
     delta.push_back(b);
     modified_region.union_insert(offset, bl.length());
   }
@@ -108,50 +127,37 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
   }
 
   void prepare_commit() final {
-    if (!overwrites.is_empty()) {
-      assert(!overwrites.ptr.has_value());
-      overwrites.apply_changes_to(CachedExtent::get_bptr());
-      overwrites.clear();
-    } else if (overwrites.ptr.has_value()) {
-      overwrites.apply_changes_to();
-      overwrites.clear();
-      set_bptr(std::move(*overwrites.ptr));
+    if (is_mutation_pending() || is_exist_mutation_pending()) {
+      ceph_assert(!cached_overwrites.is_empty());
+      if (cached_overwrites.has_cached_bptr()) {
+        set_bptr(cached_overwrites.move_cached_bptr());
+      } else {
+        // The optimized path to minimize data copy
+        cached_overwrites.apply_changes_to(CachedExtent::get_bptr());
+      }
+    } else {
+      assert(cached_overwrites.is_empty());
     }
-    overwrites.ptr = std::nullopt;
   }
 
   void logical_on_delta_write() final {
     delta.clear();
   }
 
-  template<typename R>
-  R get_recent_change() const {
-    overwrites.ptr = ceph::buffer::copy(CachedExtent::get_bptr().c_str(), get_length()); 
-    overwrites.apply_changes_to();
-    overwrites.clear();
-    return *overwrites.ptr;
-  }
-
   bufferptr &get_bptr() override {
-    if (overwrites.is_empty()) {
-      if (!overwrites.ptr.has_value()) {
-	return CachedExtent::get_bptr();
-      }
-      assert(overwrites.ptr.has_value());
-      return *overwrites.ptr;
+    if (cached_overwrites.is_empty()) {
+      return CachedExtent::get_bptr();
+    } else {
+      return cached_overwrites.get_cached_bptr(CachedExtent::get_bptr());
     }
-    return get_recent_change<ceph::bufferptr&>();
   }
 
   const bufferptr &get_bptr() const override {
-    if (overwrites.is_empty()) {
-      if (!overwrites.ptr.has_value()) {
-	return CachedExtent::get_bptr();
-      }
-      assert(overwrites.ptr.has_value());
-      return *overwrites.ptr;
+    if (cached_overwrites.is_empty()) {
+      return CachedExtent::get_bptr();
+    } else {
+      return cached_overwrites.get_cached_bptr(CachedExtent::get_bptr());
     }
-    return get_recent_change<const bufferptr&>();
   }
 };
 using ObjectDataBlockRef = TCachedExtentRef<ObjectDataBlock>;
