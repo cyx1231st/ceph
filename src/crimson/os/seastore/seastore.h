@@ -535,17 +535,7 @@ public:
     return shard_stores.local().get_fsid();
   }
 
-  seastar::future<> write_meta(
-    const std::string& key,
-    const std::string& value) final {
-    ceph_assert(seastar::this_shard_id() == primary_core);
-    return shard_stores.local().write_meta(
-      key, value).then([this, key, value] {
-      return mdstore->write_meta(key, value);
-    }).handle_error(
-      crimson::ct_error::assert_all{"Invalid error in SeaStore::write_meta"}
-    );
-  }
+  seastar::future<> write_meta(const std::string& key, const std::string& value) final;
 
   seastar::future<std::tuple<int, std::string>> read_meta(const std::string& key) final;
 
