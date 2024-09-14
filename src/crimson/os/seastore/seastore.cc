@@ -1104,15 +1104,18 @@ SeaStore::Shard::read(
     op_type_t::READ,
     [=, this](auto &t, auto &onode) -> ObjectDataHandler::read_ret {
       size_t size = onode.get_layout().size;
+      std::size_t test1 = 0;
+      std::size_t test2 = 0;
+      std::size_t test3 = 0;
       LOG_PREFIX(SeaStoreS::read);
       if (offset >= size) {
-        DEBUGT("0x{:x}~0x{:x} onode-size=0x{:x} flags=0x{:x}, got none",
-               t, offset, len, size, op_flags);
+        DEBUGT("0x{:x}~0x{:x} onode-size=0x{:x} flags=0x{:x}, got none {} {} {}",
+               t, offset, len, size, op_flags, test1, test2, test3);
 	return seastar::make_ready_future<ceph::bufferlist>();
       }
 
-      DEBUGT("0x{:x}~0x{:x} onode-size=0x{:x} flags=0x{:x} ...",
-             t, offset, len, size, op_flags);
+      DEBUGT("0x{:x}~0x{:x} onode-size=0x{:x} flags=0x{:x} ... {} {}",
+             t, offset, len, size, op_flags, test1, test2);
       size_t corrected_len = (len == 0) ?
 	size - offset :
 	std::min(size - offset, len);
