@@ -118,11 +118,11 @@ public:
   T *t = nullptr;
   CachedExtentRef ref;
 
-  bool is_attached_to_trans() const {
+  bool is_extent_attached_to_trans() const {
     return extent_hook.is_linked();
   }
 
-  bool is_attached_to_extent() const {
+  bool is_trans_attached_to_extent() const {
     return trans_hook.is_linked();
   }
 
